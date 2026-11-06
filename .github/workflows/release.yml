@@ -1,0 +1,193 @@
+name: Release Axio Family APK
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version_tag:
+        description: 'Release version tag (e.g., v1.0.0)'
+        required: false
+        default: 'v1.0.0'
+      create_github_release:
+        description: 'Create a GitHub Release when triggered manually'
+        required: false
+        type: boolean
+        default: false
+      prerelease:
+        description: 'Mark release as pre-release'
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+env:
+  APP_NAME: AxioFamily
+  APPLICATION_ID: com.aistudio.axiofamily.xpqrmk
+  GRADLE_VERSION: '9.3.1'
+  JAVA_VERSION: '21'
+
+jobs:
+  release:
+    name: Build & Sign Release APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up JDK ${{ env.JAVA_VERSION }}
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: ${{ env.JAVA_VERSION }}
+
+      - name: Set up Gradle ${{ env.GRADLE_VERSION }}
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: ${{ env.GRADLE_VERSION }}
+          cache-read-only: false
+
+      - name: Determine Release Version
+        id: version
+        shell: bash
+        run: |
+          if [[ "${{ github.ref_type }}" == "tag" ]]; then
+            RAW_TAG="${{ github.ref_name }}"
+          elif [[ -n "${{ inputs.version_tag }}" ]]; then
+            RAW_TAG="${{ inputs.version_tag }}"
+          else
+            RAW_TAG="v1.0.0"
+          fi
+          CLEAN_VERSION="${RAW_TAG#v}"
+          echo "tag=${RAW_TAG}" >> "$GITHUB_OUTPUT"
+          echo "version=${CLEAN_VERSION}" >> "$GITHUB_OUTPUT"
+          echo "Resolved release version: ${CLEAN_VERSION} (tag: ${RAW_TAG})"
+
+      - name: Prepare Release Signing Keystore
+        id: keystore
+        shell: bash
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          STORE_PASSWORD_SECRET: ${{ secrets.STORE_PASSWORD }}
+          KEY_PASSWORD_SECRET: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          KEYSTORE_FILE="${GITHUB_WORKSPACE}/my-upload-key.jks"
+
+          if [[ -n "${KEYSTORE_BASE64}" ]]; then
+            echo "Decoding release keystore from KEYSTORE_BASE64 secret..."
+            echo "${KEYSTORE_BASE64}" | tr -d '[:space:]' | base64 --decode > "${KEYSTORE_FILE}"
+            RESOLVED_STORE_PASSWORD="${STORE_PASSWORD_SECRET}"
+            RESOLVED_KEY_PASSWORD="${KEY_PASSWORD_SECRET:-$STORE_PASSWORD_SECRET}"
+          else
+            echo "KEYSTORE_BASE64 secret not set; generating fallback release keystore (alias: upload)..."
+            RESOLVED_STORE_PASSWORD="${STORE_PASSWORD_SECRET:-androidrelease}"
+            RESOLVED_KEY_PASSWORD="${KEY_PASSWORD_SECRET:-$RESOLVED_STORE_PASSWORD}"
+            keytool -genkeypair -v \
+              -keystore "${KEYSTORE_FILE}" \
+              -keyalg RSA \
+              -keysize 2048 \
+              -validity 10000 \
+              -alias upload \
+              -storepass "${RESOLVED_STORE_PASSWORD}" \
+              -keypass "${RESOLVED_KEY_PASSWORD}" \
+              -dname "CN=Axio Family, OU=Mobile, O=AxioFamily, L=Bengaluru, S=KA, C=IN"
+          fi
+
+          echo "KEYSTORE_PATH=${KEYSTORE_FILE}" >> "$GITHUB_ENV"
+          echo "STORE_PASSWORD=${RESOLVED_STORE_PASSWORD}" >> "$GITHUB_ENV"
+          echo "KEY_PASSWORD=${RESOLVED_KEY_PASSWORD}" >> "$GITHUB_ENV"
+
+      - name: Prepare Environment & Firebase Config
+        shell: bash
+        env:
+          GOOGLE_SERVICES_JSON_SECRET: ${{ secrets.GOOGLE_SERVICES_JSON }}
+        run: |
+          if [[ ! -f ".env" && -f ".env.example" ]]; then
+            cp .env.example .env
+          fi
+          if [[ -n "${GOOGLE_SERVICES_JSON_SECRET}" ]]; then
+            echo "Writing app/google-services.json from GOOGLE_SERVICES_JSON secret..."
+            echo "${GOOGLE_SERVICES_JSON_SECRET}" > app/google-services.json
+          fi
+
+      - name: Build Signed Release APK & Bundle
+        shell: bash
+        run: |
+          if [[ -f "./gradlew" ]]; then
+            chmod +x ./gradlew
+            ./gradlew assembleRelease bundleRelease --no-daemon --stacktrace
+          else
+            gradle assembleRelease bundleRelease --no-daemon --stacktrace
+          fi
+
+      - name: Prepare Release Artifacts & Checksums
+        id: artifacts
+        shell: bash
+        run: |
+          mkdir -p release-assets
+          VERSION="${{ steps.version.outputs.version }}"
+
+          APK_SOURCE=$(find app/build/outputs/apk/release -name "*.apk" | head -n 1)
+          if [[ -z "${APK_SOURCE}" ]]; then
+            echo "Error: Release APK was not found in app/build/outputs/apk/release"
+            exit 1
+          fi
+
+          APK_DEST="release-assets/${APP_NAME}-v${VERSION}-release.apk"
+          cp "${APK_SOURCE}" "${APK_DEST}"
+          sha256sum "${APK_DEST}" > "${APK_DEST}.sha256"
+
+          AAB_SOURCE=$(find app/build/outputs/bundle/release -name "*.aab" | head -n 1 || true)
+          if [[ -n "${AAB_SOURCE}" ]]; then
+            AAB_DEST="release-assets/${APP_NAME}-v${VERSION}-release.aab"
+            cp "${AAB_SOURCE}" "${AAB_DEST}"
+            sha256sum "${AAB_DEST}" > "${AAB_DEST}.sha256"
+          fi
+
+          ls -lh release-assets/
+          echo "apk_path=${APK_DEST}" >> "$GITHUB_OUTPUT"
+
+      - name: Upload Release APK to Workflow Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.APP_NAME }}-v${{ steps.version.outputs.version }}-release
+          path: |
+            release-assets/*.apk
+            release-assets/*.aab
+            release-assets/*.sha256
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v') || inputs.create_github_release == true
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: "${{ env.APP_NAME }} ${{ steps.version.outputs.tag }}"
+          body: |
+            ## ${{ env.APP_NAME }} ${{ steps.version.outputs.tag }}
+
+            ### Highlights
+            - **Unified Family Household Budget**: Real-time Firestore synchronization via 6-character Join Code or Email Invite.
+            - **Shared & Personal Privacy Scopes**: Switch between Combined, Shared Household, and Private Personal views.
+            - **Cashiro Bank SMS Parser Engine (`com.ritesh.parser.core.bank`)**: Automatic on-device parsing for HDFC, SBI, ICICI, Axis, Kotak, Paytm/UPI, and generic bank alerts.
+            - **Category Envelopes & Visual Analytics**: Monthly safe daily spend pulse, category progress envelopes, donut breakdown, and 6-month velocity bar chart.
+
+            ### Verification
+            Verify the downloaded APK using the attached `.sha256` checksum file.
+          files: |
+            release-assets/*.apk
+            release-assets/*.aab
+            release-assets/*.sha256
+          draft: false
+          prerelease: ${{ inputs.prerelease || false }}
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

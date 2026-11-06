@@ -1,0 +1,6 @@
+{
+  "name": "Axio Family",
+  "description": "Axio-inspired expense and budget tracker with Cashiro bank SMS parsing and real-time family household budget synchronization.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

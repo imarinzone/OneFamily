@@ -1,0 +1,148 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "User profile, personal budget settings, and active household link.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "description": "Authenticated user UID." },
+        "email": { "type": "string", "description": "User email address." },
+        "displayName": { "type": "string", "description": "Display name." },
+        "photoUrl": { "type": "string", "description": "Profile avatar URL." },
+        "activeHouseholdId": { "type": "string", "description": "Currently linked household ID." },
+        "personalMonthlyBudget": { "type": "number", "description": "Personal monthly spending target." },
+        "currencySymbol": { "type": "string", "description": "Currency symbol such as ₹ or $." },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Server creation timestamp." },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Server update timestamp." }
+      },
+      "required": ["uid", "displayName", "personalMonthlyBudget", "currencySymbol", "createdAt", "updatedAt"]
+    },
+    "ExpenseTransaction": {
+      "title": "ExpenseTransaction",
+      "description": "A personal or shared household financial transaction parsed from SMS or added manually.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "description": "UID of the creator." },
+        "userName": { "type": "string", "description": "Display name of the creator." },
+        "householdId": { "type": "string", "description": "Household ID if shared." },
+        "title": { "type": "string", "description": "Merchant or payee title." },
+        "amount": { "type": "number", "description": "Transaction amount (> 0)." },
+        "type": { "type": "string", "enum": ["EXPENSE", "INCOME"], "description": "Transaction direction." },
+        "category": { "type": "string", "description": "Expense category." },
+        "accountName": { "type": "string", "description": "Bank, card, or wallet name." },
+        "paymentMode": { "type": "string", "enum": ["UPI", "BANK", "CARD", "WALLET", "CASH"], "description": "Payment rail." },
+        "tags": { "type": "array", "description": "Custom #tags (max 10)." },
+        "notes": { "type": "string", "description": "Optional notes or SMS summary." },
+        "visibility": { "type": "string", "enum": ["PERSONAL", "SHARED"], "description": "Privacy scope." },
+        "smsSignature": { "type": "string", "description": "Deduplication signature for SMS imports." },
+        "referenceNumber": { "type": "string", "description": "Bank/UPI reference number." },
+        "transactionDateMillis": { "type": "integer", "description": "Epoch milliseconds of transaction." },
+        "memberUids": { "type": "array", "description": "Denormalized household member UIDs for shared access." },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Server creation timestamp." },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Server update timestamp." }
+      },
+      "required": ["userId", "userName", "title", "amount", "type", "category", "accountName", "paymentMode", "visibility", "transactionDateMillis", "createdAt", "updatedAt"]
+    },
+    "CategoryBudget": {
+      "title": "CategoryBudget",
+      "description": "Category-specific monthly budget cap for personal or household scope.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "description": "Creator UID." },
+        "householdId": { "type": "string", "description": "Household ID for shared budgets." },
+        "category": { "type": "string", "description": "Category name." },
+        "monthlyLimit": { "type": "number", "description": "Monthly spending cap (> 0)." },
+        "alertThresholdPercent": { "type": "integer", "description": "Alert percentage threshold (1..100)." },
+        "memberUids": { "type": "array", "description": "Denormalized household member UIDs." },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Server creation timestamp." },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Server update timestamp." }
+      },
+      "required": ["userId", "category", "monthlyLimit", "alertThresholdPercent", "createdAt", "updatedAt"]
+    },
+    "FinancialAccount": {
+      "title": "FinancialAccount",
+      "description": "Tracked bank account, credit card, wallet, or cash balance.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "description": "Owner UID." },
+        "name": { "type": "string", "description": "Display account label." },
+        "bankName": { "type": "string", "description": "Bank or issuer name." },
+        "accountType": { "type": "string", "enum": ["BANK", "CREDIT_CARD", "WALLET", "CASH", "UPI"], "description": "Account type." },
+        "lastFourDigits": { "type": "string", "description": "Last 4 digits of account/card." },
+        "balance": { "type": "number", "description": "Latest known balance." },
+        "creditLimit": { "type": "number", "description": "Credit card available limit." },
+        "isSharedVisible": { "type": "boolean", "description": "Whether balance is summarized in household view." },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Server creation timestamp." },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Server update timestamp." }
+      },
+      "required": ["userId", "name", "bankName", "accountType", "balance", "isSharedVisible", "createdAt", "updatedAt"]
+    },
+    "Household": {
+      "title": "Household",
+      "description": "Shared family household space linking multiple members for unified budget tracking.",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string", "description": "Household name." },
+        "ownerUid": { "type": "string", "description": "Creator UID." },
+        "joinCode": { "type": "string", "description": "6-character uppercase invite code." },
+        "memberUids": { "type": "array", "description": "List of member UIDs." },
+        "memberNames": { "type": "object", "description": "Map of UID to display name." },
+        "memberEmails": { "type": "object", "description": "Map of UID to email." },
+        "invitedEmails": { "type": "array", "description": "Pending invited email addresses." },
+        "monthlyBudgetLimit": { "type": "number", "description": "Unified monthly household budget target." },
+        "currencySymbol": { "type": "string", "description": "Household currency symbol." },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Server creation timestamp." },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Server update timestamp." }
+      },
+      "required": ["name", "ownerUid", "joinCode", "memberUids", "monthlyBudgetLimit", "currencySymbol", "createdAt", "updatedAt"]
+    },
+    "HouseholdCodeIndex": {
+      "title": "HouseholdCodeIndex",
+      "description": "Direct lookup document keyed by 6-character joinCode for joining a household.",
+      "type": "object",
+      "properties": {
+        "joinCode": { "type": "string", "description": "6-character join code." },
+        "householdId": { "type": "string", "description": "Target household document ID." },
+        "householdName": { "type": "string", "description": "Target household display name." },
+        "ownerUid": { "type": "string", "description": "Household creator UID." },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Server creation timestamp." },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Server update timestamp." }
+      },
+      "required": ["joinCode", "householdId", "householdName", "ownerUid", "createdAt", "updatedAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "UserProfile",
+      "description": "User profile and personal settings."
+    },
+    "/users/{userId}/personal_expenses/{expenseId}": {
+      "schema": "ExpenseTransaction",
+      "description": "Private personal transactions isolated to userId."
+    },
+    "/users/{userId}/personal_budgets/{budgetId}": {
+      "schema": "CategoryBudget",
+      "description": "Private personal category budgets isolated to userId."
+    },
+    "/users/{userId}/accounts/{accountId}": {
+      "schema": "FinancialAccount",
+      "description": "User bank accounts, cards, wallets, and cash balances."
+    },
+    "/households/{householdId}": {
+      "schema": "Household",
+      "description": "Shared family household configuration and member roster."
+    },
+    "/households/{householdId}/shared_expenses/{expenseId}": {
+      "schema": "ExpenseTransaction",
+      "description": "Shared household transactions synchronized across all household members."
+    },
+    "/households/{householdId}/category_budgets/{budgetId}": {
+      "schema": "CategoryBudget",
+      "description": "Shared household category budget limits."
+    },
+    "/household_codes/{joinCode}": {
+      "schema": "HouseholdCodeIndex",
+      "description": "Lookup index mapping a 6-character joinCode to a householdId."
+    }
+  }
+}

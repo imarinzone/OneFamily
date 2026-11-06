@@ -1,0 +1,350 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isValidUserProfile(data) {
+      return data.uid is string && data.uid.size() >= 1 && data.uid.size() <= 128 &&
+             data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 100 &&
+             (!('email' in data) || (data.email is string && data.email.size() <= 200)) &&
+             (!('photoUrl' in data) || (data.photoUrl is string && data.photoUrl.size() <= 500)) &&
+             (!('activeHouseholdId' in data) || (data.activeHouseholdId is string && data.activeHouseholdId.size() <= 128)) &&
+             data.personalMonthlyBudget is number && data.personalMonthlyBudget >= 0 &&
+             data.currencySymbol is string && data.currencySymbol.size() >= 1 && data.currencySymbol.size() <= 10 &&
+             data.createdAt is timestamp && data.createdAt <= request.time &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidExpenseTransaction(data) {
+      return data.userId is string && data.userId.size() >= 1 && data.userId.size() <= 128 &&
+             data.userName is string && data.userName.size() >= 1 && data.userName.size() <= 100 &&
+             (!('householdId' in data) || (data.householdId is string && data.householdId.size() <= 128)) &&
+             data.title is string && data.title.size() >= 1 && data.title.size() <= 150 &&
+             data.amount is number && data.amount > 0 &&
+             data.type is string && data.type in ['EXPENSE', 'INCOME'] &&
+             data.category is string && data.category.size() >= 1 && data.category.size() <= 60 &&
+             data.accountName is string && data.accountName.size() >= 1 && data.accountName.size() <= 100 &&
+             data.paymentMode is string && data.paymentMode in ['UPI', 'BANK', 'CARD', 'WALLET', 'CASH'] &&
+             (!('tags' in data) || (data.tags is list && data.tags.size() <= 10 && (data.tags.size() == 0 || (data.tags[0] is string && data.tags[0].size() <= 40)))) &&
+             (!('notes' in data) || (data.notes is string && data.notes.size() <= 500)) &&
+             data.visibility is string && data.visibility in ['PERSONAL', 'SHARED'] &&
+             (!('smsSignature' in data) || (data.smsSignature is string && data.smsSignature.size() <= 200)) &&
+             (!('referenceNumber' in data) || (data.referenceNumber is string && data.referenceNumber.size() <= 100)) &&
+             data.transactionDateMillis is int && data.transactionDateMillis > 0 &&
+             (!('memberUids' in data) || (data.memberUids is list && data.memberUids.size() <= 20 && (data.memberUids.size() == 0 || (data.memberUids[0] is string && data.memberUids[0].size() <= 128)))) &&
+             data.createdAt is timestamp && data.createdAt <= request.time &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidCategoryBudget(data) {
+      return data.userId is string && data.userId.size() >= 1 && data.userId.size() <= 128 &&
+             (!('householdId' in data) || (data.householdId is string && data.householdId.size() <= 128)) &&
+             data.category is string && data.category.size() >= 1 && data.category.size() <= 60 &&
+             data.monthlyLimit is number && data.monthlyLimit > 0 &&
+             data.alertThresholdPercent is int && data.alertThresholdPercent >= 1 && data.alertThresholdPercent <= 100 &&
+             (!('memberUids' in data) || (data.memberUids is list && data.memberUids.size() <= 20 && (data.memberUids.size() == 0 || (data.memberUids[0] is string && data.memberUids[0].size() <= 128)))) &&
+             data.createdAt is timestamp && data.createdAt <= request.time &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidFinancialAccount(data) {
+      return data.userId is string && data.userId.size() >= 1 && data.userId.size() <= 128 &&
+             data.name is string && data.name.size() >= 1 && data.name.size() <= 100 &&
+             data.bankName is string && data.bankName.size() >= 1 && data.bankName.size() <= 100 &&
+             data.accountType is string && data.accountType in ['BANK', 'CREDIT_CARD', 'WALLET', 'CASH', 'UPI'] &&
+             (!('lastFourDigits' in data) || (data.lastFourDigits is string && data.lastFourDigits.size() <= 10)) &&
+             data.balance is number &&
+             (!('creditLimit' in data) || (data.creditLimit is number && data.creditLimit >= 0)) &&
+             data.isSharedVisible is bool &&
+             data.createdAt is timestamp && data.createdAt <= request.time &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidHousehold(data) {
+      return data.name is string && data.name.size() >= 1 && data.name.size() <= 100 &&
+             data.ownerUid is string && data.ownerUid.size() >= 1 && data.ownerUid.size() <= 128 &&
+             data.joinCode is string && data.joinCode.size() >= 4 && data.joinCode.size() <= 12 &&
+             data.memberUids is list && data.memberUids.size() >= 1 && data.memberUids.size() <= 20 && data.memberUids[0] is string && data.memberUids[0].size() <= 128 &&
+             (!('memberNames' in data) || data.memberNames is map) &&
+             (!('memberEmails' in data) || data.memberEmails is map) &&
+             (!('invitedEmails' in data) || (data.invitedEmails is list && data.invitedEmails.size() <= 20 && (data.invitedEmails.size() == 0 || (data.invitedEmails[0] is string && data.invitedEmails[0].size() <= 200)))) &&
+             data.monthlyBudgetLimit is number && data.monthlyBudgetLimit >= 0 &&
+             data.currencySymbol is string && data.currencySymbol.size() >= 1 && data.currencySymbol.size() <= 10 &&
+             data.createdAt is timestamp && data.createdAt <= request.time &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidHouseholdCodeIndex(data) {
+      return data.joinCode is string && data.joinCode.size() >= 4 && data.joinCode.size() <= 12 &&
+             data.householdId is string && data.householdId.size() >= 1 && data.householdId.size() <= 128 &&
+             data.householdName is string && data.householdName.size() >= 1 && data.householdName.size() <= 100 &&
+             data.ownerUid is string && data.ownerUid.size() >= 1 && data.ownerUid.size() <= 128 &&
+             data.createdAt is timestamp && data.createdAt <= request.time &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    match /users/{userId} {
+      allow get: if isSignedIn() && isValidId(userId) && request.auth.uid == userId;
+      allow list: if isSignedIn() && request.auth.uid == userId;
+
+      allow create: if isSignedIn() &&
+                       isValidId(userId) &&
+                       request.auth.uid == userId &&
+                       incoming().uid == request.auth.uid &&
+                       incoming().keys().hasAll(['uid', 'displayName', 'personalMonthlyBudget', 'currencySymbol', 'createdAt', 'updatedAt']) &&
+                       incoming().keys().hasOnly(['uid', 'email', 'displayName', 'photoUrl', 'activeHouseholdId', 'personalMonthlyBudget', 'currencySymbol', 'createdAt', 'updatedAt']) &&
+                       isValidUserProfile(incoming());
+
+      allow update: if isSignedIn() &&
+                       isValidUserProfile(incoming()) &&
+                       isValidId(userId) &&
+                       request.auth.uid == userId &&
+                       incoming().uid == existing().uid &&
+                       incoming().createdAt == existing().createdAt &&
+                       incoming().diff(existing()).affectedKeys().hasOnly(['email', 'displayName', 'photoUrl', 'activeHouseholdId', 'personalMonthlyBudget', 'currencySymbol', 'updatedAt']);
+
+      allow delete: if isSignedIn() && isValidId(userId) && request.auth.uid == userId;
+
+      match /personal_expenses/{expenseId} {
+        allow get: if isSignedIn() && isValidId(userId) && isValidId(expenseId) && request.auth.uid == userId;
+        allow list: if isSignedIn() && request.auth.uid == userId;
+
+        allow create: if isSignedIn() &&
+                         isValidId(userId) &&
+                         isValidId(expenseId) &&
+                         request.auth.uid == userId &&
+                         incoming().userId == request.auth.uid &&
+                         incoming().keys().hasAll(['userId', 'userName', 'title', 'amount', 'type', 'category', 'accountName', 'paymentMode', 'visibility', 'transactionDateMillis', 'createdAt', 'updatedAt']) &&
+                         incoming().keys().hasOnly(['userId', 'userName', 'householdId', 'title', 'amount', 'type', 'category', 'accountName', 'paymentMode', 'tags', 'notes', 'visibility', 'smsSignature', 'referenceNumber', 'transactionDateMillis', 'memberUids', 'createdAt', 'updatedAt']) &&
+                         isValidExpenseTransaction(incoming());
+
+        allow update: if isSignedIn() &&
+                         isValidExpenseTransaction(incoming()) &&
+                         isValidId(userId) &&
+                         isValidId(expenseId) &&
+                         request.auth.uid == userId &&
+                         incoming().userId == existing().userId &&
+                         incoming().createdAt == existing().createdAt &&
+                         incoming().diff(existing()).affectedKeys().hasOnly(['userName', 'householdId', 'title', 'amount', 'type', 'category', 'accountName', 'paymentMode', 'tags', 'notes', 'visibility', 'smsSignature', 'referenceNumber', 'transactionDateMillis', 'memberUids', 'updatedAt']);
+
+        allow delete: if isSignedIn() && isValidId(userId) && isValidId(expenseId) && request.auth.uid == userId;
+      }
+
+      match /personal_budgets/{budgetId} {
+        allow get: if isSignedIn() && isValidId(userId) && isValidId(budgetId) && request.auth.uid == userId;
+        allow list: if isSignedIn() && request.auth.uid == userId;
+
+        allow create: if isSignedIn() &&
+                         isValidId(userId) &&
+                         isValidId(budgetId) &&
+                         request.auth.uid == userId &&
+                         incoming().userId == request.auth.uid &&
+                         incoming().keys().hasAll(['userId', 'category', 'monthlyLimit', 'alertThresholdPercent', 'createdAt', 'updatedAt']) &&
+                         incoming().keys().hasOnly(['userId', 'householdId', 'category', 'monthlyLimit', 'alertThresholdPercent', 'memberUids', 'createdAt', 'updatedAt']) &&
+                         isValidCategoryBudget(incoming());
+
+        allow update: if isSignedIn() &&
+                         isValidCategoryBudget(incoming()) &&
+                         isValidId(userId) &&
+                         isValidId(budgetId) &&
+                         request.auth.uid == userId &&
+                         incoming().userId == existing().userId &&
+                         incoming().createdAt == existing().createdAt &&
+                         incoming().diff(existing()).affectedKeys().hasOnly(['householdId', 'category', 'monthlyLimit', 'alertThresholdPercent', 'memberUids', 'updatedAt']);
+
+        allow delete: if isSignedIn() && isValidId(userId) && isValidId(budgetId) && request.auth.uid == userId;
+      }
+
+      match /accounts/{accountId} {
+        allow get: if isSignedIn() && isValidId(userId) && isValidId(accountId) && request.auth.uid == userId;
+        allow list: if isSignedIn() && request.auth.uid == userId;
+
+        allow create: if isSignedIn() &&
+                         isValidId(userId) &&
+                         isValidId(accountId) &&
+                         request.auth.uid == userId &&
+                         incoming().userId == request.auth.uid &&
+                         incoming().keys().hasAll(['userId', 'name', 'bankName', 'accountType', 'balance', 'isSharedVisible', 'createdAt', 'updatedAt']) &&
+                         incoming().keys().hasOnly(['userId', 'name', 'bankName', 'accountType', 'lastFourDigits', 'balance', 'creditLimit', 'isSharedVisible', 'createdAt', 'updatedAt']) &&
+                         isValidFinancialAccount(incoming());
+
+        allow update: if isSignedIn() &&
+                         isValidFinancialAccount(incoming()) &&
+                         isValidId(userId) &&
+                         isValidId(accountId) &&
+                         request.auth.uid == userId &&
+                         incoming().userId == existing().userId &&
+                         incoming().createdAt == existing().createdAt &&
+                         incoming().diff(existing()).affectedKeys().hasOnly(['name', 'bankName', 'accountType', 'lastFourDigits', 'balance', 'creditLimit', 'isSharedVisible', 'updatedAt']);
+
+        allow delete: if isSignedIn() && isValidId(userId) && isValidId(accountId) && request.auth.uid == userId;
+      }
+    }
+
+    match /household_codes/{joinCode} {
+      allow get: if isSignedIn() && isValidId(joinCode);
+      allow list: if false;
+
+      allow create: if isSignedIn() &&
+                       isValidId(joinCode) &&
+                       incoming().joinCode == joinCode &&
+                       incoming().ownerUid == request.auth.uid &&
+                       incoming().keys().hasAll(['joinCode', 'householdId', 'householdName', 'ownerUid', 'createdAt', 'updatedAt']) &&
+                       incoming().keys().hasOnly(['joinCode', 'householdId', 'householdName', 'ownerUid', 'createdAt', 'updatedAt']) &&
+                       isValidHouseholdCodeIndex(incoming());
+
+      allow update: if isSignedIn() &&
+                       isValidHouseholdCodeIndex(incoming()) &&
+                       isValidId(joinCode) &&
+                       existing().ownerUid == request.auth.uid &&
+                       incoming().ownerUid == existing().ownerUid &&
+                       incoming().joinCode == existing().joinCode &&
+                       incoming().householdId == existing().householdId &&
+                       incoming().createdAt == existing().createdAt &&
+                       incoming().diff(existing()).affectedKeys().hasOnly(['householdName', 'updatedAt']);
+
+      allow delete: if isSignedIn() && isValidId(joinCode) && existing().ownerUid == request.auth.uid;
+    }
+
+    match /households/{householdId} {
+      allow get: if isSignedIn() &&
+                    isValidId(householdId) &&
+                    (request.auth.uid in existing().memberUids ||
+                     exists(/databases/$(database)/documents/household_codes/$(existing().joinCode)));
+
+      allow list: if isSignedIn() &&
+                     (request.auth.uid in existing().memberUids ||
+                      (request.auth.token.email != null &&
+                       request.auth.token.email_verified == true &&
+                       'invitedEmails' in existing() &&
+                       request.auth.token.email in existing().invitedEmails));
+
+      allow create: if isSignedIn() &&
+                       isValidId(householdId) &&
+                       incoming().ownerUid == request.auth.uid &&
+                       request.auth.uid in incoming().memberUids &&
+                       incoming().keys().hasAll(['name', 'ownerUid', 'joinCode', 'memberUids', 'monthlyBudgetLimit', 'currencySymbol', 'createdAt', 'updatedAt']) &&
+                       incoming().keys().hasOnly(['name', 'ownerUid', 'joinCode', 'memberUids', 'memberNames', 'memberEmails', 'invitedEmails', 'monthlyBudgetLimit', 'currencySymbol', 'createdAt', 'updatedAt']) &&
+                       isValidHousehold(incoming());
+
+      allow update: if isSignedIn() &&
+                       isValidHousehold(incoming()) &&
+                       isValidId(householdId) &&
+                       incoming().ownerUid == existing().ownerUid &&
+                       incoming().joinCode == existing().joinCode &&
+                       incoming().createdAt == existing().createdAt &&
+                       (
+                         (request.auth.uid in existing().memberUids &&
+                          request.auth.uid in incoming().memberUids &&
+                          incoming().diff(existing()).affectedKeys().hasOnly(['name', 'memberUids', 'memberNames', 'memberEmails', 'invitedEmails', 'monthlyBudgetLimit', 'currencySymbol', 'updatedAt'])) ||
+                         (!(request.auth.uid in existing().memberUids) &&
+                          request.auth.uid in incoming().memberUids &&
+                          incoming().diff(existing()).affectedKeys().hasOnly(['memberUids', 'memberNames', 'memberEmails', 'invitedEmails', 'updatedAt']))
+                       );
+
+      allow delete: if isSignedIn() && isValidId(householdId) && existing().ownerUid == request.auth.uid;
+
+      match /shared_expenses/{expenseId} {
+        allow get: if isSignedIn() &&
+                      isValidId(householdId) &&
+                      isValidId(expenseId) &&
+                      'memberUids' in existing() &&
+                      request.auth.uid in existing().memberUids;
+
+        allow list: if isSignedIn() &&
+                       'memberUids' in existing() &&
+                       request.auth.uid in existing().memberUids;
+
+        allow create: if isSignedIn() &&
+                         isValidId(householdId) &&
+                         isValidId(expenseId) &&
+                         incoming().userId == request.auth.uid &&
+                         incoming().householdId == householdId &&
+                         'memberUids' in incoming() &&
+                         request.auth.uid in incoming().memberUids &&
+                         incoming().keys().hasAll(['userId', 'userName', 'householdId', 'title', 'amount', 'type', 'category', 'accountName', 'paymentMode', 'visibility', 'transactionDateMillis', 'memberUids', 'createdAt', 'updatedAt']) &&
+                         incoming().keys().hasOnly(['userId', 'userName', 'householdId', 'title', 'amount', 'type', 'category', 'accountName', 'paymentMode', 'tags', 'notes', 'visibility', 'smsSignature', 'referenceNumber', 'transactionDateMillis', 'memberUids', 'createdAt', 'updatedAt']) &&
+                         isValidExpenseTransaction(incoming());
+
+        allow update: if isSignedIn() &&
+                         isValidExpenseTransaction(incoming()) &&
+                         isValidId(householdId) &&
+                         isValidId(expenseId) &&
+                         'memberUids' in incoming() &&
+                         request.auth.uid in incoming().memberUids &&
+                         (('memberUids' in existing() && request.auth.uid in existing().memberUids) ||
+                          request.auth.uid in get(/databases/$(database)/documents/households/$(householdId)).data.memberUids) &&
+                         incoming().userId == existing().userId &&
+                         incoming().householdId == existing().householdId &&
+                         incoming().createdAt == existing().createdAt &&
+                         incoming().diff(existing()).affectedKeys().hasOnly(['userName', 'title', 'amount', 'type', 'category', 'accountName', 'paymentMode', 'tags', 'notes', 'visibility', 'smsSignature', 'referenceNumber', 'transactionDateMillis', 'memberUids', 'updatedAt']);
+
+        allow delete: if isSignedIn() &&
+                         isValidId(householdId) &&
+                         isValidId(expenseId) &&
+                         'memberUids' in existing() &&
+                         request.auth.uid in existing().memberUids;
+      }
+
+      match /category_budgets/{budgetId} {
+        allow get: if isSignedIn() &&
+                      isValidId(householdId) &&
+                      isValidId(budgetId) &&
+                      'memberUids' in existing() &&
+                      request.auth.uid in existing().memberUids;
+
+        allow list: if isSignedIn() &&
+                       'memberUids' in existing() &&
+                       request.auth.uid in existing().memberUids;
+
+        allow create: if isSignedIn() &&
+                         isValidId(householdId) &&
+                         isValidId(budgetId) &&
+                         incoming().userId == request.auth.uid &&
+                         incoming().householdId == householdId &&
+                         'memberUids' in incoming() &&
+                         request.auth.uid in incoming().memberUids &&
+                         incoming().keys().hasAll(['userId', 'householdId', 'category', 'monthlyLimit', 'alertThresholdPercent', 'memberUids', 'createdAt', 'updatedAt']) &&
+                         incoming().keys().hasOnly(['userId', 'householdId', 'category', 'monthlyLimit', 'alertThresholdPercent', 'memberUids', 'createdAt', 'updatedAt']) &&
+                         isValidCategoryBudget(incoming());
+
+        allow update: if isSignedIn() &&
+                         isValidCategoryBudget(incoming()) &&
+                         isValidId(householdId) &&
+                         isValidId(budgetId) &&
+                         'memberUids' in incoming() &&
+                         request.auth.uid in incoming().memberUids &&
+                         (('memberUids' in existing() && request.auth.uid in existing().memberUids) ||
+                          request.auth.uid in get(/databases/$(database)/documents/households/$(householdId)).data.memberUids) &&
+                         incoming().userId == existing().userId &&
+                         incoming().householdId == existing().householdId &&
+                         incoming().createdAt == existing().createdAt &&
+                         incoming().diff(existing()).affectedKeys().hasOnly(['category', 'monthlyLimit', 'alertThresholdPercent', 'memberUids', 'updatedAt']);
+
+        allow delete: if isSignedIn() &&
+                         isValidId(householdId) &&
+                         isValidId(budgetId) &&
+                         'memberUids' in existing() &&
+                         request.auth.uid in existing().memberUids;
+      }
+    }
+  }
+}
