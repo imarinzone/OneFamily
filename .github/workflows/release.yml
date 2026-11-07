@@ -95,89 +95,33 @@ jobs:
           echo "version=${CLEAN_VERSION}" >> "$GITHUB_OUTPUT"
           echo "Resolved release version: ${CLEAN_VERSION} (tag: ${RAW_TAG})"
 
-      - name: Restore Debug Keystore & Prepare Release Signing Keystore
+      - name: Restore Provisioned Firebase Signing Keystore
         id: keystore
         shell: bash
         env:
-          SECRET_KEYSTORE_B64: ${{ secrets.KEYSTORE_BASE64 || secrets.SIGNING_KEY_STORE_BASE64 || secrets.KEYSTORE }}
-          SECRET_STORE_PASS: ${{ secrets.STORE_PASSWORD || secrets.KEYSTORE_PASSWORD || secrets.KEY_STORE_PASSWORD }}
-          SECRET_KEY_ALIAS: ${{ secrets.KEY_ALIAS || secrets.ALIAS }}
-          SECRET_KEY_PASS: ${{ secrets.KEY_PASSWORD || secrets.KEY_ALIAS_PASSWORD }}
+          # Embedded base64 of the provisioned project keystore (SHA-1: 5B:A3:94:C0:62:42:F0:7B:31:01:91:EF:EF:AA:66:E1:05:9C:B3:FE)
+          # which is registered in Firebase Auth / Google Cloud OAuth for com.aistudio.axiofamily.xpqrmk
+          PROVISIONED_KEYSTORE_B64: "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"
         run: |
-          # 1. Ensure debug.keystore exists (since debug.keystore is gitignored and stored as debug.keystore.base64)
-          if [[ ! -f "${GITHUB_WORKSPACE}/debug.keystore" && -f "${GITHUB_WORKSPACE}/debug.keystore.base64" ]]; then
-            echo "Restoring debug.keystore from debug.keystore.base64..."
-            tr -d '[:space:]' < "${GITHUB_WORKSPACE}/debug.keystore.base64" | base64 --decode > "${GITHUB_WORKSPACE}/debug.keystore"
-          fi
+          # Restore debug.keystore from embedded provisioned certificate
+          echo "Restoring provisioned keystore (SHA-1: 5B:A3:94:C0:62:42:F0:7B:31:01:91:EF:EF:AA:66:E1:05:9C:B3:FE)..."
+          echo "${PROVISIONED_KEYSTORE_B64}" | tr -d '[:space:]' | base64 --decode > "${GITHUB_WORKSPACE}/debug.keystore"
 
-          # 2. Prepare release keystore expected by app/build.gradle.kts (alias: upload)
+          # Copy to my-upload-key.jks and map alias to 'upload' so release APK matches the Firebase OAuth SHA-1
           KEYSTORE_FILE="${GITHUB_WORKSPACE}/my-upload-key.jks"
-          rm -f "${KEYSTORE_FILE}"
-          KEYSTORE_READY="false"
+          cp "${GITHUB_WORKSPACE}/debug.keystore" "${KEYSTORE_FILE}"
+          RESOLVED_STORE_PASSWORD="android"
+          RESOLVED_KEY_PASSWORD="android"
 
-          if [[ -n "${SECRET_KEYSTORE_B64}" && -n "${SECRET_STORE_PASS}" ]]; then
-            echo "Attempting to decode custom release keystore from GitHub Secrets..."
-            if echo "${SECRET_KEYSTORE_B64}" | tr -d '[:space:]' | base64 --decode > "${KEYSTORE_FILE}" 2>/dev/null; then
-              if keytool -list -keystore "${KEYSTORE_FILE}" -storepass "${SECRET_STORE_PASS}" >/dev/null 2>&1; then
-                RESOLVED_STORE_PASSWORD="${SECRET_STORE_PASS}"
-                RESOLVED_KEY_PASSWORD="${SECRET_KEY_PASS:-$SECRET_STORE_PASS}"
+          keytool -changealias \
+            -keystore "${KEYSTORE_FILE}" \
+            -storepass "${RESOLVED_STORE_PASSWORD}" \
+            -alias "androiddebugkey" \
+            -destalias "upload" \
+            -keypass "${RESOLVED_KEY_PASSWORD}"
 
-                if ! keytool -list -keystore "${KEYSTORE_FILE}" -storepass "${RESOLVED_STORE_PASSWORD}" -alias upload >/dev/null 2>&1; then
-                  SOURCE_ALIAS="${SECRET_KEY_ALIAS}"
-                  if [[ -z "${SOURCE_ALIAS}" ]]; then
-                    SOURCE_ALIAS=$(keytool -list -keystore "${KEYSTORE_FILE}" -storepass "${RESOLVED_STORE_PASSWORD}" \
-                      | grep "PrivateKeyEntry" | head -n 1 | cut -d',' -f1 | tr -d '[:space:]')
-                  fi
-                  if [[ -n "${SOURCE_ALIAS}" ]]; then
-                    echo "Mapping keystore alias '${SOURCE_ALIAS}' to 'upload'..."
-                    keytool -changealias \
-                      -keystore "${KEYSTORE_FILE}" \
-                      -storepass "${RESOLVED_STORE_PASSWORD}" \
-                      -alias "${SOURCE_ALIAS}" \
-                      -destalias "upload" \
-                      -keypass "${RESOLVED_KEY_PASSWORD}" || true
-                  fi
-                fi
-
-                if keytool -list -keystore "${KEYSTORE_FILE}" -storepass "${RESOLVED_STORE_PASSWORD}" -alias upload >/dev/null 2>&1; then
-                  KEYSTORE_READY="true"
-                  echo "Custom release keystore verified successfully."
-                fi
-              fi
-            fi
-          fi
-
-          if [[ "${KEYSTORE_READY}" != "true" && -f "${GITHUB_WORKSPACE}/debug.keystore" ]]; then
-            echo "Using provisioned project certificate (from debug.keystore) mapped to 'upload' alias so Firebase Auth SHA-1 matches..."
-            cp "${GITHUB_WORKSPACE}/debug.keystore" "${KEYSTORE_FILE}"
-            RESOLVED_STORE_PASSWORD="android"
-            RESOLVED_KEY_PASSWORD="android"
-            keytool -changealias \
-              -keystore "${KEYSTORE_FILE}" \
-              -storepass "android" \
-              -alias "androiddebugkey" \
-              -destalias "upload" \
-              -keypass "android" || true
-            if keytool -list -keystore "${KEYSTORE_FILE}" -storepass "android" -alias upload >/dev/null 2>&1; then
-              KEYSTORE_READY="true"
-            fi
-          fi
-
-          if [[ "${KEYSTORE_READY}" != "true" ]]; then
-            echo "Generating self-signed release keystore (alias: upload)..."
-            rm -f "${KEYSTORE_FILE}"
-            RESOLVED_STORE_PASSWORD="androidrelease"
-            RESOLVED_KEY_PASSWORD="androidrelease"
-            keytool -genkeypair -v \
-              -keystore "${KEYSTORE_FILE}" \
-              -keyalg RSA \
-              -keysize 2048 \
-              -validity 10000 \
-              -alias upload \
-              -storepass "${RESOLVED_STORE_PASSWORD}" \
-              -keypass "${RESOLVED_KEY_PASSWORD}" \
-              -dname "CN=Axio Family, OU=Mobile, O=AxioFamily, L=Bengaluru, S=KA, C=IN"
-          fi
+          echo "Verified Release Signing Certificate Fingerprints:"
+          keytool -list -v -keystore "${KEYSTORE_FILE}" -storepass "${RESOLVED_STORE_PASSWORD}" -alias upload | grep -E "Alias name|SHA1:|SHA256:"
 
           echo "KEYSTORE_PATH=${KEYSTORE_FILE}" >> "$GITHUB_ENV"
           echo "STORE_PASSWORD=${RESOLVED_STORE_PASSWORD}" >> "$GITHUB_ENV"
@@ -263,8 +207,8 @@ jobs:
             - **Cashiro Bank SMS Parser Engine (`com.ritesh.parser.core.bank`)**: Automatic on-device parsing for HDFC, SBI, ICICI, Axis, Kotak, Paytm/UPI, and generic bank alerts.
             - **Category Envelopes & Visual Analytics**: Monthly safe daily spend pulse, category progress envelopes, donut breakdown, and 6-month velocity bar chart.
 
-            ### Verification
-            Verify the downloaded APK using the attached `.sha256` checksum file.
+            ### Installation Note
+            If upgrading from an earlier build signed with a temporary certificate, please uninstall the previous app once before installing this release so Google Sign-In (`SHA-1: 5B:A3:94:C0:62:42:F0:7B:31:01:91:EF:EF:AA:66:E1:05:9C:B3:FE`) matches the registered Firebase OAuth client.
           files: |
             release-assets/*.apk
             release-assets/*.sha256

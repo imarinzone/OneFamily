@@ -2,6 +2,7 @@ package com.example.ui.auth
 
 import android.app.Activity
 import android.content.Context
+import android.content.ContextWrapper
 import android.util.Log
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -74,6 +75,12 @@ import kotlinx.coroutines.tasks.await
 
 private const val TAG = "AxioAuth"
 
+private tailrec fun Context.findActivity(): Activity? = when (this) {
+    is Activity -> this
+    is ContextWrapper -> baseContext.findActivity()
+    else -> null
+}
+
 private fun resolveDefaultWebClientId(context: Context): String? {
     val resId = context.resources.getIdentifier("default_web_client_id", "string", context.packageName)
     if (resId == 0) return null
@@ -110,7 +117,8 @@ fun attemptAutoSignIn(
 
     scope.launch {
         try {
-            val result = credentialManager.getCredential(context, request)
+            val activityContext = context.findActivity() ?: context
+            val result = credentialManager.getCredential(activityContext, request)
             val credential = result.credential
             if (credential is CustomCredential && credential.type == TYPE_GOOGLE_ID_TOKEN_CREDENTIAL) {
                 val googleIdToken = GoogleIdTokenCredential.createFrom(credential.data).idToken
@@ -148,7 +156,7 @@ fun onGoogleSignInClicked(
 
     scope.launch {
         try {
-            val activityContext = context as? Activity ?: context
+            val activityContext = context.findActivity() ?: context
             val result = credentialManager.getCredential(activityContext, request)
             val credential = result.credential
             if (credential is CustomCredential && credential.type == TYPE_GOOGLE_ID_TOKEN_CREDENTIAL) {
@@ -160,8 +168,13 @@ fun onGoogleSignInClicked(
                 onAuthError("Unexpected credential type returned.")
             }
         } catch (e: GetCredentialCancellationException) {
-            Log.w(TAG, "Google Sign-In cancelled or dismissed: ${e.message}", e)
-            onAuthCancelled()
+            val msg = e.message.orEmpty()
+            Log.w(TAG, "Google Sign-In cancelled or failed: $msg", e)
+            if (msg.contains("28444") || msg.contains("Developer console", ignoreCase = true) || msg.contains("10:")) {
+                onAuthError("Google Sign-In failed due to APK certificate mismatch ($msg). Please uninstall the old APK and install the latest signed release.")
+            } else {
+                onAuthCancelled()
+            }
         } catch (e: Exception) {
             Log.e(TAG, "Google Sign-In failed", e)
             onAuthError(e.localizedMessage ?: "Sign in failed. Please try again.")

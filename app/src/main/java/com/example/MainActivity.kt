@@ -46,6 +46,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -122,16 +123,21 @@ internal fun FirebaseAuth.authStateFlow(): Flow<FirebaseUser?> = callbackFlow {
 
 @Composable
 fun AppNavigation(auth: FirebaseAuth = Firebase.auth) {
-    val currentUser by auth.authStateFlow().collectAsStateWithLifecycle(initialValue = auth.currentUser)
-    val user = currentUser
+    val flowUser by auth.authStateFlow().collectAsStateWithLifecycle(initialValue = auth.currentUser)
+    var directUser by remember { mutableStateOf(auth.currentUser) }
+    LaunchedEffect(flowUser) {
+        directUser = flowUser
+    }
+    val user = flowUser ?: directUser
 
     if (user == null) {
-        AuthScreen(onAuthSuccess = {})
+        AuthScreen(onAuthSuccess = { directUser = auth.currentUser })
     } else {
         AxioMainShell(
             currentUserId = user.uid,
             currentUserName = user.displayName ?: user.email?.substringBefore("@") ?: "Family Member",
-            currentUserEmail = user.email.orEmpty()
+            currentUserEmail = user.email.orEmpty(),
+            onSignOut = { directUser = null }
         )
     }
 }
@@ -149,7 +155,8 @@ enum class AxioNavTab(val label: String, val icon: ImageVector) {
 fun AxioMainShell(
     currentUserId: String,
     currentUserName: String,
-    currentUserEmail: String
+    currentUserEmail: String,
+    onSignOut: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
@@ -260,7 +267,7 @@ fun AxioMainShell(
                             signOut(
                                 context = context,
                                 credentialManager = credentialManager,
-                                onSignOutComplete = {},
+                                onSignOutComplete = onSignOut,
                                 scope = coroutineScope
                             )
                         },
