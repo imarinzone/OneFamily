@@ -51,18 +51,24 @@ jobs:
           distribution: 'temurin'
           java-version: ${{ env.JAVA_VERSION }}
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: Accept Android SDK Licenses & Install SDK 36.1
+      - name: Configure Android SDK Licenses
         shell: bash
         run: |
-          yes | sdkmanager --licenses > /dev/null || true
-          sdkmanager --install \
-            "platform-tools" \
-            "platforms;android-36" \
-            "platforms;android-36.1" \
-            "build-tools;36.0.0"
+          SDK_DIR="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          mkdir -p "${SDK_DIR}/licenses"
+
+          printf "\n8933bad161af4178b1185d1a37fbf41ea5269c55\nd56f5187479451eabf01fb78af6dfcb131a6481e\n24333f8a63b6825ea9c5514f83c2829b004d1fee" > "${SDK_DIR}/licenses/android-sdk-license"
+          printf "\n84831b9409646a918e30573bab4c9c91346d8abd\n504667f4c0de7af1a06de9f4b1727b84351f2910" > "${SDK_DIR}/licenses/android-sdk-preview-license"
+          printf "\n601085b94cd77f0b54ff86406957099ebe79c4d6" > "${SDK_DIR}/licenses/android-googletv-license"
+          printf "\nceff83576aac4f7f37cb98fe189e9fb3c49d3b81" > "${SDK_DIR}/licenses/android-googlexr-license"
+          printf "\n859f317696f67ef3d7f30a50a5560e7834b43903" > "${SDK_DIR}/licenses/android-sdk-arm-dbt-license"
+          printf "\n33b6a2b64607f11b759f320ef9dff4ae5c47d97a" > "${SDK_DIR}/licenses/google-gdk-license"
+          printf "\n3a7848b1d7366ca5cfa0be477627644ca73f47e3" > "${SDK_DIR}/licenses/microxr-sysimage-license"
+          printf "\ne9acab5b5fbb560a72cfaecce8946896ff6aab9d" > "${SDK_DIR}/licenses/mips-android-sysimage-license"
+
+          echo "ANDROID_HOME=${SDK_DIR}" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=${SDK_DIR}" >> "$GITHUB_ENV"
+          echo "Android SDK licenses configured in ${SDK_DIR}/licenses"
 
       - name: Set up Gradle ${{ env.GRADLE_VERSION }}
         uses: gradle/actions/setup-gradle@v4
@@ -93,7 +99,6 @@ jobs:
         id: keystore
         shell: bash
         env:
-          # Supports both Axio Family and Cashiro secret naming conventions
           SECRET_KEYSTORE_B64: ${{ secrets.KEYSTORE_BASE64 || secrets.SIGNING_KEY_STORE_BASE64 || secrets.KEYSTORE }}
           SECRET_STORE_PASS: ${{ secrets.STORE_PASSWORD || secrets.KEYSTORE_PASSWORD || secrets.KEY_STORE_PASSWORD }}
           SECRET_KEY_ALIAS: ${{ secrets.KEY_ALIAS || secrets.ALIAS }}
@@ -117,7 +122,6 @@ jobs:
                 RESOLVED_STORE_PASSWORD="${SECRET_STORE_PASS}"
                 RESOLVED_KEY_PASSWORD="${SECRET_KEY_PASS:-$SECRET_STORE_PASS}"
 
-                # Ensure the 'upload' alias required by app/build.gradle.kts exists in the keystore
                 if ! keytool -list -keystore "${KEYSTORE_FILE}" -storepass "${RESOLVED_STORE_PASSWORD}" -alias upload >/dev/null 2>&1; then
                   SOURCE_ALIAS="${SECRET_KEY_ALIAS}"
                   if [[ -z "${SOURCE_ALIAS}" ]]; then
