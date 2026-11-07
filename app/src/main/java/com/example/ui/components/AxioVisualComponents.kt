@@ -20,6 +20,8 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ReceiptLong
+import androidx.compose.material.icons.automirrored.filled.TrendingUp
 import androidx.compose.material.icons.filled.AccountBalance
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CreditCard
@@ -35,10 +37,8 @@ import androidx.compose.material.icons.filled.MedicalServices
 import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material.icons.filled.Payments
 import androidx.compose.material.icons.filled.QrCode2
-import androidx.compose.material.icons.filled.ReceiptLong
 import androidx.compose.material.icons.filled.ShoppingBag
 import androidx.compose.material.icons.filled.SwapHoriz
-import androidx.compose.material.icons.filled.TrendingUp
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.FilterChip
@@ -79,7 +79,7 @@ import java.util.Date
 import java.util.Locale
 
 fun formatCurrency(amount: Double, symbol: String = "₹"): String {
-    val formatter = NumberFormat.getNumberInstance(Locale("en", "IN")).apply {
+    val formatter = NumberFormat.getNumberInstance(Locale.forLanguageTag("en-IN")).apply {
         maximumFractionDigits = if (amount % 1.0 == 0.0) 0 else 2
         minimumFractionDigits = 0
     }
@@ -100,8 +100,8 @@ fun categoryIcon(category: String): ImageVector {
         lower.contains("shop") -> Icons.Default.ShoppingBag
         lower.contains("health") -> Icons.Default.MedicalServices
         lower.contains("entertain") -> Icons.Default.Movie
-        lower.contains("invest") || lower.contains("salary") -> Icons.Default.TrendingUp
-        else -> Icons.Default.ReceiptLong
+        lower.contains("invest") || lower.contains("salary") -> Icons.AutoMirrored.Filled.TrendingUp
+        else -> Icons.AutoMirrored.Filled.ReceiptLong
     }
 }
 

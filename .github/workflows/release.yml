@@ -2,6 +2,9 @@ name: Release Axio Family APK
 
 on:
   push:
+    branches:
+      - main
+      - master
     tags:
       - 'v*.*.*'
       - 'v*'
@@ -12,10 +15,10 @@ on:
         required: false
         default: 'v1.0.0'
       create_github_release:
-        description: 'Create a GitHub Release when triggered manually'
+        description: 'Publish a GitHub Release with the built APK'
         required: false
         type: boolean
-        default: false
+        default: true
       prerelease:
         description: 'Mark release as pre-release'
         required: false
@@ -48,6 +51,19 @@ jobs:
           distribution: 'temurin'
           java-version: ${{ env.JAVA_VERSION }}
 
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Accept Android SDK Licenses & Install SDK 36.1
+        shell: bash
+        run: |
+          yes | sdkmanager --licenses > /dev/null || true
+          sdkmanager --install \
+            "platform-tools" \
+            "platforms;android-36" \
+            "platforms;android-36.1" \
+            "build-tools;36.0.0"
+
       - name: Set up Gradle ${{ env.GRADLE_VERSION }}
         uses: gradle/actions/setup-gradle@v4
         with:
@@ -63,32 +79,75 @@ jobs:
           elif [[ -n "${{ inputs.version_tag }}" ]]; then
             RAW_TAG="${{ inputs.version_tag }}"
           else
-            RAW_TAG="v1.0.0"
+            RAW_TAG="v1.0.${{ github.run_number }}"
+          fi
+          if [[ "${RAW_TAG}" != v* ]]; then
+            RAW_TAG="v${RAW_TAG}"
           fi
           CLEAN_VERSION="${RAW_TAG#v}"
           echo "tag=${RAW_TAG}" >> "$GITHUB_OUTPUT"
           echo "version=${CLEAN_VERSION}" >> "$GITHUB_OUTPUT"
           echo "Resolved release version: ${CLEAN_VERSION} (tag: ${RAW_TAG})"
 
-      - name: Prepare Release Signing Keystore
+      - name: Restore Debug Keystore & Prepare Release Signing Keystore
         id: keystore
         shell: bash
         env:
-          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
-          STORE_PASSWORD_SECRET: ${{ secrets.STORE_PASSWORD }}
-          KEY_PASSWORD_SECRET: ${{ secrets.KEY_PASSWORD }}
+          # Supports both Axio Family and Cashiro secret naming conventions
+          SECRET_KEYSTORE_B64: ${{ secrets.KEYSTORE_BASE64 || secrets.SIGNING_KEY_STORE_BASE64 || secrets.KEYSTORE }}
+          SECRET_STORE_PASS: ${{ secrets.STORE_PASSWORD || secrets.KEYSTORE_PASSWORD || secrets.KEY_STORE_PASSWORD }}
+          SECRET_KEY_ALIAS: ${{ secrets.KEY_ALIAS || secrets.ALIAS }}
+          SECRET_KEY_PASS: ${{ secrets.KEY_PASSWORD || secrets.KEY_ALIAS_PASSWORD }}
         run: |
-          KEYSTORE_FILE="${GITHUB_WORKSPACE}/my-upload-key.jks"
+          # 1. Ensure debug.keystore exists (since debug.keystore is gitignored and stored as debug.keystore.base64)
+          if [[ ! -f "${GITHUB_WORKSPACE}/debug.keystore" && -f "${GITHUB_WORKSPACE}/debug.keystore.base64" ]]; then
+            echo "Restoring debug.keystore from debug.keystore.base64..."
+            tr -d '[:space:]' < "${GITHUB_WORKSPACE}/debug.keystore.base64" | base64 --decode > "${GITHUB_WORKSPACE}/debug.keystore"
+          fi
 
-          if [[ -n "${KEYSTORE_BASE64}" ]]; then
-            echo "Decoding release keystore from KEYSTORE_BASE64 secret..."
-            echo "${KEYSTORE_BASE64}" | tr -d '[:space:]' | base64 --decode > "${KEYSTORE_FILE}"
-            RESOLVED_STORE_PASSWORD="${STORE_PASSWORD_SECRET}"
-            RESOLVED_KEY_PASSWORD="${KEY_PASSWORD_SECRET:-$STORE_PASSWORD_SECRET}"
-          else
-            echo "KEYSTORE_BASE64 secret not set; generating fallback release keystore (alias: upload)..."
-            RESOLVED_STORE_PASSWORD="${STORE_PASSWORD_SECRET:-androidrelease}"
-            RESOLVED_KEY_PASSWORD="${KEY_PASSWORD_SECRET:-$RESOLVED_STORE_PASSWORD}"
+          # 2. Prepare release keystore expected by app/build.gradle.kts (alias: upload)
+          KEYSTORE_FILE="${GITHUB_WORKSPACE}/my-upload-key.jks"
+          rm -f "${KEYSTORE_FILE}"
+          KEYSTORE_READY="false"
+
+          if [[ -n "${SECRET_KEYSTORE_B64}" && -n "${SECRET_STORE_PASS}" ]]; then
+            echo "Attempting to decode custom release keystore from GitHub Secrets..."
+            if echo "${SECRET_KEYSTORE_B64}" | tr -d '[:space:]' | base64 --decode > "${KEYSTORE_FILE}" 2>/dev/null; then
+              if keytool -list -keystore "${KEYSTORE_FILE}" -storepass "${SECRET_STORE_PASS}" >/dev/null 2>&1; then
+                RESOLVED_STORE_PASSWORD="${SECRET_STORE_PASS}"
+                RESOLVED_KEY_PASSWORD="${SECRET_KEY_PASS:-$SECRET_STORE_PASS}"
+
+                # Ensure the 'upload' alias required by app/build.gradle.kts exists in the keystore
+                if ! keytool -list -keystore "${KEYSTORE_FILE}" -storepass "${RESOLVED_STORE_PASSWORD}" -alias upload >/dev/null 2>&1; then
+                  SOURCE_ALIAS="${SECRET_KEY_ALIAS}"
+                  if [[ -z "${SOURCE_ALIAS}" ]]; then
+                    SOURCE_ALIAS=$(keytool -list -keystore "${KEYSTORE_FILE}" -storepass "${RESOLVED_STORE_PASSWORD}" \
+                      | grep "PrivateKeyEntry" | head -n 1 | cut -d',' -f1 | tr -d '[:space:]')
+                  fi
+                  if [[ -n "${SOURCE_ALIAS}" ]]; then
+                    echo "Mapping keystore alias '${SOURCE_ALIAS}' to 'upload'..."
+                    keytool -changealias \
+                      -keystore "${KEYSTORE_FILE}" \
+                      -storepass "${RESOLVED_STORE_PASSWORD}" \
+                      -alias "${SOURCE_ALIAS}" \
+                      -destalias "upload" \
+                      -keypass "${RESOLVED_KEY_PASSWORD}" || true
+                  fi
+                fi
+
+                if keytool -list -keystore "${KEYSTORE_FILE}" -storepass "${RESOLVED_STORE_PASSWORD}" -alias upload >/dev/null 2>&1; then
+                  KEYSTORE_READY="true"
+                  echo "Custom release keystore verified successfully."
+                fi
+              fi
+            fi
+          fi
+
+          if [[ "${KEYSTORE_READY}" != "true" ]]; then
+            echo "Generating self-signed release keystore (alias: upload)..."
+            rm -f "${KEYSTORE_FILE}"
+            RESOLVED_STORE_PASSWORD="androidrelease"
+            RESOLVED_KEY_PASSWORD="androidrelease"
             keytool -genkeypair -v \
               -keystore "${KEYSTORE_FILE}" \
               -keyalg RSA \
@@ -117,17 +176,17 @@ jobs:
             echo "${GOOGLE_SERVICES_JSON_SECRET}" > app/google-services.json
           fi
 
-      - name: Build Signed Release APK & Bundle
+      - name: Build Signed Release APK
         shell: bash
         run: |
-          if [[ -f "./gradlew" ]]; then
+          if [[ -f "./gradlew" && -f "gradle/wrapper/gradle-wrapper.jar" ]]; then
             chmod +x ./gradlew
-            ./gradlew assembleRelease bundleRelease --no-daemon --stacktrace
+            ./gradlew assembleRelease --no-daemon --no-configuration-cache --stacktrace
           else
-            gradle assembleRelease bundleRelease --no-daemon --stacktrace
+            gradle assembleRelease --no-daemon --no-configuration-cache --stacktrace
           fi
 
-      - name: Prepare Release Artifacts & Checksums
+      - name: Prepare Release APK & SHA-256 Checksum
         id: artifacts
         shell: bash
         run: |
@@ -144,13 +203,6 @@ jobs:
           cp "${APK_SOURCE}" "${APK_DEST}"
           sha256sum "${APK_DEST}" > "${APK_DEST}.sha256"
 
-          AAB_SOURCE=$(find app/build/outputs/bundle/release -name "*.aab" | head -n 1 || true)
-          if [[ -n "${AAB_SOURCE}" ]]; then
-            AAB_DEST="release-assets/${APP_NAME}-v${VERSION}-release.aab"
-            cp "${AAB_SOURCE}" "${AAB_DEST}"
-            sha256sum "${AAB_DEST}" > "${AAB_DEST}.sha256"
-          fi
-
           ls -lh release-assets/
           echo "apk_path=${APK_DEST}" >> "$GITHUB_OUTPUT"
 
@@ -160,16 +212,16 @@ jobs:
           name: ${{ env.APP_NAME }}-v${{ steps.version.outputs.version }}-release
           path: |
             release-assets/*.apk
-            release-assets/*.aab
             release-assets/*.sha256
           if-no-files-found: error
           retention-days: 30
 
       - name: Create GitHub Release
-        if: startsWith(github.ref, 'refs/tags/v') || inputs.create_github_release == true
+        if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.create_github_release == true)
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.version.outputs.tag }}
+          target_commitish: ${{ github.sha }}
           name: "${{ env.APP_NAME }} ${{ steps.version.outputs.tag }}"
           body: |
             ## ${{ env.APP_NAME }} ${{ steps.version.outputs.tag }}
@@ -184,10 +236,9 @@ jobs:
             Verify the downloaded APK using the attached `.sha256` checksum file.
           files: |
             release-assets/*.apk
-            release-assets/*.aab
             release-assets/*.sha256
           draft: false
-          prerelease: ${{ inputs.prerelease || false }}
+          prerelease: ${{ inputs.prerelease == true }}
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
