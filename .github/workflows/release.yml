@@ -147,6 +147,22 @@ jobs:
             fi
           fi
 
+          if [[ "${KEYSTORE_READY}" != "true" && -f "${GITHUB_WORKSPACE}/debug.keystore" ]]; then
+            echo "Using provisioned project certificate (from debug.keystore) mapped to 'upload' alias so Firebase Auth SHA-1 matches..."
+            cp "${GITHUB_WORKSPACE}/debug.keystore" "${KEYSTORE_FILE}"
+            RESOLVED_STORE_PASSWORD="android"
+            RESOLVED_KEY_PASSWORD="android"
+            keytool -changealias \
+              -keystore "${KEYSTORE_FILE}" \
+              -storepass "android" \
+              -alias "androiddebugkey" \
+              -destalias "upload" \
+              -keypass "android" || true
+            if keytool -list -keystore "${KEYSTORE_FILE}" -storepass "android" -alias upload >/dev/null 2>&1; then
+              KEYSTORE_READY="true"
+            fi
+          fi
+
           if [[ "${KEYSTORE_READY}" != "true" ]]; then
             echo "Generating self-signed release keystore (alias: upload)..."
             rm -f "${KEYSTORE_FILE}"
@@ -171,13 +187,24 @@ jobs:
         shell: bash
         env:
           GOOGLE_SERVICES_JSON_SECRET: ${{ secrets.GOOGLE_SERVICES_JSON }}
+          DEFAULT_GOOGLE_SERVICES_B64: "ewogICJwcm9qZWN0X2luZm8iOiB7CiAgICAicHJvamVjdF9udW1iZXIiOiAiNDg5MjMwNjcyNTM5IiwKICAgICJwcm9qZWN0X2lkIjogImdlbi1sYW5nLWNsaWVudC0wODU5MDcxNTQzIiwKICAgICJzdG9yYWdlX2J1Y2tldCI6ICJnZW4tbGFuZy1jbGllbnQtMDg1OTA3MTU0My5maXJlYmFzZXN0b3JhZ2UuYXBwIgogIH0sCiAgImNsaWVudCI6IFsKICAgIHsKICAgICAgImNsaWVudF9pbmZvIjogewogICAgICAgICJtb2JpbGVzZGtfYXBwX2lkIjogIjE6NDg5MjMwNjcyNTM5OmFuZHJvaWQ6N2E4NWY0NTViMDYzNzU2OGM0OWMzZSIsCiAgICAgICAgImFuZHJvaWRfY2xpZW50X2luZm8iOiB7CiAgICAgICAgICAicGFja2FnZV9uYW1lIjogImNvbS5haXN0dWRpby5heGlvZmFtaWx5LnhwcXJtayIKICAgICAgICB9CiAgICAgIH0sCiAgICAgICJvYXV0aF9jbGllbnQiOiBbCiAgICAgICAgewogICAgICAgICAgImNsaWVudF9pZCI6ICI0ODkyMzA2NzI1MzktMHNvY3FnOHBkcGh2amxmODJjYzFmc2IwMmM4aHZjNzIuYXBwcy5nb29nbGV1c2VyY29udGVudC5jb20iLAogICAgICAgICAgImNsaWVudF90eXBlIjogMSwKICAgICAgICAgICJhbmRyb2lkX2luZm8iOiB7CiAgICAgICAgICAgICJwYWNrYWdlX25hbWUiOiAiY29tLmFpc3R1ZGlvLmF4aW9mYW1pbHkueHBxcm1rIiwKICAgICAgICAgICAgImNlcnRpZmljYXRlX2hhc2giOiAiNWJhMzk0YzA2MjQyZjA3YjMxMDE5MWVmZWZhYTY2ZTEwNTljYjNmZSIKICAgICAgICAgIH0KICAgICAgICB9LAogICAgICAgIHsKICAgICAgICAgICJjbGllbnRfaWQiOiAiNDg5MjMwNjcyNTM5LThyMmU0aGFhbDdsNHRiaG1wZmZsNnIzajMwYm1nN21zLmFwcHMuZ29vZ2xldXNlcmNvbnRlbnQuY29tIiwKICAgICAgICAgICJjbGllbnRfdHlwZSI6IDMKICAgICAgICB9CiAgICAgIF0sCiAgICAgICJhcGlfa2V5IjogWwogICAgICAgIHsKICAgICAgICAgICJjdXJyZW50X2tleSI6ICJBSXphU3lBRGVjRjItWTVHUko0YW1RNXRDWl9KSDhsbi05LVNMZ1UiCiAgICAgICAgfQogICAgICBdLAogICAgICAic2VydmljZXMiOiB7CiAgICAgICAgImFwcGludml0ZV9zZXJ2aWNlIjogewogICAgICAgICAgIm90aGVyX3BsYXRmb3JtX29hdXRoX2NsaWVudCI6IFsKICAgICAgICAgICAgewogICAgICAgICAgICAgICJjbGllbnRfaWQiOiAiNDg5MjMwNjcyNTM5LThyMmU0aGFhbDdsNHRiaG1wZmZsNnIzajMwYm1nN21zLmFwcHMuZ29vZ2xldXNlcmNvbnRlbnQuY29tIiwKICAgICAgICAgICAgICAiY2xpZW50X3R5cGUiOiAzCiAgICAgICAgICAgIH0KICAgICAgICAgIF0KICAgICAgICB9CiAgICAgIH0KICAgIH0KICBdLAogICJjb25maWd1cmF0aW9uX3ZlcnNpb24iOiAiMSIKfQ=="
         run: |
           if [[ ! -f ".env" && -f ".env.example" ]]; then
             cp .env.example .env
           fi
+
           if [[ -n "${GOOGLE_SERVICES_JSON_SECRET}" ]]; then
             echo "Writing app/google-services.json from GOOGLE_SERVICES_JSON secret..."
             echo "${GOOGLE_SERVICES_JSON_SECRET}" > app/google-services.json
+          elif [[ ! -f "app/google-services.json" ]]; then
+            echo "Restoring provisioned app/google-services.json for release build..."
+            echo "${DEFAULT_GOOGLE_SERVICES_B64}" | base64 --decode > app/google-services.json
+          fi
+
+          if [[ ! -f "app/src/main/res/values/firebase_applet_config.xml" ]]; then
+            echo "Restoring app/src/main/res/values/firebase_applet_config.xml..."
+            mkdir -p app/src/main/res/values
+            printf '<?xml version="1.0" encoding="utf-8" standalone="no"?>\n<resources>\n    <string name="firestore_database_id" translatable="false">ai-studio-android-18b947f5-a54c-4756-8c11-b9c56ee3687f</string>\n</resources>\n' > app/src/main/res/values/firebase_applet_config.xml
           fi
 
       - name: Build Signed Release APK
