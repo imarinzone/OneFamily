@@ -3,6 +3,6 @@
     <item
         android:width="66dp"
         android:height="66dp"
-        android:drawable="@drawable/img_axio_family_icon_1793947943278"
+        android:drawable="@drawable/app_icon_family_receipt_1794109083412"
         android:gravity="center" />
 </layer-list>

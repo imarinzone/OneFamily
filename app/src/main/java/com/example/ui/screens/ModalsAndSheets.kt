@@ -1,7 +1,15 @@
 package com.example.ui.screens
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
@@ -13,19 +21,22 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.DeleteOutline
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Groups
 import androidx.compose.material.icons.filled.Lock
-import androidx.compose.material.icons.filled.Sms
-import androidx.compose.material3.AlertDialog
+import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material3.Button
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -38,28 +49,453 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import com.example.data.model.ExpenseCategories
+import com.example.data.model.ExpenseTransaction
 import com.example.data.model.FinancialAccount
-import com.example.data.sms.SmsCandidate
-import com.example.ui.components.formatCurrency
+import com.example.ui.components.ReceiptDashedDividerLine
+import com.example.ui.components.ReceiptTicketCard
+import com.example.ui.components.ThemeModeSelectorBar
+import com.example.ui.components.categoryIcon
+import com.example.ui.theme.AppThemeMode
+import com.example.ui.theme.BudgetSafeGreen
+import com.example.ui.theme.HouseholdBadgeIndigo
+import com.example.ui.theme.PersonalBadgeTeal
+import com.example.ui.theme.categoryAccentColor
 import com.example.ui.viewmodel.CategorySpendProgress
-import com.ritesh.parser.core.bank.BankParserFactory
 
 @OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun InteractiveReceiptSheet(
+    initialTitle: String,
+    initialAmountText: String,
+    initialType: String,
+    initialCategory: String,
+    initialPaymentMode: String,
+    initialAccountName: String,
+    initialTagsInput: String,
+    initialNotes: String,
+    initialIsShared: Boolean,
+    initialDateMillis: Long,
+    hasHousehold: Boolean,
+    availableCategories: List<String>,
+    currencySymbol: String,
+    showDeleteButton: Boolean,
+    amountTestTag: String,
+    titleTestTag: String,
+    saveTestTag: String,
+    onDelete: (() -> Unit)? = null,
+    onDismiss: () -> Unit,
+    onSave: (
+        title: String,
+        amount: Double,
+        type: String,
+        category: String,
+        accountName: String,
+        paymentMode: String,
+        tagsInput: String,
+        notes: String,
+        isShared: Boolean,
+        transactionDateMillis: Long
+    ) -> Unit
+) {
+    var title by remember { mutableStateOf(initialTitle) }
+    var amountText by remember { mutableStateOf(initialAmountText) }
+    var type by remember { mutableStateOf(initialType) }
+    var category by remember { mutableStateOf(initialCategory) }
+    var customCategoryInput by remember { mutableStateOf("") }
+    var showCustomCategoryField by remember { mutableStateOf(false) }
+    var paymentMode by remember { mutableStateOf(initialPaymentMode) }
+    var accountName by remember { mutableStateOf(initialAccountName) }
+    var tagsInput by remember { mutableStateOf(initialTagsInput) }
+    var notes by remember { mutableStateOf(initialNotes) }
+    var isShared by remember { mutableStateOf(initialIsShared && hasHousehold) }
+    var txDateMillis by remember { mutableLongStateOf(initialDateMillis) }
+    var showExtraDetails by remember { mutableStateOf(initialNotes.isNotBlank() || initialTagsInput.isNotBlank()) }
+
+    val catAccent = categoryAccentColor(category)
+    val allCats = remember(availableCategories, category, customCategoryInput) {
+        (availableCategories + listOf(category) + listOfNotNull(customCategoryInput.trim().takeIf { it.isNotBlank() }))
+            .filter { it.isNotBlank() }
+            .distinctBy { it.lowercase() }
+    }
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 18.dp, vertical = 20.dp)
+                .verticalScroll(rememberScrollState()),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            ReceiptTicketCard(
+                containerColor = MaterialTheme.colorScheme.surface,
+                contentColor = MaterialTheme.colorScheme.onSurface
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 20.dp, vertical = 14.dp)
+                        .animateContentSize(spring(dampingRatio = Spring.DampingRatioLowBouncy)),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    // Top Action Row: Receipt Stamp + Category Emblem + Close/Delete
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        // 1-Tap Rubber Stamp Toggle for Household vs Personal
+                        val stampColor = if (isShared) HouseholdBadgeIndigo else PersonalBadgeTeal
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = stampColor.copy(alpha = 0.14f),
+                            modifier = Modifier
+                                .border(1.5.dp, stampColor, RoundedCornerShape(8.dp))
+                                .clickable(enabled = hasHousehold) { isShared = !isShared }
+                                .testTag("transaction_shared_switch")
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    imageVector = if (isShared) Icons.Default.Groups else Icons.Default.Lock,
+                                    contentDescription = null,
+                                    tint = stampColor,
+                                    modifier = Modifier.size(14.dp)
+                                )
+                                Spacer(modifier = Modifier.width(5.dp))
+                                Text(
+                                    text = if (isShared) "HOUSEHOLD" else "PERSONAL",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = stampColor
+                                )
+                            }
+                        }
+
+                        // Category Squircle Emblem (No text underneath)
+                        Box(
+                            modifier = Modifier
+                                .size(48.dp)
+                                .clip(CircleShape)
+                                .background(catAccent.copy(alpha = 0.16f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = categoryIcon(category),
+                                contentDescription = category,
+                                tint = catAccent,
+                                modifier = Modifier.size(24.dp)
+                            )
+                        }
+
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            if (showDeleteButton && onDelete != null) {
+                                IconButton(
+                                    onClick = onDelete,
+                                    modifier = Modifier
+                                        .size(34.dp)
+                                        .testTag("edit_dialog_delete_button")
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.DeleteOutline,
+                                        contentDescription = "Delete Receipt",
+                                        tint = MaterialTheme.colorScheme.error
+                                    )
+                                }
+                            }
+                            IconButton(
+                                onClick = onDismiss,
+                                modifier = Modifier.size(34.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Close,
+                                    contentDescription = "Close",
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                    }
+
+                    // Expense vs Income Pill Toggle
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        FilterChip(
+                            selected = type == "EXPENSE",
+                            onClick = { type = "EXPENSE" },
+                            label = { Text("Expense") }
+                        )
+                        FilterChip(
+                            selected = type == "INCOME",
+                            onClick = {
+                                type = "INCOME"
+                                category = "Salary & Income"
+                            },
+                            label = { Text("Income") }
+                        )
+                    }
+
+                    ReceiptDashedDividerLine()
+
+                    // Big Receipt Total & Merchant Input
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        OutlinedTextField(
+                            value = amountText,
+                            onValueChange = { amountText = it },
+                            label = { Text("Total ($currencySymbol)") },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                            singleLine = true,
+                            shape = RoundedCornerShape(14.dp),
+                            modifier = Modifier
+                                .weight(0.45f)
+                                .testTag(amountTestTag)
+                        )
+
+                        OutlinedTextField(
+                            value = title,
+                            onValueChange = { title = it },
+                            label = { Text("Merchant") },
+                            singleLine = true,
+                            shape = RoundedCornerShape(14.dp),
+                            modifier = Modifier
+                                .weight(0.55f)
+                                .testTag(titleTestTag)
+                        )
+                    }
+
+                    ReceiptDashedDividerLine()
+
+                    // Category Section on Receipt
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "Category",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Bold
+                        )
+                        TextButton(
+                            onClick = { showCustomCategoryField = !showCustomCategoryField }
+                        ) {
+                            Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(14.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Custom", style = MaterialTheme.typography.labelSmall)
+                        }
+                    }
+
+                    AnimatedVisibility(visible = showCustomCategoryField) {
+                        OutlinedTextField(
+                            value = customCategoryInput,
+                            onValueChange = {
+                                customCategoryInput = it
+                                if (it.isNotBlank()) category = it.trim()
+                            },
+                            label = { Text("Custom Category") },
+                            singleLine = true,
+                            shape = RoundedCornerShape(14.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(bottom = 8.dp)
+                        )
+                    }
+
+                    FlowRow(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        allCats.forEach { cat ->
+                            val isSelected = category.equals(cat, ignoreCase = true)
+                            val chipAccent = categoryAccentColor(cat)
+                            Surface(
+                                shape = RoundedCornerShape(50),
+                                color = if (isSelected) chipAccent else chipAccent.copy(alpha = 0.14f),
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(50))
+                                    .clickable { category = cat }
+                            ) {
+                                Text(
+                                    text = cat,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = if (isSelected) Color.White else chipAccent,
+                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                                )
+                            }
+                        }
+                    }
+
+                    ReceiptDashedDividerLine()
+
+                    // Quick Date & Payment Method Row
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        listOf("UPI", "CARD", "BANK", "CASH", "WALLET").forEach { mode ->
+                            FilterChip(
+                                selected = paymentMode.equals(mode, ignoreCase = true),
+                                onClick = {
+                                    paymentMode = mode
+                                    if (mode == "CASH") accountName = "Cash Wallet"
+                                },
+                                label = { Text(mode, style = MaterialTheme.typography.labelSmall) }
+                            )
+                        }
+                    }
+
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        OutlinedButton(onClick = { txDateMillis = System.currentTimeMillis() }) {
+                            Text("Today", style = MaterialTheme.typography.labelSmall)
+                        }
+                        OutlinedButton(onClick = { txDateMillis = System.currentTimeMillis() - 86_400_000L }) {
+                            Text("Yesterday", style = MaterialTheme.typography.labelSmall)
+                        }
+                        OutlinedButton(onClick = { txDateMillis -= 86_400_000L }) {
+                            Text("-1 Day", style = MaterialTheme.typography.labelSmall)
+                        }
+                        OutlinedButton(onClick = { txDateMillis += 86_400_000L }) {
+                            Text("+1 Day", style = MaterialTheme.typography.labelSmall)
+                        }
+                    }
+
+                    // Progressive Disclosure: Expandable More Details
+                    TextButton(
+                        onClick = { showExtraDetails = !showExtraDetails },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(
+                            text = if (showExtraDetails) "Less" else "More",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Icon(
+                            imageVector = if (showExtraDetails) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
+
+                    AnimatedVisibility(visible = showExtraDetails) {
+                        Column(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            OutlinedTextField(
+                                value = accountName,
+                                onValueChange = { accountName = it },
+                                label = { Text("Account / Card") },
+                                singleLine = true,
+                                shape = RoundedCornerShape(14.dp),
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                            OutlinedTextField(
+                                value = tagsInput,
+                                onValueChange = { tagsInput = it },
+                                label = { Text("#Tags") },
+                                singleLine = true,
+                                shape = RoundedCornerShape(14.dp),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .testTag("add_tx_tags_input")
+                            )
+                            OutlinedTextField(
+                                value = notes,
+                                onValueChange = { notes = it },
+                                label = { Text("Note") },
+                                maxLines = 2,
+                                shape = RoundedCornerShape(14.dp),
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                        }
+                    }
+
+                    ReceiptDashedDividerLine()
+
+                    // Save Receipt Button
+                    Button(
+                        onClick = {
+                            val amt = amountText.toDoubleOrNull() ?: 0.0
+                            if (amt > 0) {
+                                val finalCat = customCategoryInput.trim().ifBlank { category }
+                                onSave(
+                                    title.ifBlank { finalCat },
+                                    amt,
+                                    type,
+                                    finalCat,
+                                    accountName,
+                                    paymentMode,
+                                    tagsInput,
+                                    notes,
+                                    isShared,
+                                    txDateMillis
+                                )
+                            }
+                        },
+                        enabled = (amountText.toDoubleOrNull() ?: 0.0) > 0.0,
+                        shape = RoundedCornerShape(16.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = if (type == "INCOME") BudgetSafeGreen else MaterialTheme.colorScheme.primary
+                        ),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(50.dp)
+                            .testTag(saveTestTag)
+                    ) {
+                        Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "Save",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
 @Composable
 fun AddTransactionDialog(
     hasHousehold: Boolean,
     defaultShared: Boolean,
     accounts: List<FinancialAccount>,
+    availableCategories: List<String>,
     currencySymbol: String,
     onDismiss: () -> Unit,
     onSave: (
@@ -71,434 +507,260 @@ fun AddTransactionDialog(
         paymentMode: String,
         tagsInput: String,
         notes: String,
-        isShared: Boolean
+        isShared: Boolean,
+        transactionDateMillis: Long
     ) -> Unit
 ) {
-    var title by remember { mutableStateOf("") }
-    var amountText by remember { mutableStateOf("") }
-    var type by remember { mutableStateOf("EXPENSE") }
-    var category by remember { mutableStateOf("Groceries") }
-    var paymentMode by remember { mutableStateOf("UPI") }
-    var accountName by remember {
-        mutableStateOf(accounts.firstOrNull()?.name ?: "HDFC Bank ••4821")
-    }
-    var tagsInput by remember { mutableStateOf("") }
-    var notes by remember { mutableStateOf("") }
-    var isShared by remember { mutableStateOf(hasHousehold && defaultShared) }
-
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = {
-            Text(
-                text = if (type == "EXPENSE") "Log Expense" else "Log Income",
-                style = MaterialTheme.typography.titleLarge
-            )
-        },
-        text = {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                // Expense vs Income + Shared vs Personal
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    FilterChip(
-                        selected = type == "EXPENSE",
-                        onClick = { type = "EXPENSE" },
-                        label = { Text("Expense") }
-                    )
-                    FilterChip(
-                        selected = type == "INCOME",
-                        onClick = {
-                            type = "INCOME"
-                            category = "Salary & Income"
-                        },
-                        label = { Text("Income") }
-                    )
-                }
-
-                // Privacy Selector (Shared Household vs Personal)
-                Surface(
-                    shape = RoundedCornerShape(14.dp),
-                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.65f),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.weight(1f)
-                        ) {
-                            Icon(
-                                imageVector = if (isShared) Icons.Default.Groups else Icons.Default.Lock,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.primary
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Column {
-                                Text(
-                                    text = if (isShared) "Shared Household Expense" else "Private Personal Expense",
-                                    style = MaterialTheme.typography.labelLarge
-                                )
-                                Text(
-                                    text = if (isShared) "Synced with linked family members" else "Visible only to you",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                        }
-                        Switch(
-                            checked = isShared,
-                            onCheckedChange = { isShared = it },
-                            enabled = hasHousehold,
-                            modifier = Modifier.testTag("transaction_shared_switch")
-                        )
-                    }
-                }
-
-                OutlinedTextField(
-                    value = amountText,
-                    onValueChange = { amountText = it },
-                    label = { Text("Amount ($currencySymbol)") },
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                    singleLine = true,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .testTag("add_tx_amount_input")
-                )
-
-                OutlinedTextField(
-                    value = title,
-                    onValueChange = { title = it },
-                    label = { Text("Merchant / Payee (e.g. BigBasket, Swiggy)") },
-                    singleLine = true,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .testTag("add_tx_title_input")
-                )
-
-                Text(
-                    text = "Category",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                FlowRow(
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    verticalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    ExpenseCategories.ALL.forEach { cat ->
-                        FilterChip(
-                            selected = category == cat,
-                            onClick = { category = cat },
-                            label = { Text(cat, style = MaterialTheme.typography.labelSmall) }
-                        )
-                    }
-                }
-
-                Text(
-                    text = "Payment Mode",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Row(
-                    modifier = Modifier.horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    listOf("UPI", "CARD", "BANK", "WALLET", "CASH").forEach { mode ->
-                        FilterChip(
-                            selected = paymentMode == mode,
-                            onClick = {
-                                paymentMode = mode
-                                if (mode == "CASH") accountName = "Cash Wallet"
-                            },
-                            label = { Text(mode) }
-                        )
-                    }
-                }
-
-                OutlinedTextField(
-                    value = accountName,
-                    onValueChange = { accountName = it },
-                    label = { Text("Account / Card Name") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
-                )
-
-                OutlinedTextField(
-                    value = tagsInput,
-                    onValueChange = { tagsInput = it },
-                    label = { Text("Custom #tags (comma or space separated)") },
-                    placeholder = { Text("groceries, weekend, family") },
-                    singleLine = true,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .testTag("add_tx_tags_input")
-                )
-
-                OutlinedTextField(
-                    value = notes,
-                    onValueChange = { notes = it },
-                    label = { Text("Notes (optional)") },
-                    maxLines = 2,
-                    modifier = Modifier.fillMaxWidth()
-                )
-            }
-        },
-        confirmButton = {
-            Button(
-                onClick = {
-                    val amt = amountText.toDoubleOrNull() ?: 0.0
-                    if (amt > 0) {
-                        onSave(
-                            title.ifBlank { category },
-                            amt,
-                            type,
-                            category,
-                            accountName,
-                            paymentMode,
-                            tagsInput,
-                            notes,
-                            isShared
-                        )
-                    }
-                },
-                enabled = (amountText.toDoubleOrNull() ?: 0.0) > 0.0,
-                modifier = Modifier.testTag("save_transaction_button")
-            ) {
-                Text("Save")
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text("Cancel")
-            }
-        }
+    InteractiveReceiptSheet(
+        initialTitle = "",
+        initialAmountText = "",
+        initialType = "EXPENSE",
+        initialCategory = "Groceries",
+        initialPaymentMode = "UPI",
+        initialAccountName = accounts.firstOrNull()?.name ?: "HDFC Bank ••4821",
+        initialTagsInput = "",
+        initialNotes = "",
+        initialIsShared = hasHousehold && defaultShared,
+        initialDateMillis = System.currentTimeMillis(),
+        hasHousehold = hasHousehold,
+        availableCategories = availableCategories,
+        currencySymbol = currencySymbol,
+        showDeleteButton = false,
+        amountTestTag = "add_tx_amount_input",
+        titleTestTag = "add_tx_title_input",
+        saveTestTag = "save_transaction_button",
+        onDismiss = onDismiss,
+        onSave = onSave
     )
 }
 
 @Composable
-fun CashiroSmsSyncDialog(
-    candidates: List<SmsCandidate>,
+fun EditTransactionDialog(
+    transaction: ExpenseTransaction,
     hasHousehold: Boolean,
+    availableCategories: List<String>,
     currencySymbol: String,
-    onScanInbox: () -> Unit,
-    onLoadSampleBatch: () -> Unit,
-    onParseCustomSms: (sender: String, body: String, defaultShared: Boolean) -> Unit,
-    onImportCandidate: (SmsCandidate, asShared: Boolean) -> Unit,
-    onImportAll: (forceShared: Boolean?) -> Unit,
-    onDismissCandidate: (String) -> Unit,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    onDelete: () -> Unit,
+    onSave: (
+        title: String,
+        amount: Double,
+        type: String,
+        category: String,
+        accountName: String,
+        paymentMode: String,
+        tagsInput: String,
+        notes: String,
+        transactionDateMillis: Long,
+        targetShared: Boolean
+    ) -> Unit
 ) {
-    var customSender by remember { mutableStateOf("AD-HDFCBK-S") }
-    var customBody by remember {
-        mutableStateOf("Sent Rs.1,250.00\nFrom HDFC Bank A/C *4821\nTo SWIGGY INSTAMART\nOn 05/11/26\nRef 631099887766\nAvl Bal Rs.58,400.00")
+    val initialAmt = if (transaction.amount % 1.0 == 0.0) {
+        transaction.amount.toLong().toString()
+    } else {
+        transaction.amount.toString()
     }
-    var customDefaultShared by remember { mutableStateOf(true) }
 
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(
-                    imageVector = Icons.Default.Sms,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.primary
-                )
-                Spacer(modifier = Modifier.width(8.dp))
-                Text(
-                    text = "Cashiro Bank SMS Parser",
-                    style = MaterialTheme.typography.titleLarge
-                )
-            }
-        },
-        text = {
+    InteractiveReceiptSheet(
+        initialTitle = transaction.title,
+        initialAmountText = initialAmt,
+        initialType = transaction.type,
+        initialCategory = transaction.category,
+        initialPaymentMode = transaction.paymentMode,
+        initialAccountName = transaction.accountName,
+        initialTagsInput = transaction.tags.joinToString(", "),
+        initialNotes = transaction.notes,
+        initialIsShared = transaction.visibility == "SHARED" && hasHousehold,
+        initialDateMillis = transaction.transactionDateMillis,
+        hasHousehold = hasHousehold,
+        availableCategories = availableCategories,
+        currencySymbol = currencySymbol,
+        showDeleteButton = true,
+        amountTestTag = "edit_tx_amount_input",
+        titleTestTag = "edit_tx_title_input",
+        saveTestTag = "save_edited_transaction_button",
+        onDelete = onDelete,
+        onDismiss = onDismiss,
+        onSave = { title, amount, type, category, accountName, paymentMode, tagsInput, notes, isShared, txDateMillis ->
+            onSave(
+                title,
+                amount,
+                type,
+                category,
+                accountName,
+                paymentMode,
+                tagsInput,
+                notes,
+                txDateMillis,
+                isShared
+            )
+        }
+    )
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+fun QuickCategoryPickerDialog(
+    transaction: ExpenseTransaction,
+    availableCategories: List<String>,
+    onDismiss: () -> Unit,
+    onSelectCategory: (String) -> Unit,
+    onOpenFullEditor: () -> Unit
+) {
+    var selectedCat by remember(transaction.id) { mutableStateOf(transaction.category) }
+    var customCategory by remember { mutableStateOf("") }
+
+    val categories = remember(availableCategories, transaction.category) {
+        (availableCategories + listOf(transaction.category))
+            .filter { it.isNotBlank() }
+            .distinctBy { it.lowercase() }
+    }
+
+    Dialog(onDismissRequest = onDismiss) {
+        ReceiptTicketCard(
+            containerColor = MaterialTheme.colorScheme.surface,
+            contentColor = MaterialTheme.colorScheme.onSurface
+        ) {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
+                    .padding(20.dp)
                     .verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 Text(
-                    text = "Powered by com.ritesh.parser.core.bank (HDFC, SBI, ICICI, Axis, Kotak, IDFC, OneCard, Amex & UPI).",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    text = transaction.title,
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1
                 )
 
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ReceiptDashedDividerLine()
+
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    OutlinedButton(
-                        onClick = onScanInbox,
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        Text("Scan Device SMS", style = MaterialTheme.typography.labelMedium)
-                    }
-                    Button(
-                        onClick = onLoadSampleBatch,
-                        modifier = Modifier
-                            .weight(1f)
-                            .testTag("load_sample_sms_batch_button")
-                    ) {
-                        Text("Load 6 Bank SMS", style = MaterialTheme.typography.labelMedium)
-                    }
-                }
-
-                // Live SMS Paste / Tester Box
-                Card(
-                    shape = RoundedCornerShape(16.dp),
-                    colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f)
-                    )
-                ) {
-                    Column(
-                        modifier = Modifier.padding(12.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        Text(
-                            text = "Test / Paste Any Bank SMS Alert",
-                            style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.Bold
-                        )
-                        OutlinedTextField(
-                            value = customSender,
-                            onValueChange = { customSender = it },
-                            label = { Text("DLT Sender ID (e.g. AD-HDFCBK-S, VM-SBIINB)") },
-                            singleLine = true,
-                            modifier = Modifier.fillMaxWidth()
-                        )
-                        OutlinedTextField(
-                            value = customBody,
-                            onValueChange = { customBody = it },
-                            label = { Text("SMS Message Body") },
-                            maxLines = 4,
+                    categories.forEach { cat ->
+                        val accent = categoryAccentColor(cat)
+                        val isSel = selectedCat.equals(cat, ignoreCase = true) && customCategory.isBlank()
+                        Surface(
+                            shape = RoundedCornerShape(50),
+                            color = if (isSel) accent else accent.copy(alpha = 0.14f),
                             modifier = Modifier
-                                .fillMaxWidth()
-                                .testTag("custom_sms_body_input")
-                        )
-                        Button(
-                            onClick = {
-                                onParseCustomSms(customSender, customBody, customDefaultShared)
-                            },
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .testTag("parse_custom_sms_button")
-                        ) {
-                            Text("Parse with BankParserFactory")
-                        }
-                    }
-                }
-
-                if (candidates.isNotEmpty()) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            text = "Parsed Transactions (${candidates.size})",
-                            style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.Bold
-                        )
-                        TextButton(
-                            onClick = { onImportAll(null) },
-                            modifier = Modifier.testTag("import_all_sms_button")
-                        ) {
-                            Text("Import All")
-                        }
-                    }
-
-                    candidates.forEach { cand ->
-                        Card(
-                            modifier = Modifier.fillMaxWidth(),
-                            shape = RoundedCornerShape(14.dp),
-                            colors = CardDefaults.cardColors(
-                                containerColor = MaterialTheme.colorScheme.surface
-                            )
-                        ) {
-                            Column(modifier = Modifier.padding(12.dp)) {
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Column(modifier = Modifier.weight(1f)) {
-                                        Text(
-                                            text = cand.parsed.merchant ?: cand.suggestedCategory,
-                                            style = MaterialTheme.typography.titleSmall,
-                                            fontWeight = FontWeight.Bold
-                                        )
-                                        Text(
-                                            text = "${cand.suggestedAccountName} • ${cand.suggestedCategory} (${cand.parsed.type.name})",
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
-                                        cand.parsed.balance?.let { bal ->
-                                            Text(
-                                                text = "Extracted Bal: ${formatCurrency(bal.toDouble(), currencySymbol)}",
-                                                style = MaterialTheme.typography.labelSmall,
-                                                color = MaterialTheme.colorScheme.primary
-                                            )
-                                        }
-                                    }
-                                    Text(
-                                        text = formatCurrency(cand.parsed.amount.toDouble(), currencySymbol),
-                                        style = MaterialTheme.typography.titleMedium,
-                                        fontWeight = FontWeight.Bold
-                                    )
+                                .clip(RoundedCornerShape(50))
+                                .clickable {
+                                    selectedCat = cat
+                                    onSelectCategory(cat)
                                 }
-
-                                Spacer(modifier = Modifier.height(8.dp))
-
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    if (hasHousehold) {
-                                        Button(
-                                            onClick = { onImportCandidate(cand, true) },
-                                            modifier = Modifier.weight(1f)
-                                        ) {
-                                            Icon(Icons.Default.Groups, contentDescription = null, modifier = Modifier.size(14.dp))
-                                            Spacer(modifier = Modifier.width(4.dp))
-                                            Text("Shared", style = MaterialTheme.typography.labelSmall)
-                                        }
-                                    }
-                                    OutlinedButton(
-                                        onClick = { onImportCandidate(cand, false) },
-                                        modifier = Modifier.weight(1f)
-                                    ) {
-                                        Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(14.dp))
-                                        Spacer(modifier = Modifier.width(4.dp))
-                                        Text("Personal", style = MaterialTheme.typography.labelSmall)
-                                    }
-                                    IconButton(
-                                        onClick = { onDismissCandidate(cand.id) },
-                                        modifier = Modifier.size(32.dp)
-                                    ) {
-                                        Icon(Icons.Default.Close, contentDescription = "Skip", modifier = Modifier.size(16.dp))
-                                    }
-                                }
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    imageVector = categoryIcon(cat),
+                                    contentDescription = null,
+                                    tint = if (isSel) Color.White else accent,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = cat,
+                                    style = MaterialTheme.typography.labelLarge,
+                                    color = if (isSel) Color.White else accent,
+                                    fontWeight = FontWeight.Bold
+                                )
                             }
                         }
                     }
                 }
-            }
-        },
-        confirmButton = {
-            TextButton(onClick = onDismiss) {
-                Text("Done")
+
+                OutlinedTextField(
+                    value = customCategory,
+                    onValueChange = { customCategory = it },
+                    label = { Text("New Category") },
+                    singleLine = true,
+                    shape = RoundedCornerShape(16.dp),
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End
+                ) {
+                    TextButton(onClick = onDismiss) {
+                        Text("Close")
+                    }
+                    TextButton(onClick = onOpenFullEditor) {
+                        Text("Edit")
+                    }
+                    if (customCategory.isNotBlank()) {
+                        Button(onClick = { onSelectCategory(customCategory.trim()) }) {
+                            Text("Save")
+                        }
+                    }
+                }
             }
         }
-    )
+    }
+}
+
+@Composable
+fun ThemeSettingsDialog(
+    currentMode: AppThemeMode,
+    onSelectMode: (AppThemeMode) -> Unit,
+    onDismiss: () -> Unit
+) {
+    Dialog(onDismissRequest = onDismiss) {
+        ReceiptTicketCard(
+            containerColor = MaterialTheme.colorScheme.surface,
+            contentColor = MaterialTheme.colorScheme.onSurface
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(20.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Palette,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "Theme",
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+
+                ReceiptDashedDividerLine()
+
+                ThemeModeSelectorBar(
+                    currentMode = currentMode,
+                    onSelectMode = { mode ->
+                        onSelectMode(mode)
+                    }
+                )
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End
+                ) {
+                    TextButton(onClick = onDismiss) {
+                        Text("Done")
+                    }
+                }
+            }
+        }
+    }
 }
 
 @OptIn(ExperimentalLayoutApi::class)
@@ -512,58 +774,66 @@ fun AddCategoryBudgetDialog(
     onSave: (category: String, limit: Double, alertPct: Int, isShared: Boolean) -> Unit
 ) {
     var category by remember { mutableStateOf(initialProgress?.category ?: "Groceries") }
+    var customCategory by remember { mutableStateOf("") }
     var limitText by remember {
         mutableStateOf(
             if ((initialProgress?.limit ?: 0.0) > 0) initialProgress!!.limit.toInt().toString() else "12000"
         )
     }
-    var alertPctText by remember {
-        mutableStateOf((initialProgress?.alertThresholdPercent ?: 80).toString())
-    }
     var isShared by remember { mutableStateOf(hasHousehold && defaultShared) }
 
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Set Category Monthly Budget") },
-        text = {
+    Dialog(onDismissRequest = onDismiss) {
+        ReceiptTicketCard(
+            containerColor = MaterialTheme.colorScheme.surface,
+            contentColor = MaterialTheme.colorScheme.onSurface
+        ) {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
+                    .padding(20.dp)
                     .verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 Text(
-                    text = "Select Category",
-                    style = MaterialTheme.typography.labelMedium
+                    text = "Category Limit",
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold
                 )
+
+                ReceiptDashedDividerLine()
+
                 FlowRow(
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                     verticalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
                     ExpenseCategories.EXPENSE_ONLY.forEach { cat ->
                         FilterChip(
-                            selected = category.equals(cat, ignoreCase = true),
-                            onClick = { category = cat },
+                            selected = category.equals(cat, ignoreCase = true) && customCategory.isBlank(),
+                            onClick = {
+                                category = cat
+                                customCategory = ""
+                            },
                             label = { Text(cat, style = MaterialTheme.typography.labelSmall) }
                         )
                     }
                 }
 
                 OutlinedTextField(
-                    value = limitText,
-                    onValueChange = { limitText = it },
-                    label = { Text("Monthly Limit ($currencySymbol)") },
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    value = customCategory,
+                    onValueChange = { customCategory = it },
+                    label = { Text("Custom Category") },
                     singleLine = true,
+                    shape = RoundedCornerShape(16.dp),
                     modifier = Modifier.fillMaxWidth()
                 )
 
                 OutlinedTextField(
-                    value = alertPctText,
-                    onValueChange = { alertPctText = it },
-                    label = { Text("Alert Threshold % (e.g. 80)") },
+                    value = limitText,
+                    onValueChange = { limitText = it },
+                    label = { Text("Limit ($currencySymbol)") },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                     singleLine = true,
+                    shape = RoundedCornerShape(16.dp),
                     modifier = Modifier.fillMaxWidth()
                 )
 
@@ -574,33 +844,36 @@ fun AddCategoryBudgetDialog(
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
                         Text(
-                            text = "Apply to Shared Family Household",
+                            text = "Household",
                             style = MaterialTheme.typography.bodyMedium
                         )
                         Switch(checked = isShared, onCheckedChange = { isShared = it })
                     }
                 }
-            }
-        },
-        confirmButton = {
-            Button(
-                onClick = {
-                    val limit = limitText.toDoubleOrNull() ?: 0.0
-                    val pct = alertPctText.toIntOrNull() ?: 80
-                    if (limit > 0) {
-                        onSave(category, limit, pct, isShared)
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End
+                ) {
+                    TextButton(onClick = onDismiss) {
+                        Text("Cancel")
+                    }
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Button(
+                        onClick = {
+                            val limit = limitText.toDoubleOrNull() ?: 0.0
+                            val targetCat = customCategory.trim().ifBlank { category }
+                            if (limit > 0) {
+                                onSave(targetCat, limit, 80, isShared)
+                            }
+                        }
+                    ) {
+                        Text("Save")
                     }
                 }
-            ) {
-                Text("Save Limit")
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text("Cancel")
             }
         }
-    )
+    }
 }
 
 @Composable
@@ -615,55 +888,75 @@ fun EditOverallBudgetDialog(
     var householdText by remember { mutableStateOf(householdBudget?.toInt()?.toString().orEmpty()) }
     var currency by remember { mutableStateOf(currencySymbol) }
 
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Monthly Budget Limits") },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                OutlinedTextField(
-                    value = personalText,
-                    onValueChange = { personalText = it },
-                    label = { Text("My Personal Monthly Budget") },
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
+    Dialog(onDismissRequest = onDismiss) {
+        ReceiptTicketCard(
+            containerColor = MaterialTheme.colorScheme.surface,
+            contentColor = MaterialTheme.colorScheme.onSurface
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(20.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Text(
+                    text = "Budget",
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold
                 )
+
+                ReceiptDashedDividerLine()
+
                 if (householdBudget != null) {
                     OutlinedTextField(
                         value = householdText,
                         onValueChange = { householdText = it },
-                        label = { Text("Shared Household Monthly Budget") },
+                        label = { Text("Household") },
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                         singleLine = true,
+                        shape = RoundedCornerShape(16.dp),
                         modifier = Modifier.fillMaxWidth()
                     )
                 }
                 OutlinedTextField(
-                    value = currency,
-                    onValueChange = { currency = it.take(4) },
-                    label = { Text("Currency Symbol (₹, $, €, £)") },
+                    value = personalText,
+                    onValueChange = { personalText = it },
+                    label = { Text("Personal") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                     singleLine = true,
+                    shape = RoundedCornerShape(16.dp),
                     modifier = Modifier.fillMaxWidth()
                 )
-            }
-        },
-        confirmButton = {
-            Button(
-                onClick = {
-                    val pLimit = personalText.toDoubleOrNull() ?: personalBudget
-                    val hLimit = householdText.toDoubleOrNull()
-                    onSave(pLimit, hLimit, currency.ifBlank { "₹" })
+                OutlinedTextField(
+                    value = currency,
+                    onValueChange = { currency = it.take(4) },
+                    label = { Text("Currency") },
+                    singleLine = true,
+                    shape = RoundedCornerShape(16.dp),
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End
+                ) {
+                    TextButton(onClick = onDismiss) {
+                        Text("Cancel")
+                    }
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Button(
+                        onClick = {
+                            val pLimit = personalText.toDoubleOrNull() ?: personalBudget
+                            val hLimit = householdText.toDoubleOrNull()
+                            onSave(pLimit, hLimit, currency.ifBlank { "₹" })
+                        }
+                    ) {
+                        Text("Save")
+                    }
                 }
-            ) {
-                Text("Update")
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text("Cancel")
             }
         }
-    )
+    }
 }
 
 @Composable
@@ -685,19 +978,31 @@ fun AddAccountDialog(
     var balanceText by remember { mutableStateOf("45000") }
     var creditLimitText by remember { mutableStateOf("150000") }
 
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Add Bank Account / Card") },
-        text = {
+    Dialog(onDismissRequest = onDismiss) {
+        ReceiptTicketCard(
+            containerColor = MaterialTheme.colorScheme.surface,
+            contentColor = MaterialTheme.colorScheme.onSurface
+        ) {
             Column(
-                modifier = Modifier.verticalScroll(rememberScrollState()),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(20.dp)
+                    .verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
+                Text(
+                    text = "Add Account",
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold
+                )
+
+                ReceiptDashedDividerLine()
+
                 Row(
                     modifier = Modifier.horizontalScroll(rememberScrollState()),
                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
-                    listOf("BANK", "CREDIT_CARD", "UPI", "WALLET", "CASH").forEach { type ->
+                    listOf("BANK", "CREDIT_CARD", "UPI", "CASH").forEach { type ->
                         FilterChip(
                             selected = accountType == type,
                             onClick = { accountType = type },
@@ -708,60 +1013,56 @@ fun AddAccountDialog(
                 OutlinedTextField(
                     value = bankName,
                     onValueChange = { bankName = it },
-                    label = { Text("Bank / Issuer Name (e.g. HDFC Bank, SBI, ICICI)") },
+                    label = { Text("Name") },
                     singleLine = true,
+                    shape = RoundedCornerShape(16.dp),
                     modifier = Modifier.fillMaxWidth()
                 )
                 OutlinedTextField(
                     value = lastFour,
                     onValueChange = { lastFour = it.filter { ch -> ch.isDigit() }.take(4) },
-                    label = { Text("Last 4 Digits (for SMS matching)") },
+                    label = { Text("Last 4 Digits") },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                     singleLine = true,
+                    shape = RoundedCornerShape(16.dp),
                     modifier = Modifier.fillMaxWidth()
                 )
                 OutlinedTextField(
                     value = balanceText,
                     onValueChange = { balanceText = it },
-                    label = { Text("Current Balance ($currencySymbol)") },
+                    label = { Text("Balance ($currencySymbol)") },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                     singleLine = true,
+                    shape = RoundedCornerShape(16.dp),
                     modifier = Modifier.fillMaxWidth()
                 )
-                if (accountType == "CREDIT_CARD") {
-                    OutlinedTextField(
-                        value = creditLimitText,
-                        onValueChange = { creditLimitText = it },
-                        label = { Text("Available Credit Limit ($currencySymbol)") },
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End
+                ) {
+                    TextButton(onClick = onDismiss) {
+                        Text("Cancel")
+                    }
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Button(
+                        onClick = {
+                            val suffix = if (lastFour.isNotBlank()) " ••$lastFour" else ""
+                            val displayName = if (accountType == "CREDIT_CARD") "$bankName Card$suffix" else "$bankName$suffix"
+                            onSave(
+                                displayName,
+                                bankName,
+                                accountType,
+                                lastFour,
+                                balanceText.toDoubleOrNull() ?: 0.0,
+                                if (accountType == "CREDIT_CARD") creditLimitText.toDoubleOrNull() ?: 0.0 else 0.0
+                            )
+                        }
+                    ) {
+                        Text("Save")
+                    }
                 }
-            }
-        },
-        confirmButton = {
-            Button(
-                onClick = {
-                    val suffix = if (lastFour.isNotBlank()) " ••$lastFour" else ""
-                    val displayName = if (accountType == "CREDIT_CARD") "$bankName Card$suffix" else "$bankName$suffix"
-                    onSave(
-                        displayName,
-                        bankName,
-                        accountType,
-                        lastFour,
-                        balanceText.toDoubleOrNull() ?: 0.0,
-                        if (accountType == "CREDIT_CARD") creditLimitText.toDoubleOrNull() ?: 0.0 else 0.0
-                    )
-                }
-            ) {
-                Text("Save Account")
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text("Cancel")
             }
         }
-    )
+    }
 }

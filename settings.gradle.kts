@@ -22,6 +22,6 @@ dependencyResolutionManagement {
   }
 }
 
-rootProject.name = "Axio Family"
+rootProject.name = "One Family"
 
 include(":app")

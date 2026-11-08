@@ -98,9 +98,8 @@ data class HouseholdCodeIndex(
 )
 
 enum class BudgetScope(val label: String) {
-    HOUSEHOLD_SHARED("Household Shared"),
-    PERSONAL_ONLY("My Personal"),
-    COMBINED("Combined View")
+    HOUSEHOLD_SHARED("Household"),
+    PERSONAL_ONLY("Personal")
 }
 
 object ExpenseCategories {

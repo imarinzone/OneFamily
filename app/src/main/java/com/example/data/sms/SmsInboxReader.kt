@@ -18,82 +18,94 @@ data class SmsCandidate(
 class SmsInboxReader(private val context: Context) {
 
     /**
-     * Reads recent SMS messages from the Android device's `content://sms/inbox`
-     * and parses transactional bank/UPI/card alerts using Cashiro's `BankParserFactory`.
+     * Reads ALL SMS messages from the phone (`content://sms/inbox` and fallback `content://sms`)
+     * without an artificial row cap, parses every transactional bank/UPI/card alert using
+     * Cashiro's `BankParserFactory`, and returns them ordered by timestamp (`DATE ASC`)
+     * so they are added chronologically by time.
      */
     fun scanDeviceSmsInbox(
         existingSignatures: Set<String>,
-        maxMessages: Int = 250
+        maxMessages: Int = Int.MAX_VALUE
     ): List<SmsCandidate> {
         val candidates = mutableListOf<SmsCandidate>()
         val seenSignatures = existingSignatures.toMutableSet()
 
-        val uri: Uri = Telephony.Sms.Inbox.CONTENT_URI
+        val urisToTry = listOf(
+            Telephony.Sms.Inbox.CONTENT_URI,
+            Telephony.Sms.CONTENT_URI
+        )
+
         val projection = arrayOf(
             Telephony.Sms.ADDRESS,
             Telephony.Sms.BODY,
-            Telephony.Sms.DATE
+            Telephony.Sms.DATE,
+            Telephony.Sms.TYPE
         )
 
-        try {
-            context.contentResolver.query(
-                uri,
-                projection,
-                null,
-                null,
-                "${Telephony.Sms.DATE} DESC"
-            )?.use { cursor ->
-                val addressIdx = cursor.getColumnIndexOrThrow(Telephony.Sms.ADDRESS)
-                val bodyIdx = cursor.getColumnIndexOrThrow(Telephony.Sms.BODY)
-                val dateIdx = cursor.getColumnIndexOrThrow(Telephony.Sms.DATE)
+        for (uri: Uri in urisToTry) {
+            try {
+                context.contentResolver.query(
+                    uri,
+                    projection,
+                    null,
+                    null,
+                    "${Telephony.Sms.DATE} ASC"
+                )?.use { cursor ->
+                    val addressIdx = cursor.getColumnIndex(Telephony.Sms.ADDRESS)
+                    val bodyIdx = cursor.getColumnIndex(Telephony.Sms.BODY)
+                    val dateIdx = cursor.getColumnIndex(Telephony.Sms.DATE)
+                    val typeIdx = cursor.getColumnIndex(Telephony.Sms.TYPE)
 
-                var count = 0
-                while (cursor.moveToNext() && count < maxMessages) {
-                    count++
-                    val sender = cursor.getString(addressIdx).orEmpty()
-                    val body = cursor.getString(bodyIdx).orEmpty()
-                    val timestamp = cursor.getLong(dateIdx)
+                    if (addressIdx < 0 || bodyIdx < 0 || dateIdx < 0) return@use
 
-                    if (sender.isBlank() || body.isBlank()) continue
+                    var count = 0
+                    while (cursor.moveToNext() && count < maxMessages) {
+                        // If querying Telephony.Sms.CONTENT_URI, only read received/inbox messages (type == 1)
+                        if (uri == Telephony.Sms.CONTENT_URI && typeIdx >= 0) {
+                            val msgType = cursor.getInt(typeIdx)
+                            if (msgType != Telephony.Sms.MESSAGE_TYPE_INBOX) continue
+                        }
 
-                    val parsed = BankParserFactory.parseSms(
-                        smsBody = body,
-                        sender = sender,
-                        timestamp = timestamp
-                    ) ?: continue
+                        val sender = cursor.getString(addressIdx).orEmpty()
+                        val body = cursor.getString(bodyIdx).orEmpty()
+                        val timestamp = cursor.getLong(dateIdx)
 
-                    val signature = parsed.generateTransactionId()
-                    if (signature in seenSignatures) continue
-                    seenSignatures.add(signature)
+                        if (sender.isBlank() || body.isBlank()) continue
+                        count++
 
-                    val category = BankParserFactory.inferCategory(parsed)
-                    val isSharedDefault = category in setOf(
-                        "Groceries",
-                        "Food & Dining",
-                        "Rent & Housing",
-                        "Bills & Utilities",
-                        "Fuel & Travel"
-                    )
+                        val parsed = BankParserFactory.parseSms(
+                            smsBody = body,
+                            sender = sender,
+                            timestamp = timestamp
+                        ) ?: continue
 
-                    candidates.add(
-                        SmsCandidate(
-                            id = signature,
-                            parsed = parsed,
-                            suggestedCategory = category,
-                            suggestedAccountName = BankParserFactory.formatAccountDisplayName(parsed),
-                            suggestedPaymentMode = BankParserFactory.inferPaymentMode(parsed),
-                            isSharedByDefault = isSharedDefault
+                        val signature = parsed.generateTransactionId()
+                        if (signature in seenSignatures) continue
+                        seenSignatures.add(signature)
+
+                        val category = BankParserFactory.inferCategory(parsed)
+
+                        candidates.add(
+                            SmsCandidate(
+                                id = signature,
+                                parsed = parsed,
+                                suggestedCategory = category,
+                                suggestedAccountName = BankParserFactory.formatAccountDisplayName(parsed),
+                                suggestedPaymentMode = BankParserFactory.inferPaymentMode(parsed),
+                                isSharedByDefault = true
+                            )
                         )
-                    )
+                    }
                 }
+                if (candidates.isNotEmpty()) break
+            } catch (_: SecurityException) {
+                // Handled by caller when READ_SMS is not granted
+            } catch (_: Exception) {
+                // Safe fallback if Telephony provider is unavailable
             }
-        } catch (_: SecurityException) {
-            // Handled by caller when READ_SMS is not granted
-        } catch (_: Exception) {
-            // Safe fallback if Telephony provider is unavailable on device
         }
 
-        return candidates
+        return candidates.sortedBy { it.parsed.timestamp }
     }
 
     /**
@@ -113,13 +125,7 @@ class SmsInboxReader(private val context: Context) {
 
         val signature = parsed.generateTransactionId()
         val category = BankParserFactory.inferCategory(parsed)
-        val isShared = defaultShared ?: (category in setOf(
-            "Groceries",
-            "Food & Dining",
-            "Rent & Housing",
-            "Bills & Utilities",
-            "Fuel & Travel"
-        ))
+        val isShared = defaultShared ?: true
 
         return SmsCandidate(
             id = signature,

@@ -2,12 +2,15 @@ package com.example.data.repository
 
 import android.content.Context
 import com.example.R
+import com.example.data.local.LocalAccountDataStore
+import com.example.data.local.LocalAccountSessionManager
 import com.example.data.model.CategoryBudget
 import com.example.data.model.ExpenseTransaction
 import com.example.data.model.FinancialAccount
 import com.example.data.model.Household
 import com.example.data.model.HouseholdCodeIndex
 import com.example.data.model.UserProfile
+import com.example.data.sms.SmsCandidate
 import com.google.firebase.Firebase
 import com.google.firebase.auth.auth
 import com.google.firebase.firestore.DocumentSnapshot
@@ -15,6 +18,7 @@ import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.FirebaseFirestoreException
 import com.google.firebase.firestore.snapshots
+import com.ritesh.parser.core.TransactionType
 import java.util.UUID
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
@@ -22,24 +26,47 @@ import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.tasks.await
 
-class AxioRepository(private val db: FirebaseFirestore) {
+class AxioRepository(private val dbProvider: () -> FirebaseFirestore) {
 
-    constructor(context: Context) : this(
+    constructor(db: FirebaseFirestore) : this({ db })
+
+    constructor(context: Context) : this({
         FirebaseFirestore.getInstance(
             context.applicationContext.getString(R.string.firestore_database_id)
         )
-    )
+    }) {
+        LocalAccountSessionManager.ensureInitialized(context.applicationContext)
+    }
 
-    private val auth = Firebase.auth
+    private val db: FirebaseFirestore
+        get() = dbProvider()
+
+    private val currentFirebaseUser
+        get() = runCatching { Firebase.auth.currentUser }.getOrNull()
+
+    private fun isLocalMode(userIdHint: String? = null): Boolean {
+        if (currentFirebaseUser != null) return false
+        val localUser = LocalAccountSessionManager.getCurrentUser()
+        return localUser != null || (userIdHint != null && userIdHint.startsWith("local_user_"))
+    }
+
+    private fun requireLocalUserId(): String {
+        return LocalAccountSessionManager.getCurrentUser()?.uid
+            ?: throw IllegalStateException("No active local or Google user session.")
+    }
 
     private fun requireUserId(): String {
-        return auth.currentUser?.uid
+        return currentFirebaseUser?.uid
+            ?: LocalAccountSessionManager.getCurrentUser()?.uid
             ?: throw IllegalStateException("User must be signed in with Google before accessing Firestore.")
     }
 
     // --- USER PROFILE ---
 
     fun observeUserProfile(userId: String): Flow<UserProfile?> {
+        if (isLocalMode(userId)) {
+            return LocalAccountDataStore.observeUserProfile(userId)
+        }
         val path = "users/$userId"
         return db.collection("users").document(userId)
             .snapshots()
@@ -55,11 +82,38 @@ class AxioRepository(private val db: FirebaseFirestore) {
             }
     }
 
+    suspend fun getUserProfileOnce(): UserProfile? {
+        if (isLocalMode()) {
+            val uid = LocalAccountSessionManager.getCurrentUser()?.uid ?: return null
+            return LocalAccountDataStore.getUserProfileOnce(uid)
+        }
+        val uid = currentFirebaseUser?.uid ?: return null
+        return runCatching {
+            val snap = db.collection("users").document(uid).get().await()
+            if (snap.exists()) snap.toObject(UserProfile::class.java, DocumentSnapshot.ServerTimestampBehavior.ESTIMATE) else null
+        }.getOrNull()
+    }
+
+    suspend fun getHouseholdOnce(householdId: String): Household? {
+        if (householdId.isBlank()) return null
+        if (isLocalMode() || householdId.startsWith("local_")) {
+            return LocalAccountDataStore.getHouseholdOnce(householdId)
+        }
+        return runCatching {
+            val snap = db.collection("households").document(householdId).get().await()
+            if (snap.exists()) snap.toObject(Household::class.java, DocumentSnapshot.ServerTimestampBehavior.ESTIMATE) else null
+        }.getOrNull()
+    }
+
     suspend fun ensureUserProfile(
         displayName: String,
         email: String,
         photoUrl: String = ""
     ): Result<UserProfile> = runCatching {
+        if (isLocalMode()) {
+            val uid = requireLocalUserId()
+            return@runCatching LocalAccountDataStore.ensureUserProfile(uid, displayName, email, photoUrl)
+        }
         val uid = requireUserId()
         val docRef = db.collection("users").document(uid)
         try {
@@ -102,6 +156,11 @@ class AxioRepository(private val db: FirebaseFirestore) {
         personalMonthlyBudget: Double,
         currencySymbol: String
     ): Result<Unit> = runCatching {
+        if (isLocalMode()) {
+            val uid = requireLocalUserId()
+            LocalAccountDataStore.updatePersonalBudgetSettings(uid, personalMonthlyBudget, currencySymbol)
+            return@runCatching
+        }
         val uid = requireUserId()
         val docRef = db.collection("users").document(uid)
         try {
@@ -123,6 +182,9 @@ class AxioRepository(private val db: FirebaseFirestore) {
     // --- HOUSEHOLD CREATION, LINKING & INVITES ---
 
     fun observeHousehold(householdId: String): Flow<Household?> {
+        if (isLocalMode() || householdId.startsWith("local_")) {
+            return LocalAccountDataStore.observeHousehold(householdId)
+        }
         val path = "households/$householdId"
         return db.collection("households").document(householdId)
             .snapshots()
@@ -139,6 +201,9 @@ class AxioRepository(private val db: FirebaseFirestore) {
     }
 
     fun observeEmailInvitedHouseholds(userEmail: String): Flow<List<Household>> {
+        if (isLocalMode()) {
+            return LocalAccountDataStore.observeEmailInvitedHouseholds(userEmail)
+        }
         val normalizedEmail = userEmail.trim().lowercase()
         val path = "households"
         return db.collection("households")
@@ -159,6 +224,17 @@ class AxioRepository(private val db: FirebaseFirestore) {
         userDisplayName: String,
         userEmail: String
     ): Result<Household> = runCatching {
+        if (isLocalMode()) {
+            val uid = requireLocalUserId()
+            return@runCatching LocalAccountDataStore.createHousehold(
+                uid = uid,
+                name = name,
+                monthlyBudgetLimit = monthlyBudgetLimit,
+                currencySymbol = currencySymbol,
+                userDisplayName = userDisplayName,
+                userEmail = userEmail
+            )
+        }
         val uid = requireUserId()
         val joinCode = generateJoinCode()
         val householdRef = db.collection("households").document()
@@ -225,6 +301,15 @@ class AxioRepository(private val db: FirebaseFirestore) {
         userDisplayName: String,
         userEmail: String
     ): Result<String> = runCatching {
+        if (isLocalMode()) {
+            val uid = requireLocalUserId()
+            return@runCatching LocalAccountDataStore.joinHouseholdByCode(
+                uid = uid,
+                rawJoinCode = rawJoinCode,
+                userDisplayName = userDisplayName,
+                userEmail = userEmail
+            )
+        }
         val uid = requireUserId()
         val code = rawJoinCode.trim().uppercase()
         require(code.length in 4..12) { "Please enter a valid 6-character join code." }
@@ -258,6 +343,15 @@ class AxioRepository(private val db: FirebaseFirestore) {
         userDisplayName: String,
         userEmail: String
     ): Result<String> = runCatching {
+        if (isLocalMode() || householdId.startsWith("local_")) {
+            val uid = requireLocalUserId()
+            return@runCatching LocalAccountDataStore.joinHouseholdById(
+                uid = uid,
+                householdId = householdId,
+                userDisplayName = userDisplayName,
+                userEmail = userEmail
+            )
+        }
         val uid = requireUserId()
         val householdRef = db.collection("households").document(householdId)
         try {
@@ -310,6 +404,10 @@ class AxioRepository(private val db: FirebaseFirestore) {
         household: Household,
         inviteeEmail: String
     ): Result<Unit> = runCatching {
+        if (isLocalMode() || household.id.startsWith("local_")) {
+            LocalAccountDataStore.inviteMemberByEmail(household, inviteeEmail)
+            return@runCatching
+        }
         requireUserId()
         val normalized = inviteeEmail.trim().lowercase()
         require(normalized.contains("@") && normalized.length <= 200) { "Enter a valid email address." }
@@ -336,6 +434,10 @@ class AxioRepository(private val db: FirebaseFirestore) {
         name: String,
         monthlyBudgetLimit: Double
     ): Result<Unit> = runCatching {
+        if (isLocalMode() || householdId.startsWith("local_")) {
+            LocalAccountDataStore.updateHouseholdSettings(householdId, name, monthlyBudgetLimit)
+            return@runCatching
+        }
         requireUserId()
         val docRef = db.collection("households").document(householdId)
         try {
@@ -357,6 +459,9 @@ class AxioRepository(private val db: FirebaseFirestore) {
     // --- EXPENSES (PERSONAL & HOUSEHOLD SHARED) ---
 
     fun observePersonalExpenses(userId: String): Flow<List<ExpenseTransaction>> {
+        if (isLocalMode(userId)) {
+            return LocalAccountDataStore.observePersonalExpenses(userId)
+        }
         val path = "users/$userId/personal_expenses"
         return db.collection("users").document(userId).collection("personal_expenses")
             .snapshots()
@@ -370,6 +475,9 @@ class AxioRepository(private val db: FirebaseFirestore) {
     }
 
     fun observeSharedExpenses(householdId: String, userId: String): Flow<List<ExpenseTransaction>> {
+        if (isLocalMode(userId) || householdId.startsWith("local_")) {
+            return LocalAccountDataStore.observeSharedExpenses(householdId)
+        }
         val path = "households/$householdId/shared_expenses"
         return db.collection("households").document(householdId).collection("shared_expenses")
             .whereArrayContains("memberUids", userId)
@@ -397,8 +505,30 @@ class AxioRepository(private val db: FirebaseFirestore) {
         isShared: Boolean,
         smsSignature: String = "",
         referenceNumber: String = "",
-        transactionDateMillis: Long = System.currentTimeMillis()
+        transactionDateMillis: Long = System.currentTimeMillis(),
+        customDocId: String? = null
     ): Result<String> = runCatching {
+        if (isLocalMode()) {
+            val uid = requireLocalUserId()
+            return@runCatching LocalAccountDataStore.addExpense(
+                uid = uid,
+                userName = userName,
+                household = household,
+                title = title,
+                amount = amount,
+                type = type,
+                category = category,
+                accountName = accountName,
+                paymentMode = paymentMode,
+                tags = tags,
+                notes = notes,
+                isShared = isShared,
+                smsSignature = smsSignature,
+                referenceNumber = referenceNumber,
+                transactionDateMillis = transactionDateMillis,
+                customDocId = customDocId
+            )
+        }
         val uid = requireUserId()
         val effectiveShared = isShared && household != null
         val targetHouseholdId = if (effectiveShared) household!!.id else ""
@@ -414,7 +544,12 @@ class AxioRepository(private val db: FirebaseFirestore) {
             db.collection("users").document(uid).collection("personal_expenses")
         }
 
-        val docRef = collectionRef.document()
+        val docRef = if (!customDocId.isNullOrBlank()) {
+            collectionRef.document(customDocId)
+        } else {
+            collectionRef.document()
+        }
+
         val cleanTags = tags.map { it.trim().removePrefix("#") }
             .filter { it.isNotBlank() }
             .distinct()
@@ -453,14 +588,282 @@ class AxioRepository(private val db: FirebaseFirestore) {
         }
     }
 
+    /**
+     * Batch-imports all newly discovered SMS transactions in chronological order (`timestamp`).
+     * Defaults to Shared Household when a household is linked, as configured by the user.
+     */
+    suspend fun batchImportSmsCandidates(
+        candidates: List<SmsCandidate>,
+        userName: String,
+        household: Household?,
+        shareByDefault: Boolean = true
+    ): Result<Int> = runCatching {
+        if (isLocalMode()) {
+            val uid = requireLocalUserId()
+            return@runCatching LocalAccountDataStore.batchImportSmsCandidates(
+                uid = uid,
+                candidates = candidates,
+                userName = userName,
+                household = household,
+                shareByDefault = shareByDefault
+            )
+        }
+        val uid = requireUserId()
+        if (candidates.isEmpty()) return@runCatching 0
+
+        val effectiveShared = shareByDefault && household != null
+        val targetHouseholdId = if (effectiveShared) household!!.id else ""
+        val memberUids = if (effectiveShared) {
+            (household!!.memberUids + uid).distinct().take(20)
+        } else {
+            listOf(uid)
+        }
+
+        val collectionRef = if (effectiveShared) {
+            db.collection("households").document(targetHouseholdId).collection("shared_expenses")
+        } else {
+            db.collection("users").document(uid).collection("personal_expenses")
+        }
+
+        // Sort oldest to newest so transactions are added chronologically by SMS timestamp
+        val sortedCandidates = candidates.sortedBy { it.parsed.timestamp }
+        var importedCount = 0
+        val accountsToUpsert = mutableMapOf<String, SmsCandidate>()
+
+        for (chunk in sortedCandidates.chunked(350)) {
+            val batch = db.batch()
+            for (candidate in chunk) {
+                val parsed = candidate.parsed
+                val isIncome = parsed.type == TransactionType.INCOME
+                val category = candidate.suggestedCategory.ifBlank { "General" }.take(60)
+                val merchantTitle = (parsed.merchant?.takeIf { it.isNotBlank() }
+                    ?: "${parsed.bankName} ${parsed.type.name.lowercase().replaceFirstChar { it.uppercase() }}").take(150)
+
+                val docId = "sms_${candidate.id}"
+                val docRef = collectionRef.document(docId)
+                val tags = listOf("sms-auto", parsed.bankName.lowercase().replace(" ", "-").take(35))
+                    .filter { it.isNotBlank() }
+                    .distinct()
+
+                val paymentMode = if (candidate.suggestedPaymentMode in setOf("UPI", "BANK", "CARD", "WALLET", "CASH")) {
+                    candidate.suggestedPaymentMode
+                } else {
+                    "UPI"
+                }
+
+                val payload = mapOf(
+                    "userId" to uid,
+                    "userName" to userName.ifBlank { "Me" }.take(100),
+                    "householdId" to targetHouseholdId,
+                    "title" to merchantTitle,
+                    "amount" to parsed.amount.toDouble().coerceAtLeast(0.01),
+                    "type" to if (isIncome) "INCOME" else "EXPENSE",
+                    "category" to category,
+                    "accountName" to candidate.suggestedAccountName.ifBlank { parsed.bankName }.take(100),
+                    "paymentMode" to paymentMode,
+                    "tags" to tags,
+                    "notes" to "Auto-parsed from ${parsed.sender}${parsed.reference?.let { " • Ref: $it" }.orEmpty()}".take(500),
+                    "visibility" to if (effectiveShared) "SHARED" else "PERSONAL",
+                    "smsSignature" to candidate.id.take(200),
+                    "referenceNumber" to parsed.reference.orEmpty().take(100),
+                    "transactionDateMillis" to parsed.timestamp.coerceAtLeast(1L),
+                    "memberUids" to memberUids,
+                    "createdAt" to FieldValue.serverTimestamp(),
+                    "updatedAt" to FieldValue.serverTimestamp()
+                )
+                batch.set(docRef, payload)
+                importedCount++
+
+                if (parsed.balance != null || parsed.creditLimit != null || parsed.accountNumber != null) {
+                    accountsToUpsert[candidate.suggestedAccountName] = candidate
+                }
+            }
+            try {
+                batch.commit().await()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                handleFirestoreError(e, OperationType.WRITE, collectionRef.path)
+                throw e
+            }
+        }
+
+        // Upsert discovered accounts with latest balance/limit
+        for ((_, candidate) in accountsToUpsert) {
+            val parsed = candidate.parsed
+            val accType = when {
+                parsed.isFromCard -> "CREDIT_CARD"
+                candidate.suggestedPaymentMode == "WALLET" -> "WALLET"
+                else -> "BANK"
+            }
+            runCatching {
+                upsertAccount(
+                    name = candidate.suggestedAccountName,
+                    bankName = parsed.bankName,
+                    accountType = accType,
+                    lastFourDigits = parsed.accountNumber.orEmpty(),
+                    balance = parsed.balance?.toDouble() ?: 0.0,
+                    creditLimit = parsed.creditLimit?.toDouble() ?: 0.0,
+                    isSharedVisible = effectiveShared
+                )
+            }
+        }
+
+        importedCount
+    }
+
+    /**
+     * Updates an existing transaction's details (merchant, amount, type, category, account,
+     * paymentMode, tags, notes, date, and shared/personal visibility).
+     */
+    suspend fun updateExpense(
+        existing: ExpenseTransaction,
+        household: Household?,
+        title: String,
+        amount: Double,
+        type: String,
+        category: String,
+        accountName: String,
+        paymentMode: String,
+        tags: List<String>,
+        notes: String,
+        transactionDateMillis: Long,
+        isShared: Boolean
+    ): Result<Unit> = runCatching {
+        if (isLocalMode(existing.userId)) {
+            val uid = requireLocalUserId()
+            LocalAccountDataStore.updateExpense(
+                uid = uid,
+                existing = existing,
+                household = household,
+                title = title,
+                amount = amount,
+                type = type,
+                category = category,
+                accountName = accountName,
+                paymentMode = paymentMode,
+                tags = tags,
+                notes = notes,
+                transactionDateMillis = transactionDateMillis,
+                isShared = isShared
+            )
+            return@runCatching
+        }
+        val uid = requireUserId()
+        val wantShared = isShared && household != null
+        val wasShared = existing.visibility == "SHARED" && existing.householdId.isNotBlank()
+
+        val cleanTags = tags.map { it.trim().removePrefix("#") }
+            .filter { it.isNotBlank() }
+            .distinct()
+            .take(10)
+            .map { it.take(40) }
+
+        val validMode = if (paymentMode in setOf("UPI", "BANK", "CARD", "WALLET", "CASH")) paymentMode else "UPI"
+        val validType = if (type == "INCOME") "INCOME" else "EXPENSE"
+
+        // If moving between PERSONAL and SHARED collections, create in target and delete from source
+        if (wantShared != wasShared) {
+            addExpense(
+                userName = existing.userName.ifBlank { "Me" },
+                household = household,
+                title = title,
+                amount = amount,
+                type = validType,
+                category = category,
+                accountName = accountName,
+                paymentMode = validMode,
+                tags = cleanTags,
+                notes = notes,
+                isShared = wantShared,
+                smsSignature = existing.smsSignature,
+                referenceNumber = existing.referenceNumber,
+                transactionDateMillis = transactionDateMillis
+            ).getOrThrow()
+            deleteExpense(existing).getOrThrow()
+            return@runCatching
+        }
+
+        val docRef = if (wasShared) {
+            db.collection("households").document(existing.householdId)
+                .collection("shared_expenses").document(existing.id)
+        } else {
+            db.collection("users").document(uid)
+                .collection("personal_expenses").document(existing.id)
+        }
+
+        val updateMap = mapOf(
+            "title" to title.trim().ifBlank { category }.take(150),
+            "amount" to amount.coerceAtLeast(0.01),
+            "type" to validType,
+            "category" to category.trim().ifBlank { "General" }.take(60),
+            "accountName" to accountName.trim().ifBlank { "Cash" }.take(100),
+            "paymentMode" to validMode,
+            "tags" to cleanTags,
+            "notes" to notes.trim().take(500),
+            "transactionDateMillis" to transactionDateMillis.coerceAtLeast(1L),
+            "updatedAt" to FieldValue.serverTimestamp()
+        )
+
+        try {
+            docRef.update(updateMap).await()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.UPDATE, docRef.path)
+            throw e
+        }
+    }
+
+    /**
+     * Fast category update by document ID & scope — used by both quick category chips
+     * and the real-time Android Notification action buttons.
+     */
+    suspend fun updateExpenseCategoryById(
+        expenseId: String,
+        householdId: String,
+        visibility: String,
+        newCategory: String
+    ): Result<Unit> = runCatching {
+        if (isLocalMode() || householdId.startsWith("local_")) {
+            LocalAccountDataStore.updateExpenseCategoryById(expenseId, newCategory)
+            return@runCatching
+        }
+        val uid = requireUserId()
+        val docRef = if (visibility == "SHARED" && householdId.isNotBlank()) {
+            db.collection("households").document(householdId)
+                .collection("shared_expenses").document(expenseId)
+        } else {
+            db.collection("users").document(uid)
+                .collection("personal_expenses").document(expenseId)
+        }
+        try {
+            docRef.update(
+                mapOf(
+                    "category" to newCategory.trim().ifBlank { "General" }.take(60),
+                    "updatedAt" to FieldValue.serverTimestamp()
+                )
+            ).await()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.UPDATE, docRef.path)
+            throw e
+        }
+    }
+
     suspend fun toggleExpensePrivacy(
         expense: ExpenseTransaction,
         household: Household
     ): Result<Unit> = runCatching {
-        val uid = requireUserId()
+        if (isLocalMode(expense.userId)) {
+            val uid = requireLocalUserId()
+            LocalAccountDataStore.toggleExpensePrivacy(uid, expense, household)
+            return@runCatching
+        }
+        requireUserId()
         val movingToShared = expense.visibility == "PERSONAL"
 
-        // 1. Create in destination collection
         addExpense(
             userName = expense.userName,
             household = household,
@@ -478,11 +881,14 @@ class AxioRepository(private val db: FirebaseFirestore) {
             transactionDateMillis = expense.transactionDateMillis
         ).getOrThrow()
 
-        // 2. Delete from source collection
         deleteExpense(expense).getOrThrow()
     }
 
     suspend fun deleteExpense(expense: ExpenseTransaction): Result<Unit> = runCatching {
+        if (isLocalMode(expense.userId)) {
+            LocalAccountDataStore.deleteExpense(expense.id)
+            return@runCatching
+        }
         val uid = requireUserId()
         require(expense.id.isNotBlank()) { "Expense ID must not be blank" }
         val docRef = if (expense.visibility == "SHARED" && expense.householdId.isNotBlank()) {
@@ -505,6 +911,9 @@ class AxioRepository(private val db: FirebaseFirestore) {
     // --- CATEGORY BUDGETS (PERSONAL & HOUSEHOLD SHARED) ---
 
     fun observePersonalCategoryBudgets(userId: String): Flow<List<CategoryBudget>> {
+        if (isLocalMode(userId)) {
+            return LocalAccountDataStore.observePersonalCategoryBudgets(userId)
+        }
         val path = "users/$userId/personal_budgets"
         return db.collection("users").document(userId).collection("personal_budgets")
             .snapshots()
@@ -517,6 +926,9 @@ class AxioRepository(private val db: FirebaseFirestore) {
     }
 
     fun observeSharedCategoryBudgets(householdId: String, userId: String): Flow<List<CategoryBudget>> {
+        if (isLocalMode(userId) || householdId.startsWith("local_")) {
+            return LocalAccountDataStore.observeSharedCategoryBudgets(householdId)
+        }
         val path = "households/$householdId/category_budgets"
         return db.collection("households").document(householdId).collection("category_budgets")
             .whereArrayContains("memberUids", userId)
@@ -536,6 +948,17 @@ class AxioRepository(private val db: FirebaseFirestore) {
         isShared: Boolean,
         household: Household?
     ): Result<String> = runCatching {
+        if (isLocalMode()) {
+            val uid = requireLocalUserId()
+            return@runCatching LocalAccountDataStore.saveCategoryBudget(
+                uid = uid,
+                category = category,
+                monthlyLimit = monthlyLimit,
+                alertThresholdPercent = alertThresholdPercent,
+                isShared = isShared,
+                household = household
+            )
+        }
         val uid = requireUserId()
         val effectiveShared = isShared && household != null
         val sanitizedId = category.lowercase().replace(Regex("[^a-z0-9]+"), "_").trim('_').ifBlank { "general" }
@@ -577,6 +1000,10 @@ class AxioRepository(private val db: FirebaseFirestore) {
     }
 
     suspend fun deleteCategoryBudget(budget: CategoryBudget, isShared: Boolean): Result<Unit> = runCatching {
+        if (isLocalMode(budget.userId)) {
+            LocalAccountDataStore.deleteCategoryBudget(budget.id)
+            return@runCatching
+        }
         val uid = requireUserId()
         val docRef = if (isShared && budget.householdId.isNotBlank()) {
             db.collection("households").document(budget.householdId)
@@ -598,6 +1025,9 @@ class AxioRepository(private val db: FirebaseFirestore) {
     // --- FINANCIAL ACCOUNTS (BANK, CARD, UPI, WALLET, CASH) ---
 
     fun observeAccounts(userId: String): Flow<List<FinancialAccount>> {
+        if (isLocalMode(userId)) {
+            return LocalAccountDataStore.observeAccounts(userId)
+        }
         val path = "users/$userId/accounts"
         return db.collection("users").document(userId).collection("accounts")
             .snapshots()
@@ -618,6 +1048,19 @@ class AxioRepository(private val db: FirebaseFirestore) {
         creditLimit: Double = 0.0,
         isSharedVisible: Boolean = true
     ): Result<String> = runCatching {
+        if (isLocalMode()) {
+            val uid = requireLocalUserId()
+            return@runCatching LocalAccountDataStore.upsertAccount(
+                uid = uid,
+                name = name,
+                bankName = bankName,
+                accountType = accountType,
+                lastFourDigits = lastFourDigits,
+                balance = balance,
+                creditLimit = creditLimit,
+                isSharedVisible = isSharedVisible
+            )
+        }
         val uid = requireUserId()
         val docKey = "${bankName}_${accountType}_${lastFourDigits}"
             .lowercase()
@@ -651,6 +1094,10 @@ class AxioRepository(private val db: FirebaseFirestore) {
     }
 
     suspend fun deleteAccount(accountId: String): Result<Unit> = runCatching {
+        if (isLocalMode()) {
+            LocalAccountDataStore.deleteAccount(accountId)
+            return@runCatching
+        }
         val uid = requireUserId()
         val docRef = db.collection("users").document(uid).collection("accounts").document(accountId)
         try {

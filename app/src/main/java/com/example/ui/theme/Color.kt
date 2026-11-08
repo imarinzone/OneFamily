@@ -2,53 +2,75 @@ package com.example.ui.theme
 
 import androidx.compose.ui.graphics.Color
 
-// Precision Fintech Editorial Palette (Emerald Teal + Obsidian Slate + Household Indigo)
-val AxioEmeraldPrimaryLight = Color(0xFF006C51)
-val AxioOnEmeraldLight = Color(0xFFFFFFFF)
-val AxioEmeraldContainerLight = Color(0xFF83F8D1)
-val AxioOnEmeraldContainerLight = Color(0xFF002116)
+// Warm Coral, Sunny Marigold, Mint & Berry Pop on Cream Palette
+val CoralPrimaryLight = Color(0xFFFF5A5F)
+val OnCoralLight = Color(0xFFFFFFFF)
+val CoralContainerLight = Color(0xFFFFE2E3)
+val OnCoralContainerLight = Color(0xFF4A080C)
 
-val AxioSlateSecondaryLight = Color(0xFF1E293B)
-val AxioOnSlateLight = Color(0xFFFFFFFF)
-val AxioSlateContainerLight = Color(0xFFE2E8F0)
-val AxioOnSlateContainerLight = Color(0xFF0F172A)
+val MarigoldSecondaryLight = Color(0xFFF59E0B)
+val OnMarigoldLight = Color(0xFFFFFFFF)
+val MarigoldContainerLight = Color(0xFFFFF0C2)
+val OnMarigoldContainerLight = Color(0xFF3D2400)
 
-val AxioIndigoTertiaryLight = Color(0xFF4F46E5)
-val AxioOnIndigoLight = Color(0xFFFFFFFF)
-val AxioIndigoContainerLight = Color(0xFFE0E7FF)
-val AxioOnIndigoContainerLight = Color(0xFF1E1B4B)
+val BerryTertiaryLight = Color(0xFF8338EC)
+val OnBerryLight = Color(0xFFFFFFFF)
+val BerryContainerLight = Color(0xFFEDE2FF)
+val OnBerryContainerLight = Color(0xFF2B0063)
 
-val AxioBackgroundLight = Color(0xFFF8FAFC)
-val AxioSurfaceLight = Color(0xFFFFFFFF)
-val AxioSurfaceVariantLight = Color(0xFFF1F5F9)
-val AxioOnSurfaceLight = Color(0xFF0F172A)
-val AxioOnSurfaceVariantLight = Color(0xFF475569)
+val CreamBackgroundLight = Color(0xFFFFFDF9)
+val PaperSurfaceLight = Color(0xFFFFFFFF)
+val WarmSurfaceVariantLight = Color(0xFFF9F3E8)
+val OnCreamSurfaceLight = Color(0xFF231F20)
+val OnWarmSurfaceVariantLight = Color(0xFF6E655F)
 
-// Dark Theme Tokens
-val AxioEmeraldPrimaryDark = Color(0xFF4EE2B8)
-val AxioOnEmeraldDark = Color(0xFF003828)
-val AxioEmeraldContainerDark = Color(0xFF00513C)
-val AxioOnEmeraldContainerDark = Color(0xFF83F8D1)
+// Dark Theme Tokens (Cozy Warm Plum-Charcoal with Punchy Pop Accents)
+val CoralPrimaryDark = Color(0xFFFF7A7E)
+val OnCoralDark = Color(0xFF4A080C)
+val CoralContainerDark = Color(0xFF7A181D)
+val OnCoralContainerDark = Color(0xFFFFE2E3)
 
-val AxioSlateSecondaryDark = Color(0xFF94A3B8)
-val AxioOnSlateDark = Color(0xFF0F172A)
-val AxioSlateContainerDark = Color(0xFF1E293B)
-val AxioOnSlateContainerDark = Color(0xFFE2E8F0)
+val MarigoldSecondaryDark = Color(0xFFFFC44D)
+val OnMarigoldDark = Color(0xFF3D2400)
+val MarigoldContainerDark = Color(0xFF5E3A00)
+val OnMarigoldContainerDark = Color(0xFFFFF0C2)
 
-val AxioIndigoTertiaryDark = Color(0xFFA5B4FC)
-val AxioOnIndigoDark = Color(0xFF1E1B4B)
-val AxioIndigoContainerDark = Color(0xFF312E81)
-val AxioOnIndigoContainerDark = Color(0xFFE0E7FF)
+val BerryTertiaryDark = Color(0xFFB98CFF)
+val OnBerryDark = Color(0xFF2B0063)
+val BerryContainerDark = Color(0xFF491296)
+val OnBerryContainerDark = Color(0xFFEDE2FF)
 
-val AxioBackgroundDark = Color(0xFF0B111E)
-val AxioSurfaceDark = Color(0xFF111827)
-val AxioSurfaceVariantDark = Color(0xFF1E293B)
-val AxioOnSurfaceDark = Color(0xFFF8FAFC)
-val AxioOnSurfaceVariantDark = Color(0xFF94A3B8)
+val CreamBackgroundDark = Color(0xFF19151D)
+val PaperSurfaceDark = Color(0xFF241F29)
+val WarmSurfaceVariantDark = Color(0xFF322B38)
+val OnCreamSurfaceDark = Color(0xFFFFFDF9)
+val OnWarmSurfaceVariantDark = Color(0xFFC9BFC9)
 
-// Semantic Budget & Status Colors
-val BudgetSafeGreen = Color(0xFF10B981)
-val BudgetWarnAmber = Color(0xFFF59E0B)
-val BudgetDangerCoral = Color(0xFFEF4444)
-val HouseholdBadgeIndigo = Color(0xFF6366F1)
-val PersonalBadgeTeal = Color(0xFF0D9488)
+// Punchy Semantic & Receipt Accents
+val BudgetSafeGreen = Color(0xFF06D6A0)
+val BudgetWarnAmber = Color(0xFFFFB703)
+val BudgetDangerCoral = Color(0xFFFF5A5F)
+val HouseholdBadgeIndigo = Color(0xFF8338EC)
+val PersonalBadgeTeal = Color(0xFFFF5A5F)
+
+val ReceiptPaperColor = Color(0xFFFFFDF6)
+val ReceiptPaperBorder = Color(0xFFEAE2D3)
+val ReceiptInkColor = Color(0xFF231F20)
+val ReceiptMutedInk = Color(0xFF756B63)
+
+// Punchy Category Color Helper
+fun categoryAccentColor(category: String): Color {
+    val lower = category.lowercase()
+    return when {
+        lower.contains("grocer") -> Color(0xFF06D6A0) // Fresh Mint
+        lower.contains("food") || lower.contains("dining") -> Color(0xFFFF5A5F) // Warm Coral
+        lower.contains("rent") || lower.contains("housing") -> Color(0xFF8338EC) // Berry Pop
+        lower.contains("bill") || lower.contains("util") -> Color(0xFFFFB703) // Sunny Marigold
+        lower.contains("fuel") || lower.contains("travel") -> Color(0xFF118AB2) // Ocean Pop
+        lower.contains("shop") -> Color(0xFFEC4899) // Pink Pop
+        lower.contains("health") -> Color(0xFF10B981) // Emerald Mint
+        lower.contains("entertain") -> Color(0xFFF97316) // Tangerine
+        lower.contains("invest") || lower.contains("salary") || lower.contains("income") -> Color(0xFF06D6A0)
+        else -> Color(0xFF8338EC)
+    }
+}

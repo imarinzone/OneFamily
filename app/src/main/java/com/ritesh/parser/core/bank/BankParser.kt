@@ -59,9 +59,11 @@ abstract class BankParser {
     }
 
     protected open fun extractAmount(message: String): BigDecimal? {
+        // Strip balance/limit clauses first when searching for transaction amount if needed,
+        // or match primary transaction amount patterns
         for (pattern in CompiledPatterns.AMOUNT_PATTERNS) {
-            val match = pattern.find(message)
-            if (match != null) {
+            val matches = pattern.findAll(message)
+            for (match in matches) {
                 val raw = match.groupValues[1].replace(",", "").trim()
                 val parsed = raw.toBigDecimalOrNull()
                 if (parsed != null && parsed > BigDecimal.ZERO) {
@@ -76,11 +78,11 @@ abstract class BankParser {
         val lowerMessage = message.lowercase()
 
         val investmentKeywords = listOf(
-            "mutual fund", "sip", "zerodha", "groww", "kuvera", "upstox",
-            "nps", "ppf", "folio", "nav", "allotted", "units allotted", "indmoney"
+            "mutual fund", "sip ", "zerodha", "groww", "kuvera", "upstox",
+            "nps", "ppf", "folio", "nav ", "units allotted", "indmoney"
         )
         if (investmentKeywords.any { lowerMessage.contains(it) } &&
-            (lowerMessage.contains("debited") || lowerMessage.contains("paid") || lowerMessage.contains("invested") || lowerMessage.contains("purchase"))
+            (lowerMessage.contains("debited") || lowerMessage.contains("paid") || lowerMessage.contains("invested") || lowerMessage.contains("purchase") || lowerMessage.contains("allotted"))
         ) {
             return TransactionType.INVESTMENT
         }
@@ -88,11 +90,13 @@ abstract class BankParser {
         val expenseKeywords = listOf(
             "debited", "spent", "paid", "withdrawn", "sent", "charged",
             "purchase", "billed", "deducted", "used at", "transferred to",
-            "dr ", "dr.", "debit", "autopay", "auto-debit", "emi"
+            "dr ", "dr.", "debit", "autopay", "auto-debit", "emi ", "trf to",
+            "payment of", "txn of", "transaction of", "towards"
         )
         val incomeKeywords = listOf(
             "credited", "received", "deposited", "refund", "cashback",
-            "salary", "cr ", "cr.", "credit to", "added to", "reversal"
+            "salary", "cr ", "cr.", "credit to", "added to", "reversal",
+            "reimbursement", "interest credited", "dividend"
         )
 
         val debitIndex = expenseKeywords
@@ -105,15 +109,33 @@ abstract class BankParser {
             .filter { it >= 0 }
             .minOrNull()
 
-        // Handle "credited to <payee> and debited from your a/c"
+        // Handle "credited to <payee> and debited from your a/c" or "A/c debited ... <merchant> credited"
         if (debitIndex != null && creditIndex != null) {
-            if (lowerMessage.contains("debited from") || lowerMessage.contains("a/c debited") || lowerMessage.contains("sent rs") || lowerMessage.contains("spent on")) {
+            if (lowerMessage.contains("debited from") ||
+                lowerMessage.contains("debited by") ||
+                lowerMessage.contains("debited for") ||
+                lowerMessage.contains("debited with") ||
+                lowerMessage.contains("is debited") ||
+                lowerMessage.contains("has been debited") ||
+                lowerMessage.contains("a/c debited") ||
+                lowerMessage.contains("acct debited") ||
+                lowerMessage.contains("sent rs") ||
+                lowerMessage.contains("spent on") ||
+                lowerMessage.contains("paid rs")
+            ) {
                 return TransactionType.EXPENSE
             }
-            if (lowerMessage.contains("credited to your") || lowerMessage.contains("a/c credited") || lowerMessage.contains("received in")) {
+            if (lowerMessage.contains("credited to your") ||
+                lowerMessage.contains("credited to a/c") ||
+                lowerMessage.contains("credited with") ||
+                lowerMessage.contains("is credited") ||
+                lowerMessage.contains("has been credited") ||
+                lowerMessage.contains("a/c credited") ||
+                lowerMessage.contains("received in")
+            ) {
                 return TransactionType.INCOME
             }
-            return if (debitIndex < creditIndex) TransactionType.EXPENSE else TransactionType.INCOME
+            return if (debitIndex <= creditIndex) TransactionType.EXPENSE else TransactionType.INCOME
         }
 
         if (debitIndex != null) return TransactionType.EXPENSE
@@ -124,14 +146,18 @@ abstract class BankParser {
 
     protected open fun extractMerchant(message: String, sender: String): String? {
         val patterns = listOf(
-            // UPI VPA or To <Merchant> on
-            Regex("""(?:to|at|towards|for|info:?|vpa)\s+([A-Za-z0-9._\-@\s&'/]{2,45}?)(?:\s+on\b|\s+ref\b|\s+upi\b|\s+avl\b|\s+bal\b|\.\s|$|\n)""", RegexOption.IGNORE_CASE),
-            // Info: UPI/P2M/123456/MERCHANT
-            Regex("""(?:UPI|IMPS|NEFT|POS)[/\-:](?:P2[AM][/\-:])?(?:[0-9]{6,14}[/\-:])?([A-Za-z0-9\s&._\-]{2,35}?)(?:[/\-:]|\s+on|\s+ref|\.|$)""", RegexOption.IGNORE_CASE),
+            // UPI/P2M/123456/MERCHANT or UPI-123456-MERCHANT
+            Regex("""(?:UPI|IMPS|NEFT|RTGS|POS)[/\-:](?:P2[AM][/\-:])?(?:[0-9]{6,16}[/\-:])?([A-Za-z0-9\s&._'\-]{2,35}?)(?:[/\-:]|\s+on\b|\s+ref\b|\.|$|\n)""", RegexOption.IGNORE_CASE),
+            // trf to <Merchant> Refno
+            Regex("""\btrf\s+to\s+([A-Za-z0-9\s&._'\-@]{2,40}?)(?:\s+ref|\s+on\b|\s+upi\b|\.|$|\n)""", RegexOption.IGNORE_CASE),
+            // ; <Merchant> credited
+            Regex(""";\s*([A-Za-z0-9\s&._'\-@]{2,40}?)\s+credited""", RegexOption.IGNORE_CASE),
             // Spent on Card at MERCHANT
-            Regex("""(?:spent|used|purchase|txn)\s+(?:on\s+.*?\s+)?at\s+([A-Za-z0-9\s&._'\-]{2,40}?)(?:\s+on\b|\s+for\b|\.\s|$)""", RegexOption.IGNORE_CASE),
+            Regex("""(?:spent|used|purchase|txn|transaction)\s+(?:on\s+.*?\s+)?at\s+([A-Za-z0-9\s&._'\-]{2,40}?)(?:\s+on\b|\s+for\b|\.\s|$|\n)""", RegexOption.IGNORE_CASE),
+            // To / at / towards / VPA <Merchant>
+            Regex("""\b(?:to|at|towards|vpa|beneficiary|payee)\s+([A-Za-z0-9._\-@\s&'/]{2,42}?)(?:\s+on\b|\s+ref\b|\s+upi\b|\s+avl\b|\s+bal\b|\s+via\b|\.\s|$|\n)""", RegexOption.IGNORE_CASE),
             // Credited by / from SENDER
-            Regex("""(?:from|by)\s+([A-Za-z0-9\s&._@\-]{2,40}?)(?:\s+on\b|\s+ref\b|\s+upi\b|\.\s|$|\n)""", RegexOption.IGNORE_CASE)
+            Regex("""\b(?:from|by)\s+([A-Za-z0-9\s&._@\-]{2,40}?)(?:\s+on\b|\s+ref\b|\s+upi\b|\s+towards\b|\.\s|$|\n)""", RegexOption.IGNORE_CASE)
         )
 
         for (pattern in patterns) {
@@ -194,21 +220,33 @@ abstract class BankParser {
     protected open fun isTransactionMessage(message: String): Boolean {
         val lowerMessage = message.lowercase()
 
-        val ignorePhrases = listOf(
-            "otp", "one time password", "verification code", "auth code",
+        // Only reject true OTP/verification messages, NOT bank debit alerts that end with "Do not share OTP"
+        val pureOtpPatterns = listOf(
+            Regex("""\botp\s+(?:is|for|to)\b"""),
+            Regex("""\bis\s+your\s+(?:otp|one\s+time\s+password|verification\s+code)\b"""),
+            Regex("""\b(?:one\s+time\s+password|verification\s+code|auth\s+code)\s+(?:is|for)\b"""),
+            Regex("""\buse\s+otp\b""")
+        )
+        if (pureOtpPatterns.any { it.containsMatchIn(lowerMessage) }) {
+            return false
+        }
+
+        // Ignore collect requests, failed transactions, and statement due reminders (unless actual debit/credit occurred)
+        val nonTransactionPhrases = listOf(
             "requested money", "collect request", "has requested",
             "bill is generated", "statement is ready", "minimum amount due",
-            "total amount due", "due on", "apply now", "pre-approved",
-            "offer", "win ", "discount", "voucher", "failed", "declined",
-            "could not be processed", "mandate", "e-mandate", "kyc"
+            "total amount due", "is due on", "will be debited on",
+            "failed", "declined", "could not be processed", "was unsuccessful"
         )
-        if (ignorePhrases.any { lowerMessage.contains(it) }) {
+        if (nonTransactionPhrases.any { lowerMessage.contains(it) }) {
             return false
         }
 
         val transactionIndicators = listOf(
             "debited", "credited", "spent", "paid", "withdrawn",
-            "received", "deposited", "sent", "txn", "purchase", "refund"
+            "received", "deposited", "sent", "txn", "transaction",
+            "purchase", "refund", "deducted", "transferred", "trf to",
+            "autopay", "charged", "billed"
         )
         return transactionIndicators.any { lowerMessage.contains(it) }
     }
@@ -216,29 +254,30 @@ abstract class BankParser {
     protected open fun detectIsCard(message: String): Boolean {
         val lower = message.lowercase()
         val cardIndicators = listOf(
-            "credit card", "debit card", "card ending", "card xx",
-            "card no", "cc ", "spent on card", "avl limit", "available limit"
+            "credit card", "debit card", "card ending", "card xx", "card x",
+            "card no", "cc ", "spent on card", "avl limit", "available limit", "curr limit"
         )
         return cardIndicators.any { lower.contains(it) }
     }
 
     protected open fun cleanMerchantName(merchant: String): String {
         var cleaned = merchant
-            .replace(Regex("""@[a-zA-Z0-9._\-]+"""), "") // strip VPA suffix like @okaxis
-            .replace(Regex("""^(?:VPA|UPI|POS|IMPS|NEFT|RTGS|ACH|MMT)[:/\-\s]+""", RegexOption.IGNORE_CASE), "")
-            .replace(Regex("""(?:\s+on|\s+ref|\s+upi|\s+avl|\s+bal|\s+not\s+you).*$""", RegexOption.IGNORE_CASE), "")
+            .replace(Regex("""@[a-zA-Z0-9._\-]+"""), "")
+            .replace(Regex("""^(?:VPA|UPI|POS|IMPS|NEFT|RTGS|ACH|MMT|BY|TO|AT|FROM)[:/\-\s]+""", RegexOption.IGNORE_CASE), "")
+            .replace(Regex("""(?:\s+on|\s+ref|\s+upi|\s+avl|\s+bal|\s+not\s+you|\s+if\s+not).*$""", RegexOption.IGNORE_CASE), "")
             .replace(Regex("""[^a-zA-Z0-9\s&'\-.]"""), " ")
             .replace(Regex("""\s+"""), " ")
             .trim()
 
-        if (cleaned.equals("your a c", ignoreCase = true) ||
-            cleaned.equals("your account", ignoreCase = true) ||
-            cleaned.equals("a c", ignoreCase = true)
+        val lowerCleaned = cleaned.lowercase()
+        if (lowerCleaned in setOf(
+                "your a c", "your account", "a c", "ac", "account", "acct",
+                "you", "your", "me", "self", "bank", "upi", "imps", "neft"
+            ) || lowerCleaned.startsWith("a c ") || lowerCleaned.startsWith("ac ") || lowerCleaned.startsWith("acct ")
         ) {
             return ""
         }
 
-        // Convert ALL CAPS merchant names into clean Title Case unless short acronym
         if (cleaned.length > 4 && cleaned == cleaned.uppercase()) {
             cleaned = cleaned.lowercase().split(" ").joinToString(" ") { word ->
                 word.replaceFirstChar { it.uppercase() }
@@ -251,10 +290,11 @@ abstract class BankParser {
         if (name.length < 2) return false
         val invalidWords = setOf(
             "a/c", "ac", "account", "acct", "bank", "card", "upi",
-            "rs", "inr", "bal", "balance", "sms", "block", "call", "you", "your"
+            "rs", "inr", "bal", "balance", "sms", "block", "call", "you", "your",
+            "debited", "credited", "date", "time", "ref", "refno", "info"
         )
         if (name.lowercase() in invalidWords) return false
-        if (name.all { it.isDigit() || it == 'x' || it == 'X' || it == '*' }) return false
+        if (name.all { it.isDigit() || it == 'x' || it == 'X' || it == '*' || it == '.' || it == '-' }) return false
         return true
     }
 }
