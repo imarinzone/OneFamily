@@ -45,9 +45,9 @@ class AxioRepository(private val dbProvider: () -> FirebaseFirestore) {
         get() = runCatching { Firebase.auth.currentUser }.getOrNull()
 
     private fun isLocalMode(userIdHint: String? = null): Boolean {
-        if (currentFirebaseUser != null) return false
-        val localUser = LocalAccountSessionManager.getCurrentUser()
-        return localUser != null || (userIdHint != null && userIdHint.startsWith("local_user_"))
+        if (userIdHint != null && userIdHint.startsWith("local_user_")) return true
+        if (LocalAccountSessionManager.getCurrentUser() != null) return true
+        return currentFirebaseUser == null
     }
 
     private fun requireLocalUserId(): String {
@@ -128,7 +128,7 @@ class AxioRepository(private val dbProvider: () -> FirebaseFirestore) {
                     "displayName" to displayName.ifBlank { "Family Member" }.take(100),
                     "photoUrl" to photoUrl.take(500),
                     "activeHouseholdId" to "",
-                    "personalMonthlyBudget" to 35000.0,
+                    "personalMonthlyBudget" to 0.0,
                     "currencySymbol" to "₹",
                     "createdAt" to FieldValue.serverTimestamp(),
                     "updatedAt" to FieldValue.serverTimestamp()
@@ -140,7 +140,7 @@ class AxioRepository(private val dbProvider: () -> FirebaseFirestore) {
                     email = email,
                     displayName = displayName.ifBlank { "Family Member" },
                     photoUrl = photoUrl,
-                    personalMonthlyBudget = 35000.0,
+                    personalMonthlyBudget = 0.0,
                     currencySymbol = "₹"
                 )
             }
@@ -254,7 +254,7 @@ class AxioRepository(private val dbProvider: () -> FirebaseFirestore) {
                 "memberNames" to mapOf(uid to cleanUserName),
                 "memberEmails" to mapOf(uid to cleanEmail),
                 "invitedEmails" to emptyList<String>(),
-                "monthlyBudgetLimit" to monthlyBudgetLimit.coerceAtLeast(1000.0),
+                "monthlyBudgetLimit" to monthlyBudgetLimit.coerceAtLeast(0.0),
                 "currencySymbol" to currencySymbol.ifBlank { "₹" }.take(10),
                 "createdAt" to FieldValue.serverTimestamp(),
                 "updatedAt" to FieldValue.serverTimestamp()
@@ -625,8 +625,34 @@ class AxioRepository(private val dbProvider: () -> FirebaseFirestore) {
             db.collection("users").document(uid).collection("personal_expenses")
         }
 
+        // Query existing SMS signatures from personal & shared collections so we never overwrite existing/edited SMS receipts
+        val existingServerSignatures = mutableSetOf<String>()
+        runCatching {
+            val pSnap = db.collection("users").document(uid).collection("personal_expenses").get().await()
+            pSnap.documents.forEach { doc ->
+                doc.getString("smsSignature")?.takeIf { it.isNotBlank() }?.let { existingServerSignatures.add(it) }
+                existingServerSignatures.add(doc.id.removePrefix("sms_"))
+            }
+        }
+        if (effectiveShared) {
+            runCatching {
+                val sSnap = db.collection("households").document(targetHouseholdId).collection("shared_expenses")
+                    .whereArrayContains("memberUids", uid)
+                    .get()
+                    .await()
+                sSnap.documents.forEach { doc ->
+                    doc.getString("smsSignature")?.takeIf { it.isNotBlank() }?.let { existingServerSignatures.add(it) }
+                    existingServerSignatures.add(doc.id.removePrefix("sms_"))
+                }
+            }
+        }
+
         // Sort oldest to newest so transactions are added chronologically by SMS timestamp
-        val sortedCandidates = candidates.sortedBy { it.parsed.timestamp }
+        val sortedCandidates = candidates
+            .filterNot { it.id in existingServerSignatures }
+            .sortedBy { it.parsed.timestamp }
+        if (sortedCandidates.isEmpty()) return@runCatching 0
+
         var importedCount = 0
         val accountsToUpsert = mutableMapOf<String, SmsCandidate>()
 

@@ -48,7 +48,7 @@ service cloud.firestore {
              data.visibility is string && data.visibility in ['PERSONAL', 'SHARED'] &&
              (!('smsSignature' in data) || (data.smsSignature is string && data.smsSignature.size() <= 200)) &&
              (!('referenceNumber' in data) || (data.referenceNumber is string && data.referenceNumber.size() <= 100)) &&
-             data.transactionDateMillis is int && data.transactionDateMillis > 0 &&
+             data.transactionDateMillis is number && data.transactionDateMillis > 0 &&
              (!('memberUids' in data) || (data.memberUids is list && data.memberUids.size() <= 20 && (data.memberUids.size() == 0 || (data.memberUids[0] is string && data.memberUids[0].size() <= 128)))) &&
              data.createdAt is timestamp && data.createdAt <= request.time &&
              data.updatedAt is timestamp && data.updatedAt <= request.time;
@@ -59,7 +59,7 @@ service cloud.firestore {
              (!('householdId' in data) || (data.householdId is string && data.householdId.size() <= 128)) &&
              data.category is string && data.category.size() >= 1 && data.category.size() <= 60 &&
              data.monthlyLimit is number && data.monthlyLimit > 0 &&
-             data.alertThresholdPercent is int && data.alertThresholdPercent >= 1 && data.alertThresholdPercent <= 100 &&
+             data.alertThresholdPercent is number && data.alertThresholdPercent >= 1 && data.alertThresholdPercent <= 100 &&
              (!('memberUids' in data) || (data.memberUids is list && data.memberUids.size() <= 20 && (data.memberUids.size() == 0 || (data.memberUids[0] is string && data.memberUids[0].size() <= 128)))) &&
              data.createdAt is timestamp && data.createdAt <= request.time &&
              data.updatedAt is timestamp && data.updatedAt <= request.time;
@@ -118,8 +118,7 @@ service cloud.firestore {
                        isValidId(userId) &&
                        request.auth.uid == userId &&
                        incoming().uid == existing().uid &&
-                       incoming().createdAt == existing().createdAt &&
-                       incoming().diff(existing()).affectedKeys().hasOnly(['email', 'displayName', 'photoUrl', 'activeHouseholdId', 'personalMonthlyBudget', 'currencySymbol', 'updatedAt']);
+                       incoming().diff(existing()).affectedKeys().hasOnly(['email', 'displayName', 'photoUrl', 'activeHouseholdId', 'personalMonthlyBudget', 'currencySymbol', 'createdAt', 'updatedAt']);
 
       allow delete: if isSignedIn() && isValidId(userId) && request.auth.uid == userId;
 
@@ -142,8 +141,7 @@ service cloud.firestore {
                          isValidId(expenseId) &&
                          request.auth.uid == userId &&
                          incoming().userId == existing().userId &&
-                         incoming().createdAt == existing().createdAt &&
-                         incoming().diff(existing()).affectedKeys().hasOnly(['userName', 'householdId', 'title', 'amount', 'type', 'category', 'accountName', 'paymentMode', 'tags', 'notes', 'visibility', 'smsSignature', 'referenceNumber', 'transactionDateMillis', 'memberUids', 'updatedAt']);
+                         incoming().diff(existing()).affectedKeys().hasOnly(['userName', 'householdId', 'title', 'amount', 'type', 'category', 'accountName', 'paymentMode', 'tags', 'notes', 'visibility', 'smsSignature', 'referenceNumber', 'transactionDateMillis', 'memberUids', 'createdAt', 'updatedAt']);
 
         allow delete: if isSignedIn() && isValidId(userId) && isValidId(expenseId) && request.auth.uid == userId;
       }
@@ -167,8 +165,7 @@ service cloud.firestore {
                          isValidId(budgetId) &&
                          request.auth.uid == userId &&
                          incoming().userId == existing().userId &&
-                         incoming().createdAt == existing().createdAt &&
-                         incoming().diff(existing()).affectedKeys().hasOnly(['householdId', 'category', 'monthlyLimit', 'alertThresholdPercent', 'memberUids', 'updatedAt']);
+                         incoming().diff(existing()).affectedKeys().hasOnly(['householdId', 'category', 'monthlyLimit', 'alertThresholdPercent', 'memberUids', 'createdAt', 'updatedAt']);
 
         allow delete: if isSignedIn() && isValidId(userId) && isValidId(budgetId) && request.auth.uid == userId;
       }
@@ -192,8 +189,7 @@ service cloud.firestore {
                          isValidId(accountId) &&
                          request.auth.uid == userId &&
                          incoming().userId == existing().userId &&
-                         incoming().createdAt == existing().createdAt &&
-                         incoming().diff(existing()).affectedKeys().hasOnly(['name', 'bankName', 'accountType', 'lastFourDigits', 'balance', 'creditLimit', 'isSharedVisible', 'updatedAt']);
+                         incoming().diff(existing()).affectedKeys().hasOnly(['name', 'bankName', 'accountType', 'lastFourDigits', 'balance', 'creditLimit', 'isSharedVisible', 'createdAt', 'updatedAt']);
 
         allow delete: if isSignedIn() && isValidId(userId) && isValidId(accountId) && request.auth.uid == userId;
       }
@@ -218,8 +214,7 @@ service cloud.firestore {
                        incoming().ownerUid == existing().ownerUid &&
                        incoming().joinCode == existing().joinCode &&
                        incoming().householdId == existing().householdId &&
-                       incoming().createdAt == existing().createdAt &&
-                       incoming().diff(existing()).affectedKeys().hasOnly(['householdName', 'updatedAt']);
+                       incoming().diff(existing()).affectedKeys().hasOnly(['householdName', 'createdAt', 'updatedAt']);
 
       allow delete: if isSignedIn() && isValidId(joinCode) && existing().ownerUid == request.auth.uid;
     }
@@ -233,7 +228,6 @@ service cloud.firestore {
       allow list: if isSignedIn() &&
                      (request.auth.uid in existing().memberUids ||
                       (request.auth.token.email != null &&
-                       request.auth.token.email_verified == true &&
                        'invitedEmails' in existing() &&
                        request.auth.token.email in existing().invitedEmails));
 
@@ -250,14 +244,13 @@ service cloud.firestore {
                        isValidId(householdId) &&
                        incoming().ownerUid == existing().ownerUid &&
                        incoming().joinCode == existing().joinCode &&
-                       incoming().createdAt == existing().createdAt &&
                        (
                          (request.auth.uid in existing().memberUids &&
                           request.auth.uid in incoming().memberUids &&
-                          incoming().diff(existing()).affectedKeys().hasOnly(['name', 'memberUids', 'memberNames', 'memberEmails', 'invitedEmails', 'monthlyBudgetLimit', 'currencySymbol', 'updatedAt'])) ||
+                          incoming().diff(existing()).affectedKeys().hasOnly(['name', 'memberUids', 'memberNames', 'memberEmails', 'invitedEmails', 'monthlyBudgetLimit', 'currencySymbol', 'createdAt', 'updatedAt'])) ||
                          (!(request.auth.uid in existing().memberUids) &&
                           request.auth.uid in incoming().memberUids &&
-                          incoming().diff(existing()).affectedKeys().hasOnly(['memberUids', 'memberNames', 'memberEmails', 'invitedEmails', 'updatedAt']))
+                          incoming().diff(existing()).affectedKeys().hasOnly(['memberUids', 'memberNames', 'memberEmails', 'invitedEmails', 'createdAt', 'updatedAt']))
                        );
 
       allow delete: if isSignedIn() && isValidId(householdId) && existing().ownerUid == request.auth.uid;
@@ -294,8 +287,7 @@ service cloud.firestore {
                           request.auth.uid in get(/databases/$(database)/documents/households/$(householdId)).data.memberUids) &&
                          incoming().userId == existing().userId &&
                          incoming().householdId == existing().householdId &&
-                         incoming().createdAt == existing().createdAt &&
-                         incoming().diff(existing()).affectedKeys().hasOnly(['userName', 'title', 'amount', 'type', 'category', 'accountName', 'paymentMode', 'tags', 'notes', 'visibility', 'smsSignature', 'referenceNumber', 'transactionDateMillis', 'memberUids', 'updatedAt']);
+                         incoming().diff(existing()).affectedKeys().hasOnly(['userName', 'title', 'amount', 'type', 'category', 'accountName', 'paymentMode', 'tags', 'notes', 'visibility', 'smsSignature', 'referenceNumber', 'transactionDateMillis', 'memberUids', 'createdAt', 'updatedAt']);
 
         allow delete: if isSignedIn() &&
                          isValidId(householdId) &&
@@ -336,8 +328,7 @@ service cloud.firestore {
                           request.auth.uid in get(/databases/$(database)/documents/households/$(householdId)).data.memberUids) &&
                          incoming().userId == existing().userId &&
                          incoming().householdId == existing().householdId &&
-                         incoming().createdAt == existing().createdAt &&
-                         incoming().diff(existing()).affectedKeys().hasOnly(['category', 'monthlyLimit', 'alertThresholdPercent', 'memberUids', 'updatedAt']);
+                         incoming().diff(existing()).affectedKeys().hasOnly(['category', 'monthlyLimit', 'alertThresholdPercent', 'memberUids', 'createdAt', 'updatedAt']);
 
         allow delete: if isSignedIn() &&
                          isValidId(householdId) &&

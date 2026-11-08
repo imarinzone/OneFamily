@@ -35,6 +35,16 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
+enum class DateRangePreset(val label: String) {
+    MONTH("Current Month"),
+    LAST_7_DAYS("Last 7 Days"),
+    LAST_30_DAYS("Last 30 Days"),
+    LAST_90_DAYS("Last 3 Months"),
+    THIS_YEAR("This Year"),
+    ALL_TIME("All Time"),
+    CUSTOM("Custom Range")
+}
+
 data class YearMonthPeriod(
     val year: Int,
     val month: Int // 0..11 (Calendar.MONTH)
@@ -128,6 +138,9 @@ data class AxioDashboardUiState(
     val pendingEmailInvites: List<Household> = emptyList(),
     val selectedScope: BudgetScope = BudgetScope.HOUSEHOLD_SHARED,
     val selectedPeriod: YearMonthPeriod? = YearMonthPeriod.current(), // null = All Time
+    val selectedDateRangePreset: DateRangePreset = DateRangePreset.MONTH,
+    val customStartDateMillis: Long? = null,
+    val customEndDateMillis: Long? = null,
     val periodLabel: String = YearMonthPeriod.current().formatDisplay(),
     val searchQuery: String = "",
     val selectedTypeFilter: String = "All",
@@ -138,7 +151,7 @@ data class AxioDashboardUiState(
     val selectedMemberFilter: String = "All",
     val selectedSortOrder: String = "NEWEST",
     val availableCategories: List<String> = ExpenseCategories.ALL,
-    val activeExpenses: List<ExpenseTransaction> = emptyList(), // Scoped & period-filtered
+    val activeExpenses: List<ExpenseTransaction> = emptyList(), // Scoped & date-range-filtered
     val allScopedExpenses: List<ExpenseTransaction> = emptyList(), // Scoped across all time
     val filteredExpenses: List<ExpenseTransaction> = emptyList(), // Ledger filtered & sorted
     val personalExpenses: List<ExpenseTransaction> = emptyList(),
@@ -148,7 +161,7 @@ data class AxioDashboardUiState(
     val monthlyTrendBars: List<MonthlySpendBar> = emptyList(),
     val totalMonthlySpent: Double = 0.0,
     val totalMonthlyIncome: Double = 0.0,
-    val activeMonthlyBudget: Double = 75000.0,
+    val activeMonthlyBudget: Double = 0.0,
     val dailySafeSpend: Double = 0.0,
     val remainingDaysInMonth: Int = 1,
     val allTagsWithSpend: List<Pair<String, Double>> = emptyList(),
@@ -170,6 +183,8 @@ class AxioViewModel(
 
     private val _selectedScope = MutableStateFlow(BudgetScope.HOUSEHOLD_SHARED)
     private val _selectedPeriod = MutableStateFlow<YearMonthPeriod?>(YearMonthPeriod.current())
+    private val _dateRangePreset = MutableStateFlow(DateRangePreset.MONTH)
+    private val _customDateRange = MutableStateFlow<Pair<Long, Long>?>(null)
     private val _searchQuery = MutableStateFlow("")
     private val _typeFilter = MutableStateFlow("All")
     private val _categoryFilter = MutableStateFlow("All")
@@ -261,6 +276,8 @@ class AxioViewModel(
     private data class FilterStateBundle(
         val scope: BudgetScope,
         val period: YearMonthPeriod?,
+        val dateRangePreset: DateRangePreset,
+        val customDateRange: Pair<Long, Long>?,
         val query: String,
         val type: String,
         val category: String,
@@ -293,11 +310,11 @@ class AxioViewModel(
     }
 
     private val filterPrimaryFlow = combine(
-        combine(_selectedScope, _selectedPeriod, _searchQuery) { s, p, q -> Triple(s, p, q) },
+        combine(_selectedScope, _selectedPeriod, _dateRangePreset, _customDateRange, _searchQuery) { s, p, dr, cdr, q -> arrayOf(s, p, dr, cdr, q) },
         combine(_typeFilter, _categoryFilter, _paymentModeFilter) { ty, c, pm -> Triple(ty, c, pm) },
         combine(_accountFilter, _tagFilter, _memberFilter) { a, t, m -> Triple(a, t, m) }
-    ) { (scope, period, query), (type, cat, pm), (acc, tag, mem) ->
-        arrayOf(scope, period, query, type, cat, pm, acc, tag, mem)
+    ) { spdq, (type, cat, pm), (acc, tag, mem) ->
+        arrayOf(spdq[0], spdq[1], spdq[2], spdq[3], spdq[4], type, cat, pm, acc, tag, mem)
     }
 
     private val filterSecondaryFlow = combine(
@@ -315,13 +332,15 @@ class AxioViewModel(
         FilterStateBundle(
             scope = p[0] as BudgetScope,
             period = p[1] as YearMonthPeriod?,
-            query = p[2] as String,
-            type = p[3] as String,
-            category = p[4] as String,
-            paymentMode = p[5] as String,
-            account = p[6] as String,
-            tag = p[7] as String,
-            member = p[8] as String,
+            dateRangePreset = p[2] as DateRangePreset,
+            customDateRange = p[3] as Pair<Long, Long>?,
+            query = p[4] as String,
+            type = p[5] as String,
+            category = p[6] as String,
+            paymentMode = p[7] as String,
+            account = p[8] as String,
+            tag = p[9] as String,
+            member = p[10] as String,
             sortOrder = s[0] as String,
             customCategories = s[1] as List<String>,
             candidates = s[2] as List<SmsCandidate>,
@@ -345,11 +364,31 @@ class AxioViewModel(
         }
 
         val selectedPeriod = filter.period
-        val periodLabel = selectedPeriod?.formatDisplay() ?: "All Time"
-
+        val dateRangePreset = filter.dateRangePreset
+        val customRange = filter.customDateRange
+        val nowMillis = System.currentTimeMillis()
         val cal = Calendar.getInstance()
+        val currentYear = cal.get(Calendar.YEAR)
+
+        val shortFmt = SimpleDateFormat("dd MMM", Locale.getDefault())
+        val periodLabel = when (dateRangePreset) {
+            DateRangePreset.MONTH -> selectedPeriod?.formatDisplay() ?: YearMonthPeriod.current().formatDisplay()
+            DateRangePreset.LAST_7_DAYS -> "Last 7 Days"
+            DateRangePreset.LAST_30_DAYS -> "Last 30 Days"
+            DateRangePreset.LAST_90_DAYS -> "Last 3 Months"
+            DateRangePreset.THIS_YEAR -> "This Year ($currentYear)"
+            DateRangePreset.ALL_TIME -> "All Time"
+            DateRangePreset.CUSTOM -> {
+                if (customRange != null) {
+                    "${shortFmt.format(customRange.first)} - ${shortFmt.format(customRange.second)}"
+                } else {
+                    "Custom Range"
+                }
+            }
+        }
+
         val nowPeriod = YearMonthPeriod.current()
-        val remainingDays = if (selectedPeriod == null || selectedPeriod == nowPeriod) {
+        val remainingDays = if (dateRangePreset != DateRangePreset.MONTH || selectedPeriod == null || selectedPeriod == nowPeriod) {
             val maxDay = cal.getActualMaximum(Calendar.DAY_OF_MONTH)
             val today = cal.get(Calendar.DAY_OF_MONTH)
             (maxDay - today + 1).coerceAtLeast(1)
@@ -362,12 +401,39 @@ class AxioViewModel(
             targetCal.getActualMaximum(Calendar.DAY_OF_MONTH).coerceAtLeast(1)
         }
 
-        val periodTransactions = if (selectedPeriod == null) {
-            allScopedTransactions
-        } else {
-            allScopedTransactions.filter { tx ->
-                val txPeriod = YearMonthPeriod.fromMillis(tx.transactionDateMillis)
-                txPeriod == selectedPeriod
+        val periodTransactions = when (dateRangePreset) {
+            DateRangePreset.ALL_TIME -> allScopedTransactions
+            DateRangePreset.LAST_7_DAYS -> {
+                val cutoff = nowMillis - 7L * 86_400_000L
+                allScopedTransactions.filter { it.transactionDateMillis >= cutoff }
+            }
+            DateRangePreset.LAST_30_DAYS -> {
+                val cutoff = nowMillis - 30L * 86_400_000L
+                allScopedTransactions.filter { it.transactionDateMillis >= cutoff }
+            }
+            DateRangePreset.LAST_90_DAYS -> {
+                val cutoff = nowMillis - 90L * 86_400_000L
+                allScopedTransactions.filter { it.transactionDateMillis >= cutoff }
+            }
+            DateRangePreset.THIS_YEAR -> {
+                allScopedTransactions.filter { tx ->
+                    YearMonthPeriod.fromMillis(tx.transactionDateMillis).year == currentYear
+                }
+            }
+            DateRangePreset.CUSTOM -> {
+                if (customRange != null) {
+                    allScopedTransactions.filter { tx ->
+                        tx.transactionDateMillis in customRange.first..customRange.second
+                    }
+                } else {
+                    allScopedTransactions
+                }
+            }
+            DateRangePreset.MONTH -> {
+                val targetMonth = selectedPeriod ?: nowPeriod
+                allScopedTransactions.filter { tx ->
+                    YearMonthPeriod.fromMillis(tx.transactionDateMillis) == targetMonth
+                }
             }
         }
 
@@ -377,16 +443,16 @@ class AxioViewModel(
         val totalSpent = periodExpensesOnly.sumOf { it.amount }
         val totalIncome = periodIncomeOnly.sumOf { it.amount }
 
-        val personalCap = core.profile?.personalMonthlyBudget ?: 35000.0
-        val householdCap = core.household?.monthlyBudgetLimit ?: 75000.0
+        val personalCap = core.profile?.personalMonthlyBudget ?: 0.0
+        val householdCap = core.household?.monthlyBudgetLimit ?: 0.0
 
         val activeMonthlyBudget = when (effectiveScope) {
             BudgetScope.HOUSEHOLD_SHARED -> if (core.household != null) householdCap else personalCap
             BudgetScope.PERSONAL_ONLY -> personalCap
         }
 
-        val remainingBudget = (activeMonthlyBudget - totalSpent).coerceAtLeast(0.0)
-        val dailySafeSpend = remainingBudget / remainingDays
+        val remainingBudget = if (activeMonthlyBudget > 0.0) (activeMonthlyBudget - totalSpent).coerceAtLeast(0.0) else 0.0
+        val dailySafeSpend = if (activeMonthlyBudget > 0.0) remainingBudget / remainingDays else 0.0
 
         val activeBudgets = when (effectiveScope) {
             BudgetScope.HOUSEHOLD_SHARED -> if (core.household != null) core.sharedBudgets else core.personalBudgets
@@ -449,7 +515,7 @@ class AxioViewModel(
                 label = ym.formatShortMonth(),
                 expenseTotal = expSum,
                 incomeTotal = incSum,
-                isSelected = selectedPeriod == ym
+                isSelected = dateRangePreset == DateRangePreset.MONTH && selectedPeriod == ym
             )
         }
 
@@ -508,6 +574,9 @@ class AxioViewModel(
             pendingEmailInvites = core.invites,
             selectedScope = effectiveScope,
             selectedPeriod = selectedPeriod,
+            selectedDateRangePreset = dateRangePreset,
+            customStartDateMillis = customRange?.first,
+            customEndDateMillis = customRange?.second,
             periodLabel = periodLabel,
             searchQuery = filter.query,
             selectedTypeFilter = filter.type,
@@ -544,7 +613,7 @@ class AxioViewModel(
         initialValue = AxioDashboardUiState()
     )
 
-    // --- PERIOD & FILTER CONTROLS ---
+    // --- PERIOD, DATE RANGE & FILTER CONTROLS ---
 
     fun selectScope(scope: BudgetScope) {
         _selectedScope.value = scope
@@ -552,11 +621,51 @@ class AxioViewModel(
 
     fun selectPeriod(period: YearMonthPeriod?) {
         _selectedPeriod.value = period
+        _dateRangePreset.value = if (period == null) DateRangePreset.ALL_TIME else DateRangePreset.MONTH
+    }
+
+    fun selectDateRangePreset(preset: DateRangePreset) {
+        _dateRangePreset.value = preset
+        when (preset) {
+            DateRangePreset.MONTH -> {
+                if (_selectedPeriod.value == null) {
+                    _selectedPeriod.value = YearMonthPeriod.current()
+                }
+            }
+            DateRangePreset.ALL_TIME -> {
+                _selectedPeriod.value = null
+            }
+            else -> {
+                // Keep _selectedPeriod for month bar reference while filtering by preset window
+            }
+        }
+    }
+
+    fun selectCustomDateRange(startMillis: Long, endMillis: Long) {
+        val low = minOf(startMillis, endMillis)
+        val high = maxOf(startMillis, endMillis)
+        val startCal = Calendar.getInstance().apply {
+            timeInMillis = low
+            set(Calendar.HOUR_OF_DAY, 0)
+            set(Calendar.MINUTE, 0)
+            set(Calendar.SECOND, 0)
+            set(Calendar.MILLISECOND, 0)
+        }
+        val endCal = Calendar.getInstance().apply {
+            timeInMillis = high
+            set(Calendar.HOUR_OF_DAY, 23)
+            set(Calendar.MINUTE, 59)
+            set(Calendar.SECOND, 59)
+            set(Calendar.MILLISECOND, 999)
+        }
+        _customDateRange.value = startCal.timeInMillis to endCal.timeInMillis
+        _dateRangePreset.value = DateRangePreset.CUSTOM
     }
 
     fun stepMonth(delta: Int) {
         val current = _selectedPeriod.value ?: YearMonthPeriod.current()
         _selectedPeriod.value = if (delta < 0) current.previousMonth() else current.nextMonth()
+        _dateRangePreset.value = DateRangePreset.MONTH
     }
 
     fun updateSearchQuery(query: String) {
@@ -631,6 +740,14 @@ class AxioViewModel(
         notifyNewest: Boolean = true
     ) {
         viewModelScope.launch {
+            // Ensure profile exists before syncing SMS
+            runCatching {
+                repository.ensureUserProfile(
+                    displayName = currentUserName,
+                    email = currentUserEmail
+                )
+            }
+
             val state = uiState.value
             val existingSignatures = (state.personalExpenses + state.sharedExpenses)
                 .mapNotNull { it.smsSignature.takeIf { sig -> sig.isNotBlank() } }
@@ -653,48 +770,54 @@ class AxioViewModel(
 
                 importResult.onSuccess { importedCount ->
                     _smsCandidates.value = emptyList()
-                    val currentPeriod = _selectedPeriod.value
-                    val hasCurrentMonthTx = discovered.any {
-                        YearMonthPeriod.fromMillis(it.parsed.timestamp) == currentPeriod
-                    }
-                    if (currentPeriod != null && !hasCurrentMonthTx && state.activeExpenses.isEmpty()) {
-                        val newestTxPeriod = discovered.maxByOrNull { it.parsed.timestamp }
-                            ?.let { YearMonthPeriod.fromMillis(it.parsed.timestamp) }
-                        if (newestTxPeriod != null) {
-                            _selectedPeriod.value = newestTxPeriod
+                    if (importedCount > 0) {
+                        val currentPeriod = _selectedPeriod.value
+                        val hasCurrentMonthTx = discovered.any {
+                            YearMonthPeriod.fromMillis(it.parsed.timestamp) == currentPeriod
                         }
-                    }
-
-                    _statusBanner.value = "Imported $importedCount SMS transactions chronologically (${if (household != null) "Shared Household" else "Personal"})."
-
-                    if (notifyNewest && context != null) {
-                        val newest = discovered.maxByOrNull { it.parsed.timestamp }
-                        if (newest != null) {
-                            val expenseId = "sms_${newest.id}"
-                            val isShared = household != null
-                            val merchantTitle = newest.parsed.merchant?.takeIf { it.isNotBlank() }
-                                ?: "${newest.parsed.bankName} ${newest.parsed.type.name.lowercase().replaceFirstChar { it.uppercase() }}"
-                            TransactionNotificationHelper.showNewTransactionNotification(
-                                context = context,
-                                expenseId = expenseId,
-                                visibility = if (isShared) "SHARED" else "PERSONAL",
-                                householdId = household?.id.orEmpty(),
-                                title = merchantTitle,
-                                amount = newest.parsed.amount.toDouble(),
-                                currentCategory = newest.suggestedCategory
-                            )
+                        if (currentPeriod != null && !hasCurrentMonthTx && state.activeExpenses.isEmpty()) {
+                            val newestTxPeriod = discovered.maxByOrNull { it.parsed.timestamp }
+                                ?.let { YearMonthPeriod.fromMillis(it.parsed.timestamp) }
+                            if (newestTxPeriod != null) {
+                                _selectedPeriod.value = newestTxPeriod
+                            }
                         }
+
+                        _statusBanner.value = "Synced $importedCount new SMS receipts."
+
+                        if (notifyNewest && context != null) {
+                            val newest = discovered.maxByOrNull { it.parsed.timestamp }
+                            if (newest != null) {
+                                val expenseId = "sms_${newest.id}"
+                                val isShared = household != null
+                                val merchantTitle = newest.parsed.merchant?.takeIf { it.isNotBlank() }
+                                    ?: "${newest.parsed.bankName} ${newest.parsed.type.name.lowercase().replaceFirstChar { it.uppercase() }}"
+                                TransactionNotificationHelper.showNewTransactionNotification(
+                                    context = context,
+                                    expenseId = expenseId,
+                                    visibility = if (isShared) "SHARED" else "PERSONAL",
+                                    householdId = household?.id.orEmpty(),
+                                    title = merchantTitle,
+                                    amount = newest.parsed.amount.toDouble(),
+                                    currentCategory = newest.suggestedCategory
+                                )
+                            }
+                        }
+                    } else if (!silentIfEmpty) {
+                        _statusBanner.value = "All bank SMS receipts are up to date."
                     }
                 }.onFailure { err ->
-                    _errorMessage.value = err.localizedMessage ?: "Failed to import SMS transactions."
+                    if (!silentIfEmpty) {
+                        _errorMessage.value = err.localizedMessage ?: "Failed to sync SMS receipts."
+                    }
                 }
             } else if (!silentIfEmpty) {
                 val totalExistingSms = (state.personalExpenses + state.sharedExpenses)
                     .count { it.smsSignature.isNotBlank() }
                 _statusBanner.value = if (totalExistingSms > 0) {
-                    "All $totalExistingSms bank SMS transactions from your phone are already synced."
+                    "All $totalExistingSms SMS receipts are synced."
                 } else {
-                    "No new bank/UPI SMS found in inbox."
+                    "No new bank/UPI SMS found."
                 }
             }
         }
@@ -748,7 +871,7 @@ class AxioViewModel(
                     household = state.household,
                     shareByDefault = true
                 ).onSuccess { count ->
-                    _statusBanner.value = "Added $count sample bank SMS transactions chronologically."
+                    _statusBanner.value = "Added $count sample SMS receipts."
                     if (context != null) {
                         val newest = parsedBatch.maxByOrNull { it.parsed.timestamp }
                         if (newest != null) {
@@ -765,8 +888,6 @@ class AxioViewModel(
                         }
                     }
                 }
-            } else {
-                _statusBanner.value = "Sample bank SMS transactions are already in your ledger."
             }
         }
     }
@@ -824,7 +945,7 @@ class AxioViewModel(
 
             result.onSuccess { savedExpenseId ->
                 _smsCandidates.value = _smsCandidates.value.filterNot { it.id == candidate.id }
-                _statusBanner.value = "Added '$merchantTitle' (${if (shareFlag) "Shared Household" else "Personal"})."
+                _statusBanner.value = "Added '$merchantTitle'."
                 if (triggerNotification && context != null) {
                     TransactionNotificationHelper.showNewTransactionNotification(
                         context = context,
@@ -837,7 +958,7 @@ class AxioViewModel(
                     )
                 }
             }.onFailure { err ->
-                _errorMessage.value = err.localizedMessage ?: "Failed to import SMS transaction."
+                _errorMessage.value = err.localizedMessage ?: "Failed to import SMS receipt."
             }
         }
     }
@@ -855,7 +976,9 @@ class AxioViewModel(
                 shareByDefault = forceShared ?: true
             ).onSuccess { count ->
                 _smsCandidates.value = emptyList()
-                _statusBanner.value = "Imported $count SMS transactions."
+                if (count > 0) {
+                    _statusBanner.value = "Synced $count SMS receipts."
+                }
             }
         }
     }
@@ -988,7 +1111,7 @@ class AxioViewModel(
         viewModelScope.launch {
             repository.toggleExpensePrivacy(expense, household)
                 .onSuccess {
-                    val newScope = if (expense.visibility == "PERSONAL") "Household Shared" else "Personal"
+                    val newScope = if (expense.visibility == "PERSONAL") "Household" else "Personal"
                     _statusBanner.value = "Moved '${expense.title}' to $newScope."
                 }
                 .onFailure { err ->
@@ -1038,10 +1161,10 @@ class AxioViewModel(
         viewModelScope.launch {
             repository.updatePersonalBudgetSettings(personalLimit, currencySymbol)
             val household = uiState.value.household
-            if (household != null && householdLimit != null && householdLimit > 0) {
+            if (household != null && householdLimit != null && householdLimit >= 0.0) {
                 repository.updateHouseholdSettings(household.id, household.name, householdLimit)
             }
-            _statusBanner.value = "Budget limits updated."
+            _statusBanner.value = "Budget updated."
         }
     }
 
@@ -1064,7 +1187,7 @@ class AxioViewModel(
                 creditLimit = creditLimit,
                 isSharedVisible = isSharedVisible
             ).onSuccess {
-                _statusBanner.value = "Saved account $name."
+                _statusBanner.value = "Saved $name."
             }.onFailure { err ->
                 _errorMessage.value = err.localizedMessage ?: "Failed to save account."
             }
@@ -1083,22 +1206,6 @@ class AxioViewModel(
                 userDisplayName = currentUserName,
                 userEmail = currentUserEmail
             ).onSuccess { created ->
-                val defaultCaps = listOf(
-                    "Groceries" to (monthlyLimit * 0.20),
-                    "Rent & Housing" to (monthlyLimit * 0.35),
-                    "Food & Dining" to (monthlyLimit * 0.12),
-                    "Bills & Utilities" to (monthlyLimit * 0.10),
-                    "Fuel & Travel" to (monthlyLimit * 0.10)
-                )
-                defaultCaps.forEach { (cat, cap) ->
-                    repository.saveCategoryBudget(
-                        category = cat,
-                        monthlyLimit = cap,
-                        alertThresholdPercent = 80,
-                        isShared = true,
-                        household = created
-                    )
-                }
                 _selectedScope.value = BudgetScope.HOUSEHOLD_SHARED
                 _statusBanner.value = "Created '${created.name}' • Code: ${created.joinCode}"
             }.onFailure { err ->
@@ -1155,6 +1262,10 @@ class AxioViewModel(
             .filterIsInstance<FirebaseFirestoreException>()
             .firstOrNull()
         if (firestoreError == null && error is CancellationException) throw error
+        // Suppress transient stream permission errors during auth transitions or initial profile bootstrap
+        if (firestoreError?.code == FirebaseFirestoreException.Code.PERMISSION_DENIED) {
+            return
+        }
         val rootError = firestoreError ?: error
         _errorMessage.value = rootError.localizedMessage ?: "Sync error occurred."
     }

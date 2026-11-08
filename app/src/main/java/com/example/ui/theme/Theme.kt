@@ -26,14 +26,22 @@ private val DarkColorScheme = darkColorScheme(
     onTertiary = OnBerryDark,
     tertiaryContainer = BerryContainerDark,
     onTertiaryContainer = OnBerryContainerDark,
-    background = CreamBackgroundDark,
+    background = Color(0xFF000000),
     onBackground = OnCreamSurfaceDark,
     surface = PaperSurfaceDark,
     onSurface = OnCreamSurfaceDark,
     surfaceVariant = WarmSurfaceVariantDark,
     onSurfaceVariant = OnWarmSurfaceVariantDark,
-    outline = Color(0xFF5A4E66),
-    outlineVariant = Color(0xFF433A4D)
+    surfaceTint = Color.Transparent,
+    surfaceDim = Color(0xFF000000),
+    surfaceBright = Color(0xFF1C1C1C),
+    surfaceContainerLowest = Color(0xFF000000),
+    surfaceContainerLow = Color(0xFF070707),
+    surfaceContainer = Color(0xFF0A0A0A),
+    surfaceContainerHigh = Color(0xFF121212),
+    surfaceContainerHighest = Color(0xFF1A1A1A),
+    outline = Color(0xFF2E2E2E),
+    outlineVariant = Color(0xFF1F1F1F)
 )
 
 private val LightColorScheme = lightColorScheme(

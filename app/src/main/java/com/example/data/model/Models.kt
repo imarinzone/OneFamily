@@ -13,7 +13,7 @@ data class UserProfile(
     val displayName: String = "",
     val photoUrl: String = "",
     val activeHouseholdId: String = "",
-    val personalMonthlyBudget: Double = 35000.0,
+    val personalMonthlyBudget: Double = 0.0,
     val currencySymbol: String = "₹",
     @ServerTimestamp val createdAt: Timestamp? = null,
     @ServerTimestamp val updatedAt: Timestamp? = null
@@ -80,7 +80,7 @@ data class Household(
     val memberNames: Map<String, String> = emptyMap(),
     val memberEmails: Map<String, String> = emptyMap(),
     val invitedEmails: List<String> = emptyList(),
-    val monthlyBudgetLimit: Double = 75000.0,
+    val monthlyBudgetLimit: Double = 0.0,
     val currencySymbol: String = "₹",
     @ServerTimestamp val createdAt: Timestamp? = null,
     @ServerTimestamp val updatedAt: Timestamp? = null

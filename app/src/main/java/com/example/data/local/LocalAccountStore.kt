@@ -282,11 +282,16 @@ object LocalAccountDataStore {
                 memberNames = mapOf(user.uid to user.displayName),
                 memberEmails = mapOf(user.uid to user.email),
                 invitedEmails = emptyList(),
-                monthlyBudgetLimit = 75000.0,
+                monthlyBudgetLimit = 0.0,
                 currencySymbol = "₹",
                 createdAt = Timestamp.now(),
                 updatedAt = Timestamp.now()
             )
+            householdsFlow.value = currentHouseholds
+            saveHouseholds(currentHouseholds)
+        } else if (isTestUser && currentHouseholds[defaultHouseholdId]?.monthlyBudgetLimit == 75000.0) {
+            val existingHh = currentHouseholds[defaultHouseholdId]!!
+            currentHouseholds[defaultHouseholdId] = existingHh.copy(monthlyBudgetLimit = 0.0)
             householdsFlow.value = currentHouseholds
             saveHouseholds(currentHouseholds)
         }
@@ -299,11 +304,16 @@ object LocalAccountDataStore {
                 displayName = user.displayName,
                 photoUrl = "",
                 activeHouseholdId = defaultHouseholdId,
-                personalMonthlyBudget = 35000.0,
+                personalMonthlyBudget = 0.0,
                 currencySymbol = "₹",
                 createdAt = Timestamp.now(),
                 updatedAt = Timestamp.now()
             )
+            profilesFlow.value = currentProfiles
+            saveProfiles(currentProfiles)
+        } else if (currentProfiles[user.uid]?.personalMonthlyBudget == 35000.0) {
+            val existingProf = currentProfiles[user.uid]!!
+            currentProfiles[user.uid] = existingProf.copy(personalMonthlyBudget = 0.0)
             profilesFlow.value = currentProfiles
             saveProfiles(currentProfiles)
         }
@@ -382,7 +392,7 @@ object LocalAccountDataStore {
             displayName = displayName.ifBlank { "Test User" },
             photoUrl = photoUrl,
             activeHouseholdId = defaultHid,
-            personalMonthlyBudget = 35000.0,
+            personalMonthlyBudget = 0.0,
             currencySymbol = "₹",
             createdAt = Timestamp.now(),
             updatedAt = Timestamp.now()
@@ -433,7 +443,7 @@ object LocalAccountDataStore {
             memberNames = mapOf(uid to cleanUser),
             memberEmails = mapOf(uid to cleanEmail),
             invitedEmails = emptyList(),
-            monthlyBudgetLimit = monthlyBudgetLimit.coerceAtLeast(1000.0),
+            monthlyBudgetLimit = monthlyBudgetLimit.coerceAtLeast(0.0),
             currencySymbol = currencySymbol.ifBlank { "₹" }.take(10),
             createdAt = Timestamp.now(),
             updatedAt = Timestamp.now()
@@ -860,6 +870,7 @@ object LocalAccountDataStore {
                 val o = arr.getJSONObject(i)
                 val uid = o.optString("uid", "")
                 if (uid.isNotBlank()) {
+                    val rawPersonal = o.optDouble("personalMonthlyBudget", 0.0)
                     map[uid] = UserProfile(
                         id = o.optString("id", uid),
                         uid = uid,
@@ -867,7 +878,7 @@ object LocalAccountDataStore {
                         displayName = o.optString("displayName", "Test User"),
                         photoUrl = o.optString("photoUrl", ""),
                         activeHouseholdId = o.optString("activeHouseholdId", ""),
-                        personalMonthlyBudget = o.optDouble("personalMonthlyBudget", 35000.0),
+                        personalMonthlyBudget = if (rawPersonal == 35000.0) 0.0 else rawPersonal,
                         currencySymbol = o.optString("currencySymbol", "₹"),
                         createdAt = Timestamp.now(),
                         updatedAt = Timestamp.now()
@@ -924,6 +935,7 @@ object LocalAccountDataStore {
                     o.optJSONArray("invitedEmails")?.let { a ->
                         for (j in 0 until a.length()) invitedEmails.add(a.optString(j))
                     }
+                    val rawHhLimit = o.optDouble("monthlyBudgetLimit", 0.0)
                     map[id] = Household(
                         id = id,
                         name = o.optString("name", "Family Home"),
@@ -933,7 +945,7 @@ object LocalAccountDataStore {
                         memberNames = memberNames,
                         memberEmails = memberEmails,
                         invitedEmails = invitedEmails,
-                        monthlyBudgetLimit = o.optDouble("monthlyBudgetLimit", 75000.0),
+                        monthlyBudgetLimit = if (rawHhLimit == 75000.0) 0.0 else rawHhLimit,
                         currencySymbol = o.optString("currencySymbol", "₹"),
                         createdAt = Timestamp.now(),
                         updatedAt = Timestamp.now()

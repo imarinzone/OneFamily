@@ -777,7 +777,7 @@ fun AddCategoryBudgetDialog(
     var customCategory by remember { mutableStateOf("") }
     var limitText by remember {
         mutableStateOf(
-            if ((initialProgress?.limit ?: 0.0) > 0) initialProgress!!.limit.toInt().toString() else "12000"
+            if ((initialProgress?.limit ?: 0.0) > 0) initialProgress!!.limit.toInt().toString() else ""
         )
     }
     var isShared by remember { mutableStateOf(hasHousehold && defaultShared) }
@@ -884,8 +884,12 @@ fun EditOverallBudgetDialog(
     onDismiss: () -> Unit,
     onSave: (personalLimit: Double, householdLimit: Double?, currency: String) -> Unit
 ) {
-    var personalText by remember { mutableStateOf(personalBudget.toInt().toString()) }
-    var householdText by remember { mutableStateOf(householdBudget?.toInt()?.toString().orEmpty()) }
+    var personalText by remember {
+        mutableStateOf(if (personalBudget > 0.0) personalBudget.toInt().toString() else "")
+    }
+    var householdText by remember {
+        mutableStateOf(if ((householdBudget ?: 0.0) > 0.0) householdBudget!!.toInt().toString() else "")
+    }
     var currency by remember { mutableStateOf(currencySymbol) }
 
     Dialog(onDismissRequest = onDismiss) {
@@ -946,8 +950,8 @@ fun EditOverallBudgetDialog(
                     Spacer(modifier = Modifier.width(8.dp))
                     Button(
                         onClick = {
-                            val pLimit = personalText.toDoubleOrNull() ?: personalBudget
-                            val hLimit = householdText.toDoubleOrNull()
+                            val pLimit = personalText.toDoubleOrNull() ?: 0.0
+                            val hLimit = if (householdBudget != null) (householdText.toDoubleOrNull() ?: 0.0) else null
                             onSave(pLimit, hLimit, currency.ifBlank { "₹" })
                         }
                     ) {

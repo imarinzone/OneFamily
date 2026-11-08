@@ -252,15 +252,7 @@ fun AuthScreen(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(
-                Brush.verticalGradient(
-                    colors = listOf(
-                        MaterialTheme.colorScheme.background,
-                        MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
-                        MaterialTheme.colorScheme.background
-                    )
-                )
-            )
+            .background(MaterialTheme.colorScheme.background)
             .statusBarsPadding(),
         contentAlignment = Alignment.Center
     ) {
@@ -411,7 +403,10 @@ fun AuthScreen(
                                     rawUsername = LocalAccountSessionManager.DEFAULT_TEST_USERNAME,
                                     rawPassword = LocalAccountSessionManager.DEFAULT_TEST_PASSWORD
                                 )
-                                res.onSuccess { onAuthSuccess() }
+                                res.onSuccess {
+                                    runCatching { Firebase.auth.signOut() }
+                                    onAuthSuccess()
+                                }
                                     .onFailure { errorMessage = it.localizedMessage }
                             }
                             .testTag("quick_test_login_button")
@@ -530,6 +525,7 @@ fun AuthScreen(
                                 )
                             }
                             result.onSuccess {
+                                runCatching { Firebase.auth.signOut() }
                                 onAuthSuccess()
                             }.onFailure { err ->
                                 errorMessage = err.localizedMessage ?: "Login failed."
