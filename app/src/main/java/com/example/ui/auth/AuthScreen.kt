@@ -99,9 +99,9 @@ private tailrec fun Context.findActivity(): Activity? = when (this) {
 }
 
 private fun resolveDefaultWebClientId(context: Context): String? {
-    val resId = context.resources.getIdentifier("default_web_client_id", "string", context.packageName)
-    if (resId == 0) return null
-    return runCatching { context.getString(resId) }.getOrNull()?.takeIf { it.isNotBlank() }
+    return runCatching { context.getString(R.string.default_web_client_id) }
+        .getOrNull()
+        ?.takeIf { it.isNotBlank() }
 }
 
 fun attemptAutoSignIn(
@@ -188,9 +188,9 @@ fun onGoogleSignInClicked(
             }
         } catch (e: GetCredentialCancellationException) {
             val msg = e.message.orEmpty()
-            Log.w(TAG, "Google Sign-In cancelled or failed: $msg", e)
+            Log.w(TAG, "Google Sign-In cancelled or dismissed: $msg", e)
             if (msg.contains("28444") || msg.contains("Developer console", ignoreCase = true) || msg.contains("10:")) {
-                onAuthError("Google Sign-In failed ($msg). Use test / pass above.")
+                onAuthError("Google Sign-In failed ($msg). Use Login as Mock User above.")
             } else {
                 onAuthCancelled()
             }
@@ -207,15 +207,17 @@ fun signOut(
     onSignOutComplete: () -> Unit,
     scope: CoroutineScope
 ) {
-    LocalAccountSessionManager.signOut(context)
-    Firebase.auth.signOut()
     scope.launch {
-        try {
-            credentialManager.clearCredentialState(ClearCredentialStateRequest())
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to clear credential state", e)
-        } finally {
-            onSignOutComplete()
+        kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) {
+            try {
+                credentialManager.clearCredentialState(ClearCredentialStateRequest())
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to clear credential state: ${e.message}")
+            } finally {
+                LocalAccountSessionManager.signOut(context)
+                Firebase.auth.signOut()
+                onSignOutComplete()
+            }
         }
     }
 }

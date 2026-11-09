@@ -151,14 +151,14 @@ jobs:
             "client": [
               {
                 "client_info": {
-                  "mobilesdk_app_id": "1:489230672539:android:7a85f455b0637568c49c3e",
+                  "mobilesdk_app_id": "1:489230672539:android:2fd65443b4845eb1c49c3e",
                   "android_client_info": {
                     "package_name": "com.aistudio.onefamily.xpqrmk"
                   }
                 },
                 "oauth_client": [
                   {
-                    "client_id": "489230672539-0socqg8pdphvjlf82cc1fsb02c8hvc72.apps.googleusercontent.com",
+                    "client_id": "489230672539-o5qb0cvnpd8gl19dv9mvah3486o6d8kl.apps.googleusercontent.com",
                     "client_type": 1,
                     "android_info": {
                       "package_name": "com.aistudio.onefamily.xpqrmk",
