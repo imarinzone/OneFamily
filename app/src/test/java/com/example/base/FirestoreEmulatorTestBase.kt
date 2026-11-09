@@ -32,12 +32,23 @@ abstract class FirestoreEmulatorTestBase {
 
     @Before
     open fun setUpFirebase() {
+        val emulatorAvailable = runCatching {
+            java.net.Socket().use { socket ->
+                socket.connect(java.net.InetSocketAddress(EMULATOR_HOST, FIRESTORE_PORT), 250)
+                true
+            }
+        }.getOrDefault(false)
+        org.junit.Assume.assumeTrue(
+            "Firebase emulator not running on $EMULATOR_HOST:$FIRESTORE_PORT; skipping emulator integration tests",
+            emulatorAvailable
+        )
+
         val context = ApplicationProvider.getApplicationContext<Context>()
         val resId = context.resources.getIdentifier("firestore_database_id", "string", context.packageName)
         databaseId = if (resId != 0) context.getString(resId) else "ai-studio-android-18b947f5-a54c-4756-8c11-b9c56ee3687f"
 
         val app = if (FirebaseApp.getApps(context).isEmpty()) {
-            val newApp = FirebaseApp.initializeApp(
+            FirebaseApp.initializeApp(
                 context,
                 FirebaseOptions.Builder()
                     .setApplicationId("com.aistudio.onefamily.xpqrmk")
@@ -45,26 +56,26 @@ abstract class FirestoreEmulatorTestBase {
                     .setApiKey("fake-api-key-for-emulator")
                     .build()
             )
-            val newFirestore = FirebaseFirestore.getInstance(newApp, databaseId)
-            newFirestore.useEmulator(EMULATOR_HOST, FIRESTORE_PORT)
-            newFirestore.firestoreSettings = FirebaseFirestoreSettings.Builder()
-                .setLocalCacheSettings(MemoryCacheSettings.newBuilder().build())
-                .build()
-
-            val newAuth = FirebaseAuth.getInstance(newApp)
-            newAuth.useEmulator(EMULATOR_HOST, AUTH_PORT)
-            newApp
         } else {
             FirebaseApp.getInstance()
         }
 
         firestore = FirebaseFirestore.getInstance(app, databaseId)
+        runCatching { firestore.useEmulator(EMULATOR_HOST, FIRESTORE_PORT) }
+        runCatching {
+            firestore.firestoreSettings = FirebaseFirestoreSettings.Builder()
+                .setLocalCacheSettings(MemoryCacheSettings.newBuilder().build())
+                .build()
+        }
         auth = FirebaseAuth.getInstance(app)
+        runCatching { auth.useEmulator(EMULATOR_HOST, AUTH_PORT) }
     }
 
     @After
     open fun tearDownFirebase() {
-        auth.signOut()
+        if (::auth.isInitialized) {
+            runCatching { auth.signOut() }
+        }
     }
 
     protected suspend fun signInTestUser(email: String): String = withContext(Dispatchers.IO) {

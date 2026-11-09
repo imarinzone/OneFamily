@@ -3,6 +3,7 @@ package com.example.ui.viewmodel
 import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.data.local.LocalAccountSessionManager
 import com.example.data.model.BudgetScope
 import com.example.data.model.CategoryBudget
 import com.example.data.model.ExpenseCategories
@@ -11,6 +12,7 @@ import com.example.data.model.FinancialAccount
 import com.example.data.model.Household
 import com.example.data.model.UserProfile
 import com.example.data.repository.OneFamilyRepository
+import com.example.data.sms.RawSmsRow
 import com.example.data.sms.SmsCandidate
 import com.example.data.sms.SmsInboxReader
 import com.example.data.sms.TransactionNotificationHelper
@@ -20,8 +22,17 @@ import com.ritesh.parser.core.bank.BankParserFactory
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Locale
+import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.asCoroutineDispatcher
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -34,8 +45,6 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 
 enum class DateRangePreset(val label: String) {
@@ -151,6 +160,16 @@ data class CategorySpendProgress(
         get() = limit > 0 && percentage >= alertThresholdPercent && !isOverBudget
 }
 
+data class SmsReadPreviewItem(
+    val id: String,
+    val merchant: String,
+    val bankName: String,
+    val category: String,
+    val amount: Double,
+    val isIncome: Boolean,
+    val threadName: String = ""
+)
+
 data class SmsSyncProgressState(
     val isSyncing: Boolean = false,
     val isCompleted: Boolean = false,
@@ -158,7 +177,16 @@ data class SmsSyncProgressState(
     val readSmsCount: Int = 0,
     val matchedTransactionsCount: Int = 0,
     val savedTransactionsCount: Int = 0,
-    val statusMessage: String = ""
+    val statusMessage: String = "",
+    val readerThreadCount: Int = SmsInboxReader.DEFAULT_PARALLEL_READER_THREADS,
+    val writerThreadCount: Int = SmsInboxReader.DEFAULT_PARALLEL_WRITER_THREADS,
+    val processedBatchesCount: Int = 0,
+    val totalBatchesCount: Int = 0,
+    val currentReadingTransactionTitle: String = "",
+    val currentReadingBank: String = "",
+    val currentReadingAmount: Double = 0.0,
+    val currentReadingCategory: String = "",
+    val recentReadTransactions: List<SmsReadPreviewItem> = emptyList()
 ) {
     val remainingSmsCount: Int
         get() = (totalSmsCount - readSmsCount).coerceAtLeast(0)
@@ -171,6 +199,15 @@ data class SmsSyncProgressState(
         } else {
             0f
         }
+}
+
+sealed class UndoableSwipeAction {
+    data class DeletedTransaction(val deletedExpense: ExpenseTransaction) : UndoableSwipeAction()
+    data class LinkedDuplicateTransaction(
+        val originalPrimary: ExpenseTransaction,
+        val deletedDuplicate: ExpenseTransaction
+    ) : UndoableSwipeAction()
+    data class ToggledPrivacy(val originalExpense: ExpenseTransaction) : UndoableSwipeAction()
 }
 
 data class OneFamilyDashboardUiState(
@@ -211,8 +248,14 @@ data class OneFamilyDashboardUiState(
     val memberSpendMap: Map<String, Double> = emptyMap(),
     val smsCandidates: List<SmsCandidate> = emptyList(),
     val statusBannerMessage: String? = null,
-    val errorMessage: String? = null
-)
+    val errorMessage: String? = null,
+    val canUndoLastAction: Boolean = false
+) {
+    val activeCurrencySymbol: String
+        get() = household?.currencySymbol?.takeIf { it.isNotBlank() }
+            ?: userProfile?.currencySymbol?.takeIf { it.isNotBlank() }
+            ?: "₹"
+}
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class OneFamilyViewModel(
@@ -240,9 +283,12 @@ class OneFamilyViewModel(
     private val _smsSyncProgress = MutableStateFlow(SmsSyncProgressState())
     private val _statusBanner = MutableStateFlow<String?>(null)
     private val _errorMessage = MutableStateFlow<String?>(null)
+    private val _lastUndoableAction = MutableStateFlow<UndoableSwipeAction?>(null)
 
     val smsCandidates: StateFlow<List<SmsCandidate>> = _smsCandidates.asStateFlow()
     val smsSyncProgress: StateFlow<SmsSyncProgressState> = _smsSyncProgress.asStateFlow()
+    val lastUndoableAction: StateFlow<UndoableSwipeAction?> = _lastUndoableAction.asStateFlow()
+    val statusBanner: StateFlow<String?> = _statusBanner.asStateFlow()
 
     init {
         viewModelScope.launch {
@@ -255,7 +301,7 @@ class OneFamilyViewModel(
 
     private val userProfileFlow = repository.observeUserProfile(currentUserId)
         .catch { e -> handleStreamError(e); emit(null) }
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000L), null)
+        .stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
     private val activeHouseholdIdFlow = userProfileFlow
         .map { it?.activeHouseholdId.orEmpty() }
@@ -266,7 +312,7 @@ class OneFamilyViewModel(
             if (hid.isBlank()) flowOf(null) else repository.observeHousehold(hid)
         }
         .catch { e -> handleStreamError(e); emit(null) }
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000L), null)
+        .stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
     private val pendingInvitesFlow = if (currentUserEmail.isNotBlank()) {
         repository.observeEmailInvitedHouseholds(currentUserEmail)
@@ -331,7 +377,8 @@ class OneFamilyViewModel(
         val customCategories: List<String>,
         val candidates: List<SmsCandidate>,
         val banner: String?,
-        val error: String?
+        val error: String?,
+        val canUndo: Boolean
     )
 
     private val coreDataFlow = combine(
@@ -339,15 +386,16 @@ class OneFamilyViewModel(
         combine(personalExpensesFlow, sharedExpensesFlow) { pe, se -> pe to se },
         combine(personalBudgetsFlow, sharedBudgetsFlow, accountsFlow) { pb, sb, acc -> Triple(pb, sb, acc) }
     ) { (profile, household, invites), (personalExp, sharedExp), (personalBud, sharedBud, accounts) ->
+        val isTestUser = currentUserId == com.example.data.local.LocalAccountSessionManager.DEFAULT_TEST_UID
         CoreDataBundle(
             profile = profile,
             household = household,
             invites = invites.filter { currentUserId !in it.memberUids },
-            personalExpenses = personalExp,
-            sharedExpenses = sharedExp,
-            personalBudgets = personalBud,
-            sharedBudgets = sharedBud,
-            accounts = accounts
+            personalExpenses = if (isTestUser) personalExp else personalExp.filter { it.userId != com.example.data.local.LocalAccountSessionManager.DEFAULT_TEST_UID },
+            sharedExpenses = if (isTestUser) sharedExp else sharedExp.filter { it.householdId != com.example.data.local.LocalAccountSessionManager.DEFAULT_TEST_HOUSEHOLD_ID },
+            personalBudgets = if (isTestUser) personalBud else personalBud.filter { it.userId != com.example.data.local.LocalAccountSessionManager.DEFAULT_TEST_UID },
+            sharedBudgets = if (isTestUser) sharedBud else sharedBud.filter { it.householdId != com.example.data.local.LocalAccountSessionManager.DEFAULT_TEST_HOUSEHOLD_ID },
+            accounts = if (isTestUser) accounts else accounts.filter { it.userId != com.example.data.local.LocalAccountSessionManager.DEFAULT_TEST_UID }
         )
     }
 
@@ -360,13 +408,10 @@ class OneFamilyViewModel(
     }
 
     private val filterSecondaryFlow = combine(
-        _sortOrder,
-        _customCategories,
-        _smsCandidates,
-        _statusBanner,
-        _errorMessage
-    ) { sort, customCats, cand, ban, err ->
-        arrayOf(sort, customCats, cand, ban, err)
+        combine(_sortOrder, _customCategories, _smsCandidates) { sort, customCats, cand -> Triple(sort, customCats, cand) },
+        combine(_statusBanner, _errorMessage, _lastUndoableAction) { ban, err, undo -> Triple(ban, err, undo != null) }
+    ) { (sort, customCats, cand), (ban, err, canUndo) ->
+        arrayOf(sort, customCats, cand, ban, err, canUndo)
     }
 
     private val filterStateFlow = combine(filterPrimaryFlow, filterSecondaryFlow) { p, s ->
@@ -387,7 +432,8 @@ class OneFamilyViewModel(
             customCategories = s[1] as List<String>,
             candidates = s[2] as List<SmsCandidate>,
             banner = s[3] as String?,
-            error = s[4] as String?
+            error = s[4] as String?,
+            canUndo = s[5] as Boolean
         )
     }
 
@@ -658,11 +704,12 @@ class OneFamilyViewModel(
             memberSpendMap = memberSpendMap,
             smsCandidates = filter.candidates,
             statusBannerMessage = filter.banner,
-            errorMessage = filter.error
+            errorMessage = filter.error,
+            canUndoLastAction = filter.canUndo
         )
     }.stateIn(
         scope = viewModelScope,
-        started = SharingStarted.WhileSubscribed(5000L),
+        started = SharingStarted.Eagerly,
         initialValue = OneFamilyDashboardUiState()
     )
 
@@ -777,12 +824,197 @@ class OneFamilyViewModel(
     fun dismissBanner() {
         _statusBanner.value = null
         _errorMessage.value = null
+        _lastUndoableAction.value = null
     }
 
-    // --- PACED BACKGROUND SMS INBOX SYNC WITH PROGRESS & REAL-TIME NOTIFICATION ---
+    // --- PARALLEL MULTI-THREADED BATCH SMS INBOX SYNC WITH LIVE ANIMATION & ZERO RACE CONDITIONS ---
+
+    private val syncProgressLock = Any()
 
     fun resetSmsSyncProgress() {
-        _smsSyncProgress.value = SmsSyncProgressState()
+        val flags = LocalAccountSessionManager.expertFeatureFlags.value
+        _smsSyncProgress.value = SmsSyncProgressState(
+            readerThreadCount = flags.readerThreadCount.coerceAtLeast(SmsInboxReader.MIN_PARALLEL_THREADS),
+            writerThreadCount = flags.writerThreadCount.coerceAtLeast(SmsInboxReader.MIN_PARALLEL_THREADS)
+        )
+    }
+
+    /**
+     * Runs the concurrent pipelined producer-consumer SMS batch reading + transaction adding engine:
+     * - Reader Pool: `readerThreads` (>= 5, default 6) threads parse raw SMS batches in parallel.
+     * - Writer Pool: `writerThreads` (>= 5, default 6) threads persist parsed `SmsCandidate` batches
+     *   in parallel as soon as each reader batch finishes, without waiting for all SMS to finish reading.
+     * - Thread-safe progress & signature locks guarantee zero race conditions.
+     */
+    suspend fun runParallelSmsBatchPipeline(
+        rawRowsOverride: List<RawSmsRow>? = null,
+        existingSignatures: Set<String>,
+        userName: String,
+        household: Household?,
+        readerThreads: Int = SmsInboxReader.DEFAULT_PARALLEL_READER_THREADS,
+        writerThreads: Int = SmsInboxReader.DEFAULT_PARALLEL_WRITER_THREADS,
+        batchSize: Int = SmsInboxReader.DEFAULT_SMS_BATCH_SIZE,
+        perBatchDelayMs: Long = 35L
+    ): Pair<List<SmsCandidate>, Int> = coroutineScope {
+        val effectiveReaderThreads = readerThreads.coerceAtLeast(SmsInboxReader.MIN_PARALLEL_THREADS)
+        val effectiveWriterThreads = writerThreads.coerceAtLeast(SmsInboxReader.MIN_PARALLEL_THREADS)
+        val effectiveBatchSize = batchSize.coerceAtLeast(1)
+
+        val candidateBatchChannel = Channel<List<SmsCandidate>>(Channel.UNLIMITED)
+        val savedCounter = AtomicInteger(0)
+        val processedBatchCounter = AtomicInteger(0)
+
+        val writerExecutor = Executors.newFixedThreadPool(effectiveWriterThreads) { runnable ->
+            Thread(runnable, "TxWriterPool-Worker").apply { isDaemon = true }
+        }
+        val writerDispatcher = writerExecutor.asCoroutineDispatcher()
+
+        try {
+            // Launch 5+ parallel writer coroutines that consume parsed batches concurrently while reading is ongoing
+            val writerJobs = (1..effectiveWriterThreads).map { writerIdx ->
+                async(writerDispatcher) {
+                    var workerSaved = 0
+                    for (batchToSave in candidateBatchChannel) {
+                        if (batchToSave.isNotEmpty()) {
+                            val imported = repository.batchImportSmsCandidates(
+                                candidates = batchToSave,
+                                userName = userName,
+                                household = household,
+                                shareByDefault = true
+                            ).getOrDefault(0)
+                            workerSaved += imported
+                            val totalSavedNow = savedCounter.addAndGet(imported)
+                            val latestInBatch = batchToSave.lastOrNull()
+                            synchronized(syncProgressLock) {
+                                val cur = _smsSyncProgress.value
+                                _smsSyncProgress.value = cur.copy(
+                                    savedTransactionsCount = totalSavedNow,
+                                    statusMessage = "Parallel Sync ($effectiveReaderThreads⚡$effectiveWriterThreads): ${cur.readSmsCount}/${cur.totalSmsCount} SMS • $totalSavedNow saved"
+                                )
+                            }
+                            if (latestInBatch != null && perBatchDelayMs > 0L) {
+                                delay(perBatchDelayMs / 2)
+                            }
+                        }
+                    }
+                    workerSaved
+                }
+            }
+
+            val onBatchParsedCallback: suspend (
+                List<SmsCandidate>,
+                Int,
+                Int,
+                Int,
+                SmsCandidate?
+            ) -> Unit = { batchCandidates, readCount, totalCount, matchedCount, latestCandidate ->
+                val batchNum = processedBatchCounter.incrementAndGet()
+                val totalBatches = if (totalCount > 0) {
+                    (totalCount + effectiveBatchSize - 1) / effectiveBatchSize
+                } else {
+                    0
+                }
+                if (batchCandidates.isNotEmpty()) {
+                    candidateBatchChannel.send(batchCandidates)
+                }
+                synchronized(syncProgressLock) {
+                    val cur = _smsSyncProgress.value
+                    val previewItem = latestCandidate?.let { cand ->
+                        val p = cand.parsed
+                        val title = p.merchant?.takeIf { it.isNotBlank() }
+                            ?: "${p.bankName} ${p.type.name.lowercase().replaceFirstChar { c -> c.uppercase() }}"
+                        SmsReadPreviewItem(
+                            id = cand.id,
+                            merchant = title,
+                            bankName = p.bankName,
+                            category = cand.suggestedCategory,
+                            amount = p.amount.toDouble(),
+                            isIncome = p.type == TransactionType.INCOME,
+                            threadName = Thread.currentThread().name
+                        )
+                    }
+                    val updatedRecents = if (previewItem != null) {
+                        (listOf(previewItem) + cur.recentReadTransactions)
+                            .distinctBy { it.id }
+                            .take(6)
+                    } else {
+                        cur.recentReadTransactions
+                    }
+                    val remaining = (totalCount - readCount).coerceAtLeast(0)
+                    _smsSyncProgress.value = cur.copy(
+                        isSyncing = true,
+                        totalSmsCount = totalCount,
+                        readSmsCount = readCount,
+                        matchedTransactionsCount = matchedCount,
+                        readerThreadCount = effectiveReaderThreads,
+                        writerThreadCount = effectiveWriterThreads,
+                        processedBatchesCount = batchNum,
+                        totalBatchesCount = totalBatches,
+                        currentReadingTransactionTitle = previewItem?.merchant ?: cur.currentReadingTransactionTitle,
+                        currentReadingBank = previewItem?.bankName ?: cur.currentReadingBank,
+                        currentReadingAmount = previewItem?.amount ?: cur.currentReadingAmount,
+                        currentReadingCategory = previewItem?.category ?: cur.currentReadingCategory,
+                        recentReadTransactions = updatedRecents,
+                        statusMessage = "Parallel Sync ($effectiveReaderThreads⚡$effectiveWriterThreads): $readCount read • $remaining left • ${savedCounter.get()} saved"
+                    )
+                }
+            }
+
+            val discovered = if (rawRowsOverride != null) {
+                smsInboxReader.parseSmsBatchesInParallel(
+                    rawRows = rawRowsOverride,
+                    existingSignatures = existingSignatures,
+                    batchSize = effectiveBatchSize,
+                    readerThreads = effectiveReaderThreads,
+                    perBatchDelayMs = perBatchDelayMs,
+                    onProgress = { readCount, totalCount, matchedCount ->
+                        synchronized(syncProgressLock) {
+                            val cur = _smsSyncProgress.value
+                            _smsSyncProgress.value = cur.copy(
+                                isSyncing = true,
+                                totalSmsCount = totalCount,
+                                readSmsCount = readCount,
+                                matchedTransactionsCount = matchedCount,
+                                readerThreadCount = effectiveReaderThreads,
+                                writerThreadCount = effectiveWriterThreads
+                            )
+                        }
+                    },
+                    onBatchParsed = onBatchParsedCallback
+                )
+            } else {
+                smsInboxReader.scanDeviceSmsInboxWithProgress(
+                    existingSignatures = existingSignatures,
+                    batchSize = effectiveBatchSize,
+                    readerThreads = effectiveReaderThreads,
+                    perBatchDelayMs = perBatchDelayMs,
+                    onProgress = { readCount, totalCount, matchedCount ->
+                        synchronized(syncProgressLock) {
+                            val cur = _smsSyncProgress.value
+                            _smsSyncProgress.value = cur.copy(
+                                isSyncing = true,
+                                totalSmsCount = totalCount,
+                                readSmsCount = readCount,
+                                matchedTransactionsCount = matchedCount,
+                                readerThreadCount = effectiveReaderThreads,
+                                writerThreadCount = effectiveWriterThreads
+                            )
+                        }
+                    },
+                    onBatchParsed = onBatchParsedCallback
+                )
+            }
+
+            // Close channel once all reader threads have finished emitting batches and wait for all writer threads
+            candidateBatchChannel.close()
+            writerJobs.awaitAll()
+
+            discovered to savedCounter.get()
+        } finally {
+            runCatching { candidateBatchChannel.close() }
+            runCatching { writerDispatcher.close() }
+            runCatching { writerExecutor.shutdown() }
+        }
     }
 
     fun scanDeviceSmsInbox(
@@ -794,6 +1026,11 @@ class OneFamilyViewModel(
         if (_smsSyncProgress.value.isSyncing) return
         viewModelScope.launch(Dispatchers.IO) {
             try {
+                val flags = LocalAccountSessionManager.expertFeatureFlags.value
+                val configuredReaders = flags.readerThreadCount.coerceAtLeast(SmsInboxReader.MIN_PARALLEL_THREADS)
+                val configuredWriters = flags.writerThreadCount.coerceAtLeast(SmsInboxReader.MIN_PARALLEL_THREADS)
+                val configuredBatchSize = flags.smsBatchSize.coerceIn(5, 50)
+
                 _smsSyncProgress.value = SmsSyncProgressState(
                     isSyncing = true,
                     isCompleted = false,
@@ -801,7 +1038,12 @@ class OneFamilyViewModel(
                     readSmsCount = 0,
                     matchedTransactionsCount = 0,
                     savedTransactionsCount = 0,
-                    statusMessage = "Preparing SMS inbox scan..."
+                    readerThreadCount = configuredReaders,
+                    writerThreadCount = configuredWriters,
+                    currentReadingTransactionTitle = "Scanning Bank & UPI SMS...",
+                    currentReadingBank = "Multi-Thread Engine",
+                    currentReadingCategory = "General",
+                    statusMessage = "Starting $configuredReaders reader & $configuredWriters writer threads..."
                 )
 
                 // Ensure profile exists before syncing SMS
@@ -837,46 +1079,20 @@ class OneFamilyViewModel(
                 }.getOrDefault(emptySet())
 
                 val existingSignatures = stateSignatures + repoSignatures
-
-                val discovered = smsInboxReader.scanDeviceSmsInboxWithProgress(
-                    existingSignatures = existingSignatures,
-                    batchSize = 10,
-                    perBatchDelayMs = 65L,
-                    onProgress = { readCount, totalCount, matchedCount ->
-                        val remaining = (totalCount - readCount).coerceAtLeast(0)
-                        _smsSyncProgress.value = _smsSyncProgress.value.copy(
-                            isSyncing = true,
-                            totalSmsCount = totalCount,
-                            readSmsCount = readCount,
-                            matchedTransactionsCount = matchedCount,
-                            statusMessage = "Reading SMS: $readCount read • $remaining remaining"
-                        )
-                    }
-                )
-
-                var totalImported = 0
                 val userName = currentUserName.ifBlank { state.userProfile?.displayName ?: "Me" }
 
-                if (discovered.isNotEmpty()) {
-                    val chunks = discovered.chunked(12)
-                    for (chunk in chunks) {
-                        _smsSyncProgress.value = _smsSyncProgress.value.copy(
-                            statusMessage = "Saving transactions (${totalImported}/${discovered.size})..."
-                        )
-                        val chunkResult = repository.batchImportSmsCandidates(
-                            candidates = chunk,
-                            userName = userName,
-                            household = household,
-                            shareByDefault = true
-                        )
-                        totalImported += chunkResult.getOrDefault(0)
-                        _smsSyncProgress.value = _smsSyncProgress.value.copy(
-                            savedTransactionsCount = totalImported,
-                            statusMessage = "Saved $totalImported of ${discovered.size} transactions..."
-                        )
-                        delay(110L)
-                    }
+                val (discovered, totalImported) = runParallelSmsBatchPipeline(
+                    rawRowsOverride = null,
+                    existingSignatures = existingSignatures,
+                    userName = userName,
+                    household = household,
+                    readerThreads = configuredReaders,
+                    writerThreads = configuredWriters,
+                    batchSize = configuredBatchSize,
+                    perBatchDelayMs = 45L
+                )
 
+                if (discovered.isNotEmpty()) {
                     _smsCandidates.value = emptyList()
                     if (totalImported > 0) {
                         val currentPeriod = _selectedPeriod.value
@@ -907,7 +1123,8 @@ class OneFamilyViewModel(
                                     householdId = household?.id.orEmpty(),
                                     title = merchantTitle,
                                     amount = newest.parsed.amount.toDouble(),
-                                    currentCategory = newest.suggestedCategory
+                                    currentCategory = newest.suggestedCategory,
+                                    currencySymbol = state.activeCurrencySymbol
                                 )
                             }
                         }
@@ -925,7 +1142,7 @@ class OneFamilyViewModel(
                 }
 
                 if (context != null) {
-                    com.example.data.local.LocalAccountSessionManager.setInitialSmsSyncCompleted(
+                    LocalAccountSessionManager.setInitialSmsSyncCompleted(
                         context = context,
                         userId = currentUserId,
                         completed = true
@@ -934,26 +1151,30 @@ class OneFamilyViewModel(
 
                 val finalRead = _smsSyncProgress.value.readSmsCount
                 val finalTotal = _smsSyncProgress.value.totalSmsCount
-                _smsSyncProgress.value = _smsSyncProgress.value.copy(
-                    isSyncing = false,
-                    isCompleted = true,
-                    readSmsCount = finalTotal.coerceAtLeast(finalRead),
-                    savedTransactionsCount = totalImported,
-                    statusMessage = if (totalImported > 0) {
-                        "Completed! Read $finalTotal SMS and synced $totalImported transactions."
-                    } else {
-                        "Completed! Read $finalTotal SMS messages. All transactions are up to date."
-                    }
-                )
+                synchronized(syncProgressLock) {
+                    _smsSyncProgress.value = _smsSyncProgress.value.copy(
+                        isSyncing = false,
+                        isCompleted = true,
+                        readSmsCount = finalTotal.coerceAtLeast(finalRead),
+                        savedTransactionsCount = totalImported,
+                        statusMessage = if (totalImported > 0) {
+                            "Completed! Read $finalTotal SMS and synced $totalImported transactions."
+                        } else {
+                            "Completed! Read $finalTotal SMS messages. All transactions are up to date."
+                        }
+                    )
+                }
             } catch (e: Exception) {
                 if (!silentIfEmpty) {
                     _errorMessage.value = e.localizedMessage ?: "Failed to sync SMS receipts."
                 }
-                _smsSyncProgress.value = _smsSyncProgress.value.copy(
-                    isSyncing = false,
-                    isCompleted = true,
-                    statusMessage = "Sync finished."
-                )
+                synchronized(syncProgressLock) {
+                    _smsSyncProgress.value = _smsSyncProgress.value.copy(
+                        isSyncing = false,
+                        isCompleted = true,
+                        statusMessage = "Sync finished."
+                    )
+                }
             } finally {
                 if (onComplete != null) {
                     withContext(Dispatchers.Main) {
@@ -988,51 +1209,8 @@ class OneFamilyViewModel(
     }
 
     fun loadSampleBankSmsBatch(context: Context? = null) {
-        viewModelScope.launch {
-            val state = uiState.value
-            val existingSignatures = (state.personalExpenses + state.sharedExpenses)
-                .flatMap { tx -> tx.linkedSmsSignatures + listOf(tx.smsSignature) }
-                .filter { sig -> sig.isNotBlank() }
-                .flatMap { listOf(it, it.removePrefix("sms_")) }
-                .toSet()
-
-            val now = System.currentTimeMillis()
-            val parsedBatch = BankParserFactory.SAMPLE_BANK_SMS_TEMPLATES.mapIndexedNotNull { index, sample ->
-                smsInboxReader.parseRawSms(
-                    sender = sample.sender,
-                    body = sample.body,
-                    timestamp = now - (index * 3_600_000L),
-                    defaultShared = true
-                )
-            }.filterNot { it.id in existingSignatures }
-
-            if (parsedBatch.isNotEmpty()) {
-                val userName = currentUserName.ifBlank { state.userProfile?.displayName ?: "Me" }
-                repository.batchImportSmsCandidates(
-                    candidates = parsedBatch,
-                    userName = userName,
-                    household = state.household,
-                    shareByDefault = true
-                ).onSuccess { count ->
-                    _statusBanner.value = "Added $count sample SMS receipts."
-                    if (context != null) {
-                        val newest = parsedBatch.maxByOrNull { it.parsed.timestamp }
-                        if (newest != null) {
-                            val isShared = state.household != null
-                            TransactionNotificationHelper.showNewTransactionNotification(
-                                context = context,
-                                expenseId = "sms_${newest.id}",
-                                visibility = if (isShared) "SHARED" else "PERSONAL",
-                                householdId = state.household?.id.orEmpty(),
-                                title = newest.parsed.merchant ?: newest.suggestedCategory,
-                                amount = newest.parsed.amount.toDouble(),
-                                currentCategory = newest.suggestedCategory
-                            )
-                        }
-                    }
-                }
-            }
-        }
+        // No-op: Only transactions parsed from actual device SMS or manually entered by the user are permitted in the ledger.
+        _statusBanner.value = "Only actual device SMS receipts and manual transactions are permitted."
     }
 
     fun importSmsCandidate(
@@ -1097,7 +1275,8 @@ class OneFamilyViewModel(
                         householdId = if (shareFlag) state.household?.id.orEmpty() else "",
                         title = merchantTitle,
                         amount = parsed.amount.toDouble(),
-                        currentCategory = category
+                        currentCategory = category,
+                        currencySymbol = state.activeCurrencySymbol
                     )
                 }
             }.onFailure { err ->
@@ -1170,7 +1349,7 @@ class OneFamilyViewModel(
             result.onSuccess { savedExpenseId ->
                 _statusBanner.value = "Added $title."
                 if (context != null) {
-                    val currency = state.userProfile?.currencySymbol ?: "₹"
+                    val currency = state.activeCurrencySymbol
                     val memberName = currentUserName.ifBlank { state.userProfile?.displayName ?: "Member" }
                     TransactionNotificationHelper.showNewTransactionNotification(
                         context = context,
@@ -1221,6 +1400,10 @@ class OneFamilyViewModel(
         viewModelScope.launch {
             repository.linkDuplicateTransaction(primaryTx, duplicateTx)
                 .onSuccess { merged ->
+                    _lastUndoableAction.value = UndoableSwipeAction.LinkedDuplicateTransaction(
+                        originalPrimary = primaryTx,
+                        deletedDuplicate = duplicateTx
+                    )
                     _statusBanner.value = "Linked '${duplicateTx.title}' into '${merged.title}' (${merged.linkedSmsSignatures.size + 1} SMS)."
                 }
                 .onFailure { err ->
@@ -1239,7 +1422,7 @@ class OneFamilyViewModel(
         additionalSpend: Double = 0.0
     ) {
         val state = uiState.value
-        val currency = state.userProfile?.currencySymbol ?: "₹"
+        val currency = state.activeCurrencySymbol
 
         if (!category.isNullOrBlank()) {
             val catProg = state.categoryProgressList.firstOrNull {
@@ -1284,7 +1467,7 @@ class OneFamilyViewModel(
      */
     fun sendTestFcmPushAlert(context: Context) {
         val state = uiState.value
-        val currency = state.userProfile?.currencySymbol ?: "₹"
+        val currency = state.activeCurrencySymbol
         val topCat = state.categoryProgressList.firstOrNull { it.limit > 0.0 }
             ?: state.categoryProgressList.firstOrNull()
 
@@ -1377,14 +1560,18 @@ class OneFamilyViewModel(
     }
 
     fun toggleTransactionPrivacy(expense: ExpenseTransaction) {
-        val household = uiState.value.household
-        if (household == null) {
-            _errorMessage.value = "Create or join a Family Household first to share expenses."
-            return
-        }
         viewModelScope.launch {
+            val household = uiState.value.household ?: repository.getUserProfileOnce()
+                ?.activeHouseholdId
+                ?.takeIf { it.isNotBlank() }
+                ?.let { repository.getHouseholdOnce(it) }
+            if (household == null) {
+                _errorMessage.value = "Create or join a Family Household first to share expenses."
+                return@launch
+            }
             repository.toggleExpensePrivacy(expense, household)
                 .onSuccess {
+                    _lastUndoableAction.value = UndoableSwipeAction.ToggledPrivacy(expense)
                     val newScope = if (expense.visibility == "PERSONAL") "Household" else "Personal"
                     _statusBanner.value = "Moved '${expense.title}' to $newScope."
                 }
@@ -1397,8 +1584,68 @@ class OneFamilyViewModel(
     fun deleteTransaction(expense: ExpenseTransaction) {
         viewModelScope.launch {
             repository.deleteExpense(expense)
-                .onSuccess { _statusBanner.value = "Deleted '${expense.title}'." }
+                .onSuccess {
+                    _lastUndoableAction.value = UndoableSwipeAction.DeletedTransaction(expense)
+                    _statusBanner.value = "Deleted '${expense.title}'."
+                }
                 .onFailure { err -> _errorMessage.value = err.localizedMessage ?: "Failed to delete transaction." }
+        }
+    }
+
+    /**
+     * Reverts the most recent swipe or quick-action on a transaction (Swipe-Left Delete,
+     * Swipe-Right Link Duplicate, or Privacy Toggle).
+     */
+    fun undoLastSwipeAction() {
+        val action = _lastUndoableAction.value ?: return
+        _lastUndoableAction.value = null
+        viewModelScope.launch {
+            when (action) {
+                is UndoableSwipeAction.DeletedTransaction -> {
+                    val tx = action.deletedExpense
+                    repository.restoreExpense(tx)
+                        .onSuccess {
+                            _statusBanner.value = "Restored '${tx.title}'."
+                        }
+                        .onFailure { err ->
+                            _errorMessage.value = err.localizedMessage ?: "Failed to restore transaction."
+                        }
+                }
+                is UndoableSwipeAction.LinkedDuplicateTransaction -> {
+                    val primary = action.originalPrimary
+                    val duplicate = action.deletedDuplicate
+                    val r1 = repository.restoreExpense(primary)
+                    val r2 = repository.restoreExpense(duplicate)
+                    if (r1.isSuccess && r2.isSuccess) {
+                        _statusBanner.value = "Undid link for '${duplicate.title}'."
+                    } else {
+                        _errorMessage.value = "Could not undo duplicate link."
+                    }
+                }
+                is UndoableSwipeAction.ToggledPrivacy -> {
+                    val original = action.originalExpense
+                    val household = uiState.value.household ?: repository.getUserProfileOnce()
+                        ?.activeHouseholdId
+                        ?.takeIf { it.isNotBlank() }
+                        ?.let { repository.getHouseholdOnce(it) }
+                    if (household != null) {
+                        val flippedStub = original.copy(
+                            visibility = if (original.visibility == "PERSONAL") "SHARED" else "PERSONAL",
+                            householdId = if (original.visibility == "PERSONAL") household.id else ""
+                        )
+                        repository.deleteExpense(flippedStub)
+                        repository.restoreExpense(original)
+                            .onSuccess {
+                                _statusBanner.value = "Restored '${original.title}' privacy scope."
+                            }
+                            .onFailure { err ->
+                                _errorMessage.value = err.localizedMessage ?: "Could not undo privacy change."
+                            }
+                    } else {
+                        repository.restoreExpense(original)
+                    }
+                }
+            }
         }
     }
 
@@ -1454,12 +1701,35 @@ class OneFamilyViewModel(
         currencySymbol: String
     ) {
         viewModelScope.launch {
-            repository.updatePersonalBudgetSettings(personalLimit, currencySymbol)
+            val cleanCurrency = currencySymbol.trim().ifBlank { "₹" }.take(10)
+            repository.updatePersonalBudgetSettings(personalLimit, cleanCurrency)
             val household = uiState.value.household
-            if (household != null && householdLimit != null && householdLimit >= 0.0) {
-                repository.updateHouseholdSettings(household.id, household.name, householdLimit)
+            if (household != null) {
+                val targetLimit = if (householdLimit != null && householdLimit >= 0.0) {
+                    householdLimit
+                } else {
+                    household.monthlyBudgetLimit
+                }
+                repository.updateHouseholdSettings(household.id, household.name, targetLimit, cleanCurrency)
             }
             _statusBanner.value = "Budget updated."
+        }
+    }
+
+    fun updatePreferredCurrency(currencySymbol: String) {
+        val cleanSymbol = currencySymbol.trim().take(10)
+        if (cleanSymbol.isBlank()) {
+            _errorMessage.value = "Please select or enter a valid currency symbol."
+            return
+        }
+        viewModelScope.launch {
+            repository.updatePreferredCurrency(cleanSymbol, uiState.value.household)
+                .onSuccess {
+                    _statusBanner.value = "Family currency updated to $cleanSymbol."
+                }
+                .onFailure { err ->
+                    _errorMessage.value = err.localizedMessage ?: "Failed to update currency."
+                }
         }
     }
 
@@ -1511,7 +1781,7 @@ class OneFamilyViewModel(
 
     fun createFamilyHousehold(name: String, monthlyLimit: Double) {
         viewModelScope.launch {
-            val currency = uiState.value.userProfile?.currencySymbol ?: "₹"
+            val currency = uiState.value.activeCurrencySymbol
             repository.createHousehold(
                 name = name,
                 monthlyBudgetLimit = monthlyLimit,

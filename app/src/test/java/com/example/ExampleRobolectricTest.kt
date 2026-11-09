@@ -1,19 +1,43 @@
 package com.example
 
 import android.content.Context
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.hasTestTag
+import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithTag
+import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.text.font.FontFamily
 import androidx.test.core.app.ApplicationProvider
 import com.example.data.local.LocalAccountDataStore
 import com.example.data.local.LocalAccountSessionManager
 import com.example.data.model.CrashlyticsSettings
+import com.example.data.model.ExpenseTransaction
+import com.example.data.model.ExpertFeatureFlagsSettings
+import com.example.data.model.FamilyCurrencyOption
 import com.example.data.model.FcmPushSettings
+import com.example.data.model.Household
+import com.example.data.model.UserProfile
 import com.example.data.model.WallpaperColorAccent
 import com.example.data.model.WallpaperDensity
 import com.example.data.model.WallpaperPatternStyle
 import com.example.data.model.WallpaperSettings
 import com.example.data.repository.OneFamilyRepository
+import com.example.data.sms.RawSmsRow
 import com.example.data.sms.SmsInboxReader
 import com.example.data.sms.TransactionNotificationHelper
+import com.example.ui.components.formatCompactCurrency
+import com.example.ui.components.formatCurrency
+import com.example.ui.screens.FirstTimeSmsSyncScreen
+import com.example.ui.screens.HomeTabScreen
+import com.example.ui.screens.HouseholdTabScreen
 import com.example.ui.screens.mergeSelectedDatePreservingTime
 import com.example.ui.screens.mergeSelectedTimePreservingDate
 import com.example.ui.screens.sanitizeDecimalInput
@@ -25,24 +49,36 @@ import com.example.ui.screens.validateHouseholdJoinCode
 import com.example.ui.screens.validateNonNegativeAmount
 import com.example.ui.screens.validatePositiveAmount
 import com.example.ui.theme.AppThemeMode
+import com.example.ui.theme.OneFamilyTheme
 import com.example.ui.theme.buildResponsiveTypography
+import com.example.ui.viewmodel.OneFamilyDashboardUiState
+import com.example.ui.viewmodel.OneFamilyViewModel
+import com.example.ui.viewmodel.SmsReadPreviewItem
+import com.example.ui.viewmodel.SmsSyncProgressState
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
+import android.os.Looper
 import java.util.Calendar
 import java.util.TimeZone
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [36])
 class ExampleRobolectricTest {
+
+    @get:Rule
+    val composeTestRule = createComposeRule()
 
     @Test
     fun `read string from context`() {
@@ -381,52 +417,84 @@ class ExampleRobolectricTest {
     }
 
     @Test
-    fun `test mock user login seeds mock data across last 3 months, financial accounts, and raw SMS cache`() = runBlocking {
+    fun `test test user has full mock data while real user has zero mock data and strict isolation`() = runBlocking {
         val context = ApplicationProvider.getApplicationContext<Context>()
-        val loginResult = LocalAccountSessionManager.signInWithUsernamePassword(
+
+        // 1. Verify Test User has full mock data (sample transactions, accounts, raw SMS) for demoing
+        val testLogin = LocalAccountSessionManager.signInWithUsernamePassword(
             context = context,
             rawUsername = "test",
             rawPassword = "pass"
         )
-        assertTrue(loginResult.isSuccess)
-        val user = loginResult.getOrNull()
-        assertNotNull(user)
-        assertEquals("Mock User", user?.displayName)
+        assertTrue(testLogin.isSuccess)
+        val testUser = testLogin.getOrNull()!!
+        assertEquals("Mock User", testUser.displayName)
 
         val repo = OneFamilyRepository(context)
-        val profile = repo.ensureUserProfile(user!!.displayName, user.email).getOrNull()
-        assertNotNull(profile)
-        val household = repo.getHouseholdOnce(profile!!.activeHouseholdId)
-        assertNotNull(household)
+        val testProfile = repo.ensureUserProfile(testUser.displayName, testUser.email).getOrNull()!!
+        val testHousehold = repo.getHouseholdOnce(testProfile.activeHouseholdId)!!
 
-        // Verify shared mock transactions are populated across multiple distinct months
-        val sharedExpenses = repo.observeSharedExpenses(household!!.id, user.uid).first()
-        val mockTxs = sharedExpenses.filter { it.id.startsWith("mock_tx_") }
-        assertTrue(mockTxs.size >= 15)
+        // Verify accounts were seeded for Test User
+        val testAccounts = repo.observeAccounts(testUser.uid).first()
+        assertTrue(testAccounts.size >= 3)
+        assertTrue(testAccounts.any { it.name.contains("HDFC") })
+        assertTrue(testAccounts.any { it.name.contains("Axis") })
 
-        // Verify distinct months represented in mock transactions
-        val distinctMonths = mockTxs.map { tx ->
-            Calendar.getInstance().apply { timeInMillis = tx.transactionDateMillis }.get(Calendar.MONTH)
-        }.distinct()
-        assertTrue("Expected at least 3 distinct months in mock data, found ${distinctMonths.size}", distinctMonths.size >= 3)
+        // Verify realistic mock transactions across past months were seeded for Test User
+        val testSharedExpenses = repo.observeSharedExpenses(testHousehold.id, testUser.uid).first()
+        val mockTxs = testSharedExpenses.filter { it.userId == testUser.uid }
+        assertTrue("Test user should have sample mock transactions for demoing", mockTxs.size >= 10)
+        assertTrue(mockTxs.any { it.title.contains("Salary") || it.type == "INCOME" })
+        assertTrue(mockTxs.any { it.title.contains("Rent") || it.title.contains("Groceries") })
 
-        // Verify categories span Groceries, Rent & Housing, Food & Dining, Utilities & Bills, Transport & Fuel
-        val categories = mockTxs.map { it.category }.distinct()
-        assertTrue(categories.contains("Groceries"))
-        assertTrue(categories.contains("Rent & Housing"))
-        assertTrue(categories.contains("Food & Dining"))
+        // Verify each mock transaction has its raw SMS body cached
+        val sampleMockTx = mockTxs.first()
+        val mockSms = LocalAccountDataStore.getSmsMessageForTransaction(sampleMockTx)
+        assertNotNull(mockSms)
+        assertTrue(mockSms!!.body.isNotBlank())
 
-        // Verify raw SMS bodies are retrievable for mock transactions
-        val groceryTx = mockTxs.first { it.category == "Groceries" }
-        val rawSms = LocalAccountDataStore.getSmsMessageForTransaction(groceryTx)
-        assertNotNull(rawSms)
-        assertTrue(rawSms!!.body.contains("Nature's Basket") || rawSms.body.contains("HDFC Bank"))
+        LocalAccountSessionManager.signOut(context)
 
-        // Verify financial accounts were seeded
-        val accounts = repo.observeAccounts(user.uid).first()
-        assertTrue(accounts.size >= 3)
-        assertTrue(accounts.any { it.name.contains("HDFC") })
-        assertTrue(accounts.any { it.name.contains("Axis") })
+        // 2. Verify Real User has strictly ZERO mock data and complete isolation from Test User
+        val realRegister = LocalAccountSessionManager.registerUsernamePassword(
+            context = context,
+            rawUsername = "alex",
+            rawPassword = "password123",
+            rawDisplayName = "Alex Mercer"
+        )
+        assertTrue(realRegister.isSuccess)
+        val realUser = realRegister.getOrNull()!!
+
+        val realProfile = repo.ensureUserProfile(realUser.displayName, realUser.email).getOrNull()!!
+        // Real user starts without an active household until created/joined
+        assertEquals("", realProfile.activeHouseholdId)
+
+        // Verify Real User has zero mock transactions and zero accounts inherited from Test User
+        val realPersonalExpenses = repo.observePersonalExpenses(realUser.uid).first()
+        assertTrue("Real user must have zero mock personal expenses", realPersonalExpenses.isEmpty())
+
+        val realAccounts = repo.observeAccounts(realUser.uid).first()
+        assertTrue("Real user must have zero accounts inherited from test user", realAccounts.isEmpty())
+
+        // Real user adds a manual transaction
+        val manualTxId = repo.addExpense(
+            userName = realUser.displayName,
+            household = null,
+            title = "Real User Dinner",
+            amount = 850.0,
+            type = "EXPENSE",
+            category = "Food & Dining",
+            accountName = "Cash",
+            paymentMode = "CASH",
+            tags = listOf("real"),
+            notes = "Alex's cash receipt",
+            isShared = false
+        ).getOrThrow()
+
+        val afterManual = repo.observePersonalExpenses(realUser.uid).first()
+        assertEquals(1, afterManual.size)
+        assertEquals("Real User Dinner", afterManual.first().title)
+        assertEquals(realUser.uid, afterManual.first().userId)
 
         LocalAccountSessionManager.signOut(context)
     }
@@ -579,4 +647,509 @@ class ExampleRobolectricTest {
         assertEquals(1, diagnostics.size)
         assertEquals("SMS_AUTO_SYNC", diagnostics.first().subsystem)
     }
+
+    @Test
+    fun `test family preferred currency selection updates UserProfile, Household, activeCurrencySymbol, and all transaction formatting`() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        LocalAccountSessionManager.signInWithUsernamePassword(context, "test", "pass")
+        val user = LocalAccountSessionManager.getCurrentUser(context)!!
+        val repo = OneFamilyRepository(context)
+        val profile = repo.ensureUserProfile(user.displayName, user.email).getOrNull()!!
+        val household = repo.getHouseholdOnce(profile.activeHouseholdId)!!
+
+        // Verify all preset FamilyCurrencyOptions have non-blank symbols and codes
+        assertTrue(FamilyCurrencyOption.entries.size >= 8)
+        assertEquals("$", FamilyCurrencyOption.USD.symbol)
+        assertEquals("€", FamilyCurrencyOption.EUR.symbol)
+        assertEquals("£", FamilyCurrencyOption.GBP.symbol)
+        assertEquals("AED", FamilyCurrencyOption.AED.symbol)
+
+        // Switch preferred currency to USD ($) and verify both UserProfile and Household update
+        val usdResult = repo.updatePreferredCurrency("$", household)
+        assertTrue(usdResult.isSuccess)
+        assertEquals("$", repo.observeUserProfile(user.uid).first()?.currencySymbol)
+        assertEquals("$", repo.getHouseholdOnce(household.id)?.currencySymbol)
+
+        // Verify OneFamilyDashboardUiState.activeCurrencySymbol reflects the household's preferred currency
+        val uiStateWithUsd = OneFamilyDashboardUiState(
+            userProfile = repo.observeUserProfile(user.uid).first(),
+            household = repo.getHouseholdOnce(household.id)
+        )
+        assertEquals("$", uiStateWithUsd.activeCurrencySymbol)
+        assertEquals("$2,450", formatCurrency(2450.0, uiStateWithUsd.activeCurrencySymbol))
+        assertEquals("$2.5k", formatCompactCurrency(2450.0, uiStateWithUsd.activeCurrencySymbol))
+
+        // Switch preferred currency to EUR (€) and verify formatting
+        repo.updatePreferredCurrency("€", household)
+        val uiStateWithEur = OneFamilyDashboardUiState(
+            userProfile = repo.observeUserProfile(user.uid).first(),
+            household = repo.getHouseholdOnce(household.id)
+        )
+        assertEquals("€", uiStateWithEur.activeCurrencySymbol)
+        assertEquals("€1,200.75", formatCurrency(1200.75, uiStateWithEur.activeCurrencySymbol))
+        assertEquals("€1,200.5", formatCurrency(1200.50, uiStateWithEur.activeCurrencySymbol))
+
+        // Switch preferred currency to AED and then restore back to ₹
+        repo.updatePreferredCurrency("AED", household)
+        assertEquals("AED", repo.getHouseholdOnce(household.id)?.currencySymbol)
+        assertEquals("AED500", formatCurrency(500.0, "AED"))
+
+        repo.updatePreferredCurrency("₹", household)
+        assertEquals("₹", repo.getHouseholdOnce(household.id)?.currencySymbol)
+        LocalAccountSessionManager.signOut(context)
+    }
+
+    @Test
+    fun `test undo features for unwanted swipes on the home screen (swipe-left delete, swipe-right link duplicate, and privacy toggle)`() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        LocalAccountSessionManager.signInWithUsernamePassword(context, "test", "pass")
+        val user = LocalAccountSessionManager.getCurrentUser(context)!!
+        val repo = OneFamilyRepository(context)
+        val smsReader = SmsInboxReader(context)
+        val profile = repo.ensureUserProfile(user.displayName, user.email).getOrNull()!!
+        val household = repo.getHouseholdOnce(profile.activeHouseholdId)!!
+
+        val viewModel = OneFamilyViewModel(
+            repository = repo,
+            smsInboxReader = smsReader,
+            currentUserId = user.uid,
+            currentUserName = user.displayName,
+            currentUserEmail = user.email
+        )
+        composeTestRule.waitForIdle()
+        shadowOf(Looper.getMainLooper()).idle()
+
+        // 1. Test Unwanted Swipe-Left Delete & Undo Restoration
+        val now = System.currentTimeMillis()
+        val swipeDeleteTxId = repo.addExpense(
+            userName = user.displayName,
+            household = household,
+            title = "Accidental Swipe Groceries",
+            amount = 1499.0,
+            type = "EXPENSE",
+            category = "Groceries",
+            accountName = "HDFC Bank",
+            paymentMode = "UPI",
+            tags = listOf("swipe-test"),
+            notes = "[VM-HDFCBK] Rs. 1499.00 debited from HDFC Bank A/c XX4821",
+            isShared = true,
+            smsSignature = "sms_sig_undo_delete_1",
+            transactionDateMillis = now
+        ).getOrNull()!!
+
+        val txBeforeDelete = repo.observeSharedExpenses(household.id, user.uid).first()
+            .first { it.id == swipeDeleteTxId }
+
+        // Trigger swipe-left delete via ViewModel
+        viewModel.deleteTransaction(txBeforeDelete)
+        composeTestRule.waitForIdle()
+        shadowOf(Looper.getMainLooper()).idle()
+
+        // Verify transaction was deleted and undo state is active
+        assertNull(
+            repo.observeSharedExpenses(household.id, user.uid).first()
+                .firstOrNull { it.id == swipeDeleteTxId }
+        )
+        assertNotNull(viewModel.lastUndoableAction.value)
+        assertEquals("Deleted 'Accidental Swipe Groceries'.", viewModel.statusBanner.value)
+        assertTrue(viewModel.uiState.first { it.canUndoLastAction }.canUndoLastAction)
+
+        // Trigger Undo for the unwanted swipe-left delete
+        viewModel.undoLastSwipeAction()
+        composeTestRule.waitForIdle()
+        shadowOf(Looper.getMainLooper()).idle()
+
+        val restoredAfterDelete = repo.observeSharedExpenses(household.id, user.uid).first()
+            .firstOrNull { it.id == swipeDeleteTxId }
+        assertNotNull("Deleted transaction should be restored after undoLastSwipeAction()", restoredAfterDelete)
+        assertEquals("Accidental Swipe Groceries", restoredAfterDelete!!.title)
+        assertEquals(1499.0, restoredAfterDelete.amount, 0.001)
+        assertEquals("sms_sig_undo_delete_1", restoredAfterDelete.smsSignature)
+        assertNull(viewModel.lastUndoableAction.value)
+        assertEquals("Restored 'Accidental Swipe Groceries'.", viewModel.statusBanner.value)
+
+        // 2. Test Unwanted Swipe-Right Link Duplicate & Undo Restoration
+        val duplicateTxId = repo.addExpense(
+            userName = user.displayName,
+            household = household,
+            title = "Duplicate UPI Alert Groceries",
+            amount = 1499.0,
+            type = "EXPENSE",
+            category = "Groceries",
+            accountName = "GPay",
+            paymentMode = "UPI",
+            tags = listOf("gpay"),
+            notes = "[AX-GPAY] You paid Rs. 1499.00 via Google Pay UPI to Groceries",
+            isShared = true,
+            smsSignature = "sms_sig_undo_dup_2",
+            transactionDateMillis = now + 5_000L
+        ).getOrNull()!!
+
+        val dupTxBeforeLink = repo.observeSharedExpenses(household.id, user.uid).first()
+            .first { it.id == duplicateTxId }
+
+        viewModel.linkDuplicateTransactions(restoredAfterDelete, dupTxBeforeLink)
+        composeTestRule.waitForIdle()
+        shadowOf(Looper.getMainLooper()).idle()
+
+        // Verify duplicate was merged & removed, and undo state is active
+        assertNull(
+            repo.observeSharedExpenses(household.id, user.uid).first()
+                .firstOrNull { it.id == duplicateTxId }
+        )
+        assertNotNull(viewModel.lastUndoableAction.value)
+
+        // Trigger Undo for the unwanted swipe-right link duplicate
+        viewModel.undoLastSwipeAction()
+        composeTestRule.waitForIdle()
+        shadowOf(Looper.getMainLooper()).idle()
+
+        val expensesAfterUnlink = repo.observeSharedExpenses(household.id, user.uid).first()
+        val restoredPrimary = expensesAfterUnlink.firstOrNull { it.id == swipeDeleteTxId }
+        val restoredDuplicate = expensesAfterUnlink.firstOrNull { it.id == duplicateTxId }
+        assertNotNull("Primary transaction should be restored after undoing duplicate link", restoredPrimary)
+        assertNotNull("Duplicate transaction should be restored after undoing duplicate link", restoredDuplicate)
+        assertTrue(restoredPrimary!!.linkedSmsSignatures.isEmpty())
+        assertEquals("Duplicate UPI Alert Groceries", restoredDuplicate!!.title)
+        assertNull(viewModel.lastUndoableAction.value)
+
+        // 3. Test Unwanted Privacy Scope Toggle & Undo Restoration
+        viewModel.toggleTransactionPrivacy(restoredPrimary)
+        composeTestRule.waitForIdle()
+        shadowOf(Looper.getMainLooper()).idle()
+        assertNotNull(viewModel.lastUndoableAction.value)
+        assertNull(
+            repo.observeSharedExpenses(household.id, user.uid).first()
+                .firstOrNull { it.id == swipeDeleteTxId }
+        )
+
+        viewModel.undoLastSwipeAction()
+        composeTestRule.waitForIdle()
+        shadowOf(Looper.getMainLooper()).idle()
+        val restoredSharedScope = repo.observeSharedExpenses(household.id, user.uid).first()
+            .firstOrNull { it.id == swipeDeleteTxId }
+        assertNotNull("Transaction should be restored back to SHARED scope after undoing privacy toggle", restoredSharedScope)
+        assertEquals("SHARED", restoredSharedScope!!.visibility)
+
+        // Clean up test transactions
+        repo.deleteExpense(restoredSharedScope)
+        repo.deleteExpense(restoredDuplicate)
+        LocalAccountSessionManager.signOut(context)
+    }
+
+    @Test
+    fun `test HomeTabScreen UI swipe undo bar and preferred currency display`() {
+        val sampleTx = ExpenseTransaction(
+            id = "ui_test_tx_1",
+            userId = "local_user_test",
+            userName = "Mock User",
+            householdId = "local_household_test",
+            visibility = "SHARED",
+            title = "Whole Foods Market",
+            amount = 325.0,
+            type = "EXPENSE",
+            category = "Groceries",
+            accountName = "Chase Card",
+            paymentMode = "CARD",
+            transactionDateMillis = System.currentTimeMillis()
+        )
+
+        var currentUiState by mutableStateOf(
+            OneFamilyDashboardUiState(
+                isLoading = false,
+                userProfile = UserProfile(uid = "local_user_test", displayName = "Mock User", currencySymbol = "$"),
+                household = Household(id = "local_household_test", name = "Family Home", currencySymbol = "$"),
+                activeExpenses = listOf(sampleTx),
+                allScopedExpenses = listOf(sampleTx),
+                filteredExpenses = listOf(sampleTx),
+                totalMonthlySpent = 325.0,
+                activeMonthlyBudget = 2000.0
+            )
+        )
+
+        composeTestRule.setContent {
+            OneFamilyTheme {
+                HomeTabScreen(
+                    uiState = currentUiState,
+                    onScopeSelected = {},
+                    onDeleteTransaction = { deleted ->
+                        currentUiState = currentUiState.copy(
+                            filteredExpenses = currentUiState.filteredExpenses.filterNot { it.id == deleted.id },
+                            statusBannerMessage = "Deleted '${deleted.title}'.",
+                            canUndoLastAction = true
+                        )
+                    },
+                    onUndoLastSwipeAction = {
+                        currentUiState = currentUiState.copy(
+                            filteredExpenses = listOf(sampleTx),
+                            statusBannerMessage = "Restored '${sampleTx.title}'.",
+                            canUndoLastAction = false
+                        )
+                    }
+                )
+            }
+        }
+
+        // Verify transaction displays with the selected family currency ($)
+        composeTestRule.onNodeWithText("Whole Foods Market").assertIsDisplayed()
+        composeTestRule.onNodeWithText("-$325").assertIsDisplayed()
+
+        // Simulate an unwanted swipe-left delete on the Home screen
+        currentUiState = currentUiState.copy(
+            filteredExpenses = emptyList(),
+            statusBannerMessage = "Deleted 'Whole Foods Market'.",
+            canUndoLastAction = true
+        )
+        composeTestRule.waitForIdle()
+
+        // Verify the Home Undo Swipe bar and button appear
+        composeTestRule.onNodeWithTag("home_undo_swipe_bar").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("home_undo_swipe_button").assertIsDisplayed()
+
+        // Tap Undo Swipe button and verify the transaction is restored on the Home screen
+        composeTestRule.onNodeWithTag("home_undo_swipe_button").performClick()
+        composeTestRule.waitForIdle()
+
+        composeTestRule.onNodeWithText("Whole Foods Market").assertIsDisplayed()
+        composeTestRule.onNodeWithText("-$325").assertIsDisplayed()
+
+        // Change family preferred currency to € and verify the Home screen updates immediately
+        currentUiState = currentUiState.copy(
+            userProfile = currentUiState.userProfile?.copy(currencySymbol = "€"),
+            household = currentUiState.household?.copy(currencySymbol = "€")
+        )
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithText("-€325").assertIsDisplayed()
+    }
+
+    @Test
+    fun `test parallel SMS reading and transaction adding with 6 reader threads and 6 writer threads in batches without race conditions`() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        LocalAccountSessionManager.signInWithUsernamePassword(context, "test", "pass")
+        val user = LocalAccountSessionManager.getCurrentUser(context)!!
+        val repo = OneFamilyRepository(context)
+        val smsReader = SmsInboxReader(context)
+        val profile = repo.ensureUserProfile(user.displayName, user.email).getOrNull()!!
+        val household = repo.getHouseholdOnce(profile.activeHouseholdId)!!
+
+        val viewModel = OneFamilyViewModel(
+            repository = repo,
+            smsInboxReader = smsReader,
+            currentUserId = user.uid,
+            currentUserName = user.displayName,
+            currentUserEmail = user.email
+        )
+        composeTestRule.waitForIdle()
+        shadowOf(Looper.getMainLooper()).idle()
+
+        // Align baseTime to the start of a 5-minute bucket (+10s) so +1.5s never crosses a 300_000ms bucket boundary
+        val baseTime = ((System.currentTimeMillis() - 7_200_000L) / 300_000L) * 300_000L + 10_000L
+        // Create 40 unique SMS alerts + 10 cross-batch duplicate SMS alerts (same SMS body + 1.5s offset)
+        // and include out-of-order timestamps with Avl Bal to verify newest balance wins under parallel writes
+        val uniqueRows = (1..40).map { idx ->
+            val ts = baseTime + (idx * 300_000L)
+            val avlBal = 50_000.0 - (idx * 100.0) // newest (idx=40) has Avl Bal Rs. 46000.0
+            RawSmsRow(
+                sender = "VM-HDFCBK",
+                body = "Rs. ${200 + idx}.00 debited from HDFC Bank A/c XX9182 on 18-11-26 to VPA merchant$idx@okaxis (UPI Ref 99001122$idx). Avl Bal: Rs. $avlBal",
+                timestamp = ts
+            )
+        }
+        // Add 10 cross-batch duplicate SMS messages (within 1.5 seconds of first 10 unique rows)
+        val duplicateRows = (1..10).map { idx ->
+            val ts = baseTime + (idx * 300_000L) + 1_500L
+            val avlBal = 50_000.0 - (idx * 100.0)
+            RawSmsRow(
+                sender = "AD-HDFCBK",
+                body = "Rs. ${200 + idx}.00 debited from HDFC Bank A/c XX9182 on 18-11-26 to VPA merchant$idx@okaxis (UPI Ref 99001122$idx). Avl Bal: Rs. $avlBal",
+                timestamp = ts
+            )
+        }
+        // Shuffle rows so older and newer timestamps are distributed across different parallel batches
+        val allRawRows = (uniqueRows + duplicateRows).shuffled()
+
+        val (parsedCandidates, savedCount) = viewModel.runParallelSmsBatchPipeline(
+            rawRowsOverride = allRawRows,
+            existingSignatures = emptySet(),
+            userName = user.displayName,
+            household = household,
+            readerThreads = 6,
+            writerThreads = 6,
+            batchSize = 8,
+            perBatchDelayMs = 0L
+        )
+        val finalSyncState = viewModel.smsSyncProgress.value
+
+        // Verify at least 5 threads each were used for parallel reading & parallel writing
+        assertTrue(finalSyncState.readerThreadCount >= 5)
+        assertTrue(finalSyncState.writerThreadCount >= 5)
+        assertEquals(6, finalSyncState.readerThreadCount)
+        assertEquals(6, finalSyncState.writerThreadCount)
+        assertEquals(50, finalSyncState.totalSmsCount)
+        assertEquals(50, finalSyncState.readSmsCount)
+        assertEquals(0, finalSyncState.remainingSmsCount)
+        // Exactly 40 unique transactions should be matched and saved (0 duplicates from race conditions)
+        assertEquals(40, parsedCandidates.size)
+        assertEquals(40, savedCount)
+        assertEquals(40, finalSyncState.matchedTransactionsCount)
+        assertEquals(40, finalSyncState.savedTransactionsCount)
+        assertTrue(finalSyncState.recentReadTransactions.isNotEmpty())
+        assertTrue(finalSyncState.currentReadingTransactionTitle.isNotBlank())
+
+        // Verify all 40 transactions exist in repository with zero duplicates
+        val allShared = repo.observeSharedExpenses(household.id, user.uid).first()
+        val parallelImported = allShared.filter { it.accountName.contains("9182") }
+        assertEquals(40, parallelImported.size)
+
+        // Verify monotonic timestamp guard preserved the newest account balance (46,000.0) despite shuffled parallel batches
+        val accounts = repo.observeAccounts(user.uid).first()
+        val hdfc9182 = accounts.firstOrNull { it.name.contains("9182") }
+        assertNotNull(hdfc9182)
+        assertEquals(46_000.0, hdfc9182!!.balance, 0.01)
+
+        LocalAccountSessionManager.signOut(context)
+    }
+
+    @Test
+    fun `test FirstTimeSmsSyncScreen displays transaction being read animation and live ticker`() {
+        val sampleSyncState = SmsSyncProgressState(
+            isSyncing = true,
+            isCompleted = false,
+            totalSmsCount = 120,
+            readSmsCount = 72,
+            matchedTransactionsCount = 24,
+            savedTransactionsCount = 20,
+            readerThreadCount = 6,
+            writerThreadCount = 6,
+            processedBatchesCount = 6,
+            totalBatchesCount = 10,
+            currentReadingTransactionTitle = "Blue Tokai Coffee",
+            currentReadingBank = "HDFC Bank ••4821",
+            currentReadingAmount = 480.0,
+            currentReadingCategory = "Food & Dining",
+            recentReadTransactions = listOf(
+                SmsReadPreviewItem(
+                    id = "preview_1",
+                    merchant = "Blue Tokai Coffee",
+                    bankName = "HDFC Bank ••4821",
+                    category = "Food & Dining",
+                    amount = 480.0,
+                    isIncome = false
+                ),
+                SmsReadPreviewItem(
+                    id = "preview_2",
+                    merchant = "Nature's Basket",
+                    bankName = "ICICI Bank ••1104",
+                    category = "Groceries",
+                    amount = 1850.0,
+                    isIncome = false
+                )
+            )
+        )
+
+        composeTestRule.setContent {
+            OneFamilyTheme {
+                FirstTimeSmsSyncScreen(
+                    syncState = sampleSyncState,
+                    onStartSyncClick = {},
+                    onContinueToAppClick = {},
+                    onSkipClick = {},
+                    currencySymbol = "₹"
+                )
+            }
+        }
+        composeTestRule.waitForIdle()
+
+        composeTestRule.onNodeWithTag("first_time_sms_sync_screen").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("sms_transaction_reading_animation").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("sms_live_transaction_ticker").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("sms_parallel_threads_badge").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Blue Tokai Coffee").assertIsDisplayed()
+        composeTestRule.onNodeWithText("₹480").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("sms_sync_percentage_text").performScrollTo().assertIsDisplayed()
+        composeTestRule.onNodeWithTag("sms_sync_read_count").performScrollTo().assertIsDisplayed()
+    }
+
+    @Test
+    fun `test feature-flagged expert settings and color-only theme selection on HouseholdTabScreen`() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        LocalAccountSessionManager.ensureInitialized(context)
+        // Reset expert mode to disabled initially
+        LocalAccountSessionManager.setExpertFeatureFlags(
+            context,
+            ExpertFeatureFlagsSettings(expertModeEnabled = false)
+        )
+
+        val uiState = OneFamilyDashboardUiState(
+            isLoading = false,
+            userProfile = UserProfile(uid = "local_user_test", displayName = "Test User", currencySymbol = "₹"),
+            household = Household(id = "local_household_test", name = "Family Home", currencySymbol = "₹")
+        )
+
+        composeTestRule.setContent {
+            OneFamilyTheme {
+                HouseholdTabScreen(
+                    uiState = uiState,
+                    currentUserName = "Test User",
+                    currentUserEmail = "test@onefamily.app",
+                    onUpdateUserName = {},
+                    onUpdatePreferredCurrency = {},
+                    onAddAccountClick = {},
+                    onScanSmsClick = {},
+                    onSignOutClick = {},
+                    onCreateHousehold = { _, _ -> },
+                    onJoinByCode = {},
+                    onInviteByEmail = {},
+                    onAcceptEmailInvite = {}
+                )
+            }
+        }
+        composeTestRule.waitForIdle()
+
+        // 1. Scroll to ThemeModeSelectorBar and verify it uses color-only swatches (no "System", "Light", "Dark" text labels)
+        composeTestRule.onNodeWithTag("household_tab_list")
+            .performScrollToNode(hasTestTag("theme_color_swatch_bar"))
+        composeTestRule.onNodeWithTag("theme_color_swatch_bar").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("theme_mode_system").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("theme_mode_light").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("theme_mode_dark").assertIsDisplayed()
+        assertTrue(composeTestRule.onAllNodesWithText("System").fetchSemanticsNodes().isEmpty())
+
+        // Tap Dark and System color swatches to verify theme mode switches cleanly
+        composeTestRule.onNodeWithTag("theme_mode_dark").performClick()
+        composeTestRule.waitForIdle()
+        assertEquals(AppThemeMode.DARK, LocalAccountSessionManager.themeMode.value)
+        composeTestRule.onNodeWithTag("theme_mode_system").performClick()
+        composeTestRule.waitForIdle()
+        assertEquals(AppThemeMode.SYSTEM, LocalAccountSessionManager.themeMode.value)
+
+        // 2. Scroll to Expert Feature Flag card and verify Crashlytics, FCM Push, and Parallel SMS Expert cards are hidden when OFF
+        composeTestRule.onNodeWithTag("household_tab_list")
+            .performScrollToNode(hasTestTag("expert_feature_flag_card"))
+        composeTestRule.onNodeWithTag("expert_feature_flag_card").assertIsDisplayed()
+        assertTrue(composeTestRule.onAllNodesWithTag("crashlytics_settings_card").fetchSemanticsNodes().isEmpty())
+        assertTrue(composeTestRule.onAllNodesWithTag("fcm_push_settings_card").fetchSemanticsNodes().isEmpty())
+        assertTrue(composeTestRule.onAllNodesWithTag("expert_parallel_sms_card").fetchSemanticsNodes().isEmpty())
+
+        // 3. Enable the Master Expert Feature Flag switch
+        composeTestRule.onNodeWithTag("expert_feature_flag_switch").performClick()
+        composeTestRule.waitForIdle()
+        assertTrue(LocalAccountSessionManager.expertFeatureFlags.value.expertModeEnabled)
+
+        // 4. Verify Expert sub-flag chips and gated expert settings cards are now revealed when scrolling the LazyColumn
+        composeTestRule.onNodeWithTag("expert_subflags_row").assertExists()
+        composeTestRule.onNodeWithTag("household_tab_list")
+            .performScrollToNode(hasTestTag("expert_parallel_sms_card"))
+        composeTestRule.onNodeWithTag("expert_parallel_sms_card").assertIsDisplayed()
+
+        composeTestRule.onNodeWithTag("household_tab_list")
+            .performScrollToNode(hasTestTag("fcm_push_settings_card"))
+        composeTestRule.onNodeWithTag("fcm_push_settings_card").assertExists()
+
+        composeTestRule.onNodeWithTag("household_tab_list")
+            .performScrollToNode(hasTestTag("crashlytics_settings_card"))
+        composeTestRule.onNodeWithTag("crashlytics_settings_card").assertExists()
+    }
 }
+
+

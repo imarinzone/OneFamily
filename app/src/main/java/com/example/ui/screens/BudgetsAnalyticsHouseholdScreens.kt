@@ -4,7 +4,9 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.spring
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -28,17 +30,23 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Logout
 import androidx.compose.material.icons.automirrored.filled.ReceiptLong
+import androidx.compose.material.icons.automirrored.filled.Undo
 import androidx.compose.material.icons.filled.AccountBalance
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Apps
+import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.BugReport
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.CurrencyExchange
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.FilterList
+import androidx.compose.material.icons.filled.GridOn
 import androidx.compose.material.icons.filled.Groups
 import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.MarkEmailUnread
@@ -49,7 +57,10 @@ import androidx.compose.material.icons.filled.PersonAdd
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.filled.Sync
+import androidx.compose.material.icons.filled.TextFields
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.Verified
+import androidx.compose.material.icons.filled.Window
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -88,6 +99,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.data.local.LocalAccountSessionManager
 import com.example.data.model.BudgetScope
 import com.example.data.model.ExpenseTransaction
+import com.example.data.model.FamilyCurrencyOption
 import com.example.data.model.Household
 import com.example.data.model.WallpaperColorAccent
 import com.example.data.model.WallpaperDensity
@@ -146,10 +158,11 @@ fun HomeTabScreen(
     onQuickChangeCategory: (ExpenseTransaction) -> Unit = {},
     onToggleTransactionPrivacy: (ExpenseTransaction) -> Unit = {},
     onLinkDuplicateTransaction: (ExpenseTransaction) -> Unit = {},
-    onDeleteTransaction: (ExpenseTransaction) -> Unit = {}
+    onDeleteTransaction: (ExpenseTransaction) -> Unit = {},
+    onUndoLastSwipeAction: () -> Unit = {}
 ) {
     val dimens = LocalAppDimens.current
-    val currency = uiState.userProfile?.currencySymbol ?: "₹"
+    val currency = uiState.activeCurrencySymbol
 
     var filtersExpanded by rememberSaveable { mutableStateOf(false) }
     var showDrawerCustomRangePicker by rememberSaveable { mutableStateOf(false) }
@@ -453,6 +466,63 @@ fun HomeTabScreen(
             }
         }
 
+        // 4B. Quick Undo Bar on Home Screen when a transaction was just swiped
+        if (uiState.canUndoLastAction) {
+            item {
+                Surface(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = dimens.horizontalPadding)
+                        .testTag("home_undo_swipe_bar"),
+                    shape = RoundedCornerShape(dimens.smallCornerRadius),
+                    color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.85f)
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(
+                                horizontal = dimens.horizontalPadding * 0.85f,
+                                vertical = dimens.itemSpacing * 0.55f
+                            ),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.Undo,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.onSecondaryContainer,
+                                modifier = Modifier.size(dimens.rowIconSize * 0.8f)
+                            )
+                            Spacer(modifier = Modifier.width(dimens.horizontalPadding * 0.5f))
+                            Text(
+                                text = uiState.statusBannerMessage ?: "Swipe action applied.",
+                                style = MaterialTheme.typography.bodySmall,
+                                fontWeight = FontWeight.Medium,
+                                color = MaterialTheme.colorScheme.onSecondaryContainer,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                        TextButton(
+                            onClick = onUndoLastSwipeAction,
+                            modifier = Modifier.testTag("home_undo_swipe_button")
+                        ) {
+                            Text(
+                                text = "Undo Swipe",
+                                style = MaterialTheme.typography.labelLarge,
+                                fontWeight = FontWeight.ExtraBold,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
         // 5. Filtered Transactions List
         if (uiState.filteredExpenses.isEmpty()) {
             item {
@@ -564,7 +634,7 @@ fun AnalyticsTabScreen(
     onDeleteTransaction: (ExpenseTransaction) -> Unit = {}
 ) {
     val dimens = LocalAppDimens.current
-    val currency = uiState.userProfile?.currencySymbol ?: "₹"
+    val currency = uiState.activeCurrencySymbol
     val categoryTotals = uiState.categoryProgressList
         .filter { it.spent > 0 }
         .map { it.category to it.spent }
@@ -934,7 +1004,7 @@ fun BudgetsTabScreen(
     onAddOrEditCategoryBudgetClick: (CategorySpendProgress?) -> Unit
 ) {
     val dimens = LocalAppDimens.current
-    val currency = uiState.userProfile?.currencySymbol ?: "₹"
+    val currency = uiState.activeCurrencySymbol
 
     LazyColumn(
         modifier = Modifier
@@ -1239,6 +1309,7 @@ fun HouseholdTabScreen(
     currentUserName: String = "",
     currentUserEmail: String = "",
     onUpdateUserName: (String) -> Unit = {},
+    onUpdatePreferredCurrency: (String) -> Unit = {},
     onAddAccountClick: () -> Unit = {},
     onScanSmsClick: () -> Unit = {},
     onSendTestFcmAlertClick: () -> Unit = {},
@@ -1256,12 +1327,14 @@ fun HouseholdTabScreen(
     val wallpaperSettings by LocalAccountSessionManager.wallpaperSettings.collectAsStateWithLifecycle()
     val fcmPushSettings by LocalAccountSessionManager.fcmPushSettings.collectAsStateWithLifecycle()
     val crashlyticsSettings by LocalAccountSessionManager.crashlyticsSettings.collectAsStateWithLifecycle()
+    val expertFeatureFlags by LocalAccountSessionManager.expertFeatureFlags.collectAsStateWithLifecycle()
     val stabilityDiagnostics by LocalAccountSessionManager.stabilityDiagnostics.collectAsStateWithLifecycle()
-    val currency = uiState.userProfile?.currencySymbol ?: "₹"
+    val currency = uiState.activeCurrencySymbol
 
     val displayName = uiState.userProfile?.displayName?.takeIf { it.isNotBlank() }
         ?: currentUserName.ifBlank { "Member" }
     var editableUserName by remember(displayName) { mutableStateOf(displayName) }
+    var customCurrencyInput by remember(currency) { mutableStateOf(currency) }
 
     var newHouseholdName by remember { mutableStateOf("Our Family Home") }
     var newHouseholdLimit by remember { mutableStateOf("") }
@@ -1292,7 +1365,7 @@ fun HouseholdTabScreen(
             ) {
                 Column(
                     modifier = Modifier.padding(dimens.cardPadding),
-                    verticalArrangement = Arrangement.spacedBy(dimens.itemSpacing)
+                    verticalArrangement = Arrangement.spacedBy(dimens.itemSpacing * 0.85f)
                 ) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -1307,7 +1380,7 @@ fun HouseholdTabScreen(
                         ) {
                             Icon(
                                 imageVector = Icons.Default.Person,
-                                contentDescription = null,
+                                contentDescription = "Profile",
                                 tint = MaterialTheme.colorScheme.primary,
                                 modifier = Modifier.size(dimens.rowIconSize)
                             )
@@ -1315,35 +1388,37 @@ fun HouseholdTabScreen(
                         Spacer(modifier = Modifier.width(dimens.horizontalPadding * 0.75f))
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
-                                text = displayName,
+                                text = "Profile & User Info",
                                 style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.Bold,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                text = if (currentUserEmail.isNotBlank()) "$displayName • $currentUserEmail" else displayName,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
                             )
-                            if (currentUserEmail.isNotBlank()) {
-                                Text(
-                                    text = currentUserEmail,
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                            }
                         }
                     }
 
-                    // Edit User Name Row with Validation
+                    // Edit User Name Row with Icon-Only Save Button
                     val userNameError = validateDisplayName(editableUserName)
                     Row(
                         modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.Top,
-                        horizontalArrangement = Arrangement.spacedBy(dimens.horizontalPadding * 0.6f)
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(dimens.horizontalPadding * 0.5f)
                     ) {
                         OutlinedTextField(
                             value = editableUserName,
                             onValueChange = { editableUserName = it.take(60) },
-                            label = { Text("Your Name") },
+                            leadingIcon = {
+                                Icon(
+                                    imageVector = Icons.Default.Edit,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(dimens.rowIconSize * 0.78f)
+                                )
+                            },
                             isError = userNameError != null,
                             supportingText = userNameError?.let { err -> { Text(err) } },
                             singleLine = true,
@@ -1359,25 +1434,160 @@ fun HouseholdTabScreen(
                                 }
                             },
                             enabled = userNameError == null && editableUserName.trim() != displayName,
-                            shape = RoundedCornerShape(dimens.smallCornerRadius),
+                            shape = CircleShape,
+                            contentPadding = PaddingValues(0.dp),
                             modifier = Modifier
-                                .height(dimens.navPillHeight)
+                                .size(dimens.navPillHeight)
                                 .testTag("save_user_name_button")
                         ) {
                             Icon(
                                 imageVector = Icons.Default.Check,
                                 contentDescription = "Save Name",
-                                modifier = Modifier.size(dimens.rowIconSize * 0.8f)
+                                modifier = Modifier.size(dimens.rowIconSize * 0.9f)
                             )
-                            Spacer(modifier = Modifier.width(dimens.horizontalPadding * 0.3f))
-                            Text("Save")
                         }
                     }
                 }
             }
         }
 
-        // 2. SMS Sync Section (Updated Sync Icon)
+        // 1B. Family Preferred Currency Selection Card
+        item {
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("family_currency_settings_card"),
+                shape = RoundedCornerShape(dimens.cardCornerRadius),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+            ) {
+                Column(
+                    modifier = Modifier.padding(dimens.cardPadding),
+                    verticalArrangement = Arrangement.spacedBy(dimens.itemSpacing * 0.75f)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(dimens.horizontalPadding * 0.6f)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(dimens.rowIconBoxSize * 0.85f)
+                                    .clip(CircleShape)
+                                    .background(MaterialTheme.colorScheme.primaryContainer),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.CurrencyExchange,
+                                    contentDescription = "Currency",
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(dimens.rowIconSize * 0.85f)
+                                )
+                            }
+                            Text(
+                                text = "Preferred Currency",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+
+                        Surface(
+                            shape = RoundedCornerShape(50),
+                            color = MaterialTheme.colorScheme.primaryContainer,
+                            modifier = Modifier.testTag("active_currency_badge")
+                        ) {
+                            Text(
+                                text = currency,
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.ExtraBold,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                modifier = Modifier.padding(
+                                    horizontal = dimens.horizontalPadding * 0.85f,
+                                    vertical = dimens.itemSpacing * 0.35f
+                                )
+                            )
+                        }
+                    }
+
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(dimens.horizontalPadding * 0.4f)
+                    ) {
+                        FamilyCurrencyOption.entries.forEach { option ->
+                            val isSelected = currency == option.symbol
+                            FilterChip(
+                                selected = isSelected,
+                                onClick = {
+                                    customCurrencyInput = option.symbol
+                                    onUpdatePreferredCurrency(option.symbol)
+                                },
+                                label = {
+                                    Text(
+                                        text = option.symbol,
+                                        fontWeight = FontWeight.ExtraBold
+                                    )
+                                },
+                                modifier = Modifier.testTag("currency_chip_${option.code.lowercase()}")
+                            )
+                        }
+                    }
+
+                    val currencyError = validateCurrencySymbol(customCurrencyInput)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(dimens.horizontalPadding * 0.5f)
+                    ) {
+                        OutlinedTextField(
+                            value = customCurrencyInput,
+                            onValueChange = { customCurrencyInput = it.take(6) },
+                            leadingIcon = {
+                                Icon(
+                                    imageVector = Icons.Default.CurrencyExchange,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(dimens.rowIconSize * 0.78f)
+                                )
+                            },
+                            placeholder = { Text("₹ $ € £") },
+                            isError = currencyError != null,
+                            supportingText = currencyError?.let { err -> { Text(err) } },
+                            singleLine = true,
+                            shape = RoundedCornerShape(dimens.smallCornerRadius),
+                            modifier = Modifier
+                                .weight(1f)
+                                .testTag("custom_currency_input")
+                        )
+                        Button(
+                            onClick = {
+                                if (validateCurrencySymbol(customCurrencyInput) == null) {
+                                    onUpdatePreferredCurrency(customCurrencyInput.trim())
+                                }
+                            },
+                            enabled = currencyError == null && customCurrencyInput.trim() != currency,
+                            shape = CircleShape,
+                            contentPadding = PaddingValues(0.dp),
+                            modifier = Modifier
+                                .size(dimens.navPillHeight)
+                                .testTag("save_custom_currency_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Check,
+                                contentDescription = "Apply Currency",
+                                modifier = Modifier.size(dimens.rowIconSize * 0.9f)
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        // 2. SMS Sync Section
         item {
             Card(
                 modifier = Modifier.fillMaxWidth(),
@@ -1394,7 +1604,7 @@ fun HouseholdTabScreen(
                 ) {
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.weight(1f)
+                        horizontalArrangement = Arrangement.spacedBy(dimens.horizontalPadding * 0.6f)
                     ) {
                         Box(
                             modifier = Modifier
@@ -1405,17 +1615,35 @@ fun HouseholdTabScreen(
                         ) {
                             Icon(
                                 imageVector = Icons.Default.Sync,
-                                contentDescription = null,
+                                contentDescription = "SMS Sync",
                                 tint = MaterialTheme.colorScheme.primary,
                                 modifier = Modifier.size(dimens.rowIconSize * 0.85f)
                             )
                         }
-                        Spacer(modifier = Modifier.width(dimens.horizontalPadding * 0.75f))
-                        Text(
-                            text = "SMS Sync",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold
-                        )
+
+                        Column {
+                            Text(
+                                text = "SMS Inbox Sync",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Bolt,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.secondary,
+                                    modifier = Modifier.size(dimens.rowIconSize * 0.65f)
+                                )
+                                Text(
+                                    text = "Parallel Engine (${expertFeatureFlags.readerThreadCount}R × ${expertFeatureFlags.writerThreadCount}W)",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
                     }
 
                     Button(
@@ -1426,16 +1654,14 @@ fun HouseholdTabScreen(
                         Icon(
                             imageVector = Icons.Default.Sync,
                             contentDescription = "Sync SMS",
-                            modifier = Modifier.size(dimens.rowIconSize * 0.75f)
+                            modifier = Modifier.size(dimens.rowIconSize * 0.85f)
                         )
-                        Spacer(modifier = Modifier.width(dimens.horizontalPadding * 0.35f))
-                        Text("Sync Now")
                     }
                 }
             }
         }
 
-        // 3. Material 3 Theme & WhatsApp-Style Finance Wallpaper Customization Card
+        // 3. Theme & Wallpaper Customization Card
         item {
             Card(
                 modifier = Modifier
@@ -1447,66 +1673,46 @@ fun HouseholdTabScreen(
             ) {
                 Column(
                     modifier = Modifier.padding(dimens.cardPadding),
-                    verticalArrangement = Arrangement.spacedBy(dimens.itemSpacing * 0.85f)
+                    verticalArrangement = Arrangement.spacedBy(dimens.itemSpacing * 0.8f)
                 ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Box(
-                            modifier = Modifier
-                                .size(dimens.rowIconBoxSize * 0.85f)
-                                .clip(CircleShape)
-                                .background(MaterialTheme.colorScheme.secondaryContainer),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Palette,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.secondary,
-                                modifier = Modifier.size(dimens.rowIconSize * 0.85f)
-                            )
-                        }
-                        Spacer(modifier = Modifier.width(dimens.horizontalPadding * 0.75f))
-                        Column {
-                            Text(
-                                text = "Theme & Finance Wallpaper",
-                                style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.Bold
-                            )
-                            Text(
-                                text = "Adapts automatically to Light & AMOLED Dark modes",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                    }
-
-                    ThemeModeSelectorBar(
-                        currentMode = currentThemeMode,
-                        onSelectMode = { LocalAccountSessionManager.setThemeMode(context, it) }
-                    )
-
-                    ReceiptDashedDividerLine()
-
-                    // Live Preview Banner
-                    FinanceWallpaperPreviewBanner(settings = wallpaperSettings)
-
-                    // On / Off Toggle for WhatsApp-Style Finance Background
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = "Finance Doodle & Emoji Background",
-                                style = MaterialTheme.typography.titleSmall,
-                                fontWeight = FontWeight.SemiBold
-                            )
-                            Text(
-                                text = "WhatsApp-style tiled finance icons & emojis",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(dimens.horizontalPadding * 0.6f)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(dimens.rowIconBoxSize * 0.85f)
+                                    .clip(CircleShape)
+                                    .background(MaterialTheme.colorScheme.secondaryContainer),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Palette,
+                                    contentDescription = "Theme & Wallpaper",
+                                    tint = MaterialTheme.colorScheme.secondary,
+                                    modifier = Modifier.size(dimens.rowIconSize * 0.85f)
+                                )
+                            }
+
+                            Column {
+                                Text(
+                                    text = "Theme & Wallpaper",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Text(
+                                    text = "Color mode and finance backdrop",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
                         }
+
                         Switch(
                             checked = wallpaperSettings.enabled,
                             onCheckedChange = { enabled ->
@@ -1519,25 +1725,34 @@ fun HouseholdTabScreen(
                         )
                     }
 
+                    // Pure Color Swatch Theme Selector (No Text)
+                    ThemeModeSelectorBar(
+                        currentMode = currentThemeMode,
+                        onSelectMode = { LocalAccountSessionManager.setThemeMode(context, it) }
+                    )
+
+                    ReceiptDashedDividerLine()
+
+                    // Live Preview Banner
+                    FinanceWallpaperPreviewBanner(settings = wallpaperSettings)
+
                     AnimatedVisibility(visible = wallpaperSettings.enabled) {
                         Column(
                             modifier = Modifier.fillMaxWidth(),
                             verticalArrangement = Arrangement.spacedBy(dimens.itemSpacing * 0.7f)
                         ) {
-                            // Pattern Style Selector
-                            Text(
-                                text = "Pattern Style",
-                                style = MaterialTheme.typography.labelMedium,
-                                fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
+                            // Pattern Style Selector (Symbol-Only Chips)
                             Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .horizontalScroll(rememberScrollState()),
-                                horizontalArrangement = Arrangement.spacedBy(dimens.horizontalPadding * 0.45f)
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceEvenly,
+                                verticalAlignment = Alignment.CenterVertically
                             ) {
                                 WallpaperPatternStyle.entries.forEach { style ->
+                                    val symbol = when (style) {
+                                        WallpaperPatternStyle.WHATSAPP_DOODLES -> "💳 🧾"
+                                        WallpaperPatternStyle.FINANCE_ICONS_AND_EMOJIS -> "💰 📊"
+                                        WallpaperPatternStyle.MINIMAL_GEOMETRIC -> "❖ ◇"
+                                    }
                                     FilterChip(
                                         selected = wallpaperSettings.style == style,
                                         onClick = {
@@ -1546,54 +1761,78 @@ fun HouseholdTabScreen(
                                                 newSettings = wallpaperSettings.copy(style = style)
                                             )
                                         },
-                                        label = { Text(style.label) },
+                                        label = {
+                                            Text(
+                                                text = symbol,
+                                                style = MaterialTheme.typography.titleSmall,
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                        },
                                         modifier = Modifier.testTag("wallpaper_style_chip_${style.name.lowercase()}")
                                     )
                                 }
                             }
 
-                            // Color Accent Selector
-                            Text(
-                                text = "Color Accent",
-                                style = MaterialTheme.typography.labelMedium,
-                                fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
+                            // Wallpaper Color Accent Selector (Pure Color Circle Swatches Without Text)
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .horizontalScroll(rememberScrollState()),
-                                horizontalArrangement = Arrangement.spacedBy(dimens.horizontalPadding * 0.45f)
+                                    .padding(vertical = dimens.itemSpacing * 0.2f),
+                                horizontalArrangement = Arrangement.SpaceEvenly,
+                                verticalAlignment = Alignment.CenterVertically
                             ) {
                                 WallpaperColorAccent.entries.forEach { accent ->
-                                    FilterChip(
-                                        selected = wallpaperSettings.colorAccent == accent,
-                                        onClick = {
-                                            LocalAccountSessionManager.updateWallpaperSettings(
-                                                context = context,
-                                                newSettings = wallpaperSettings.copy(colorAccent = accent)
+                                    val isSelected = wallpaperSettings.colorAccent == accent
+                                    val swatchColor = when (accent) {
+                                        WallpaperColorAccent.THEME_ADAPTIVE -> MaterialTheme.colorScheme.primary
+                                        WallpaperColorAccent.EMERALD_MINT -> androidx.compose.ui.graphics.Color(0xFF10B981)
+                                        WallpaperColorAccent.ROYAL_GOLD -> androidx.compose.ui.graphics.Color(0xFFF59E0B)
+                                        WallpaperColorAccent.OCEAN_SLATE -> androidx.compose.ui.graphics.Color(0xFF0EA5E9)
+                                        WallpaperColorAccent.WARM_CORAL -> androidx.compose.ui.graphics.Color(0xFFFF5A5F)
+                                    }
+                                    Box(
+                                        modifier = Modifier
+                                            .size(44.dp)
+                                            .clip(CircleShape)
+                                            .background(swatchColor.copy(alpha = if (isSelected) 1f else 0.72f))
+                                            .border(
+                                                width = if (isSelected) 3.dp else 1.dp,
+                                                color = if (isSelected) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.outline.copy(alpha = 0.35f),
+                                                shape = CircleShape
                                             )
-                                        },
-                                        label = { Text(accent.label) },
-                                        modifier = Modifier.testTag("wallpaper_accent_chip_${accent.name.lowercase()}")
-                                    )
+                                            .clickable {
+                                                LocalAccountSessionManager.updateWallpaperSettings(
+                                                    context = context,
+                                                    newSettings = wallpaperSettings.copy(colorAccent = accent)
+                                                )
+                                            }
+                                            .testTag("wallpaper_accent_chip_${accent.name.lowercase()}"),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        if (isSelected) {
+                                            Icon(
+                                                imageVector = Icons.Default.Check,
+                                                contentDescription = accent.label,
+                                                tint = androidx.compose.ui.graphics.Color.White,
+                                                modifier = Modifier.size(18.dp)
+                                            )
+                                        }
+                                    }
                                 }
                             }
 
-                            // Pattern Density Selector
-                            Text(
-                                text = "Pattern Density",
-                                style = MaterialTheme.typography.labelMedium,
-                                fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
+                            // Pattern Density Selector (Icon-Only Chips)
                             Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .horizontalScroll(rememberScrollState()),
-                                horizontalArrangement = Arrangement.spacedBy(dimens.horizontalPadding * 0.45f)
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceEvenly,
+                                verticalAlignment = Alignment.CenterVertically
                             ) {
                                 WallpaperDensity.entries.forEach { density ->
+                                    val densityIcon = when (density) {
+                                        WallpaperDensity.COMPACT -> Icons.Default.Apps
+                                        WallpaperDensity.BALANCED -> Icons.Default.GridOn
+                                        WallpaperDensity.AIRY -> Icons.Default.Window
+                                    }
                                     FilterChip(
                                         selected = wallpaperSettings.density == density,
                                         onClick = {
@@ -1602,7 +1841,13 @@ fun HouseholdTabScreen(
                                                 newSettings = wallpaperSettings.copy(density = density)
                                             )
                                         },
-                                        label = { Text(density.label) },
+                                        label = {
+                                            Icon(
+                                                imageVector = densityIcon,
+                                                contentDescription = density.label,
+                                                modifier = Modifier.size(dimens.rowIconSize * 0.8f)
+                                            )
+                                        },
                                         modifier = Modifier.testTag("wallpaper_density_chip_${density.name.lowercase()}")
                                     )
                                 }
@@ -1611,14 +1856,27 @@ fun HouseholdTabScreen(
                             // Pattern Intensity / Opacity Slider
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(dimens.horizontalPadding * 0.5f)
                             ) {
-                                Text(
-                                    text = "Pattern Intensity",
-                                    style = MaterialTheme.typography.labelMedium,
-                                    fontWeight = FontWeight.Bold,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                Icon(
+                                    imageVector = Icons.Default.Palette,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(dimens.rowIconSize * 0.78f)
+                                )
+                                Slider(
+                                    value = wallpaperSettings.opacityPercent.toFloat(),
+                                    onValueChange = { newVal ->
+                                        LocalAccountSessionManager.updateWallpaperSettings(
+                                            context = context,
+                                            newSettings = wallpaperSettings.copy(opacityPercent = newVal.roundToInt().coerceIn(4, 28))
+                                        )
+                                    },
+                                    valueRange = 4f..28f,
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .testTag("wallpaper_opacity_slider")
                                 )
                                 Text(
                                     text = "${wallpaperSettings.opacityPercent}%",
@@ -1627,31 +1885,19 @@ fun HouseholdTabScreen(
                                     color = MaterialTheme.colorScheme.primary
                                 )
                             }
-                            Slider(
-                                value = wallpaperSettings.opacityPercent.toFloat(),
-                                onValueChange = { newVal ->
-                                    LocalAccountSessionManager.updateWallpaperSettings(
-                                        context = context,
-                                        newSettings = wallpaperSettings.copy(opacityPercent = newVal.roundToInt().coerceIn(4, 28))
-                                    )
-                                },
-                                valueRange = 4f..28f,
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .testTag("wallpaper_opacity_slider")
-                            )
                         }
                     }
                 }
             }
         }
 
-        // 3B. Firebase Cloud Messaging (FCM) Family & Budget Push Alerts Card
+        // 3B. Feature Flags & Expert Settings Master Gate Card
         item {
             Card(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .testTag("fcm_push_settings_card"),
+                    .animateContentSize(spring(dampingRatio = Spring.DampingRatioLowBouncy))
+                    .testTag("expert_feature_flag_card"),
                 shape = RoundedCornerShape(dimens.cardCornerRadius),
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
                 elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
@@ -1667,303 +1913,674 @@ fun HouseholdTabScreen(
                     ) {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(dimens.horizontalPadding * 0.6f),
                             modifier = Modifier.weight(1f)
                         ) {
                             Box(
                                 modifier = Modifier
                                     .size(dimens.rowIconBoxSize * 0.85f)
                                     .clip(CircleShape)
-                                    .background(MaterialTheme.colorScheme.primaryContainer),
+                                    .background(MaterialTheme.colorScheme.tertiaryContainer),
                                 contentAlignment = Alignment.Center
                             ) {
                                 Icon(
-                                    imageVector = Icons.Default.NotificationsActive,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.primary,
+                                    imageVector = Icons.Default.Tune,
+                                    contentDescription = "Advanced Settings",
+                                    tint = MaterialTheme.colorScheme.tertiary,
                                     modifier = Modifier.size(dimens.rowIconSize * 0.85f)
                                 )
                             }
-                            Spacer(modifier = Modifier.width(dimens.horizontalPadding * 0.75f))
+
                             Column {
                                 Text(
-                                    text = "Firebase Cloud Messaging (FCM)",
+                                    text = "Advanced Settings",
                                     style = MaterialTheme.typography.titleMedium,
                                     fontWeight = FontWeight.Bold
                                 )
-                                val topicId = uiState.household?.id?.ifBlank { "default" } ?: "personal"
                                 Text(
-                                    text = "Topic: household_$topicId",
+                                    text = "Crashlytics, FCM & Parallel SMS Engine",
                                     style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.primary
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
                         }
-                    }
 
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = "Family Member Transaction Alerts",
-                                style = MaterialTheme.typography.titleSmall,
-                                fontWeight = FontWeight.SemiBold
-                            )
-                            Text(
-                                text = "Instant push notification when a family member logs a shared expense",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
                         Switch(
-                            checked = fcmPushSettings.familyTransactionAlertsEnabled,
+                            checked = expertFeatureFlags.expertModeEnabled,
                             onCheckedChange = { enabled ->
-                                LocalAccountSessionManager.updateFcmPushSettings(
+                                LocalAccountSessionManager.updateExpertFeatureFlags(
                                     context = context,
-                                    newSettings = fcmPushSettings.copy(familyTransactionAlertsEnabled = enabled)
+                                    newSettings = expertFeatureFlags.copy(expertModeEnabled = enabled)
                                 )
                             },
-                            modifier = Modifier.testTag("fcm_family_tx_alerts_switch")
+                            modifier = Modifier.testTag("expert_feature_flag_switch")
                         )
                     }
 
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = "Category Budget Threshold Alerts",
-                                style = MaterialTheme.typography.titleSmall,
-                                fontWeight = FontWeight.SemiBold
-                            )
-                            Text(
-                                text = "Instant push notification when a shared category budget nears its threshold",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                        Switch(
-                            checked = fcmPushSettings.budgetThresholdAlertsEnabled,
-                            onCheckedChange = { enabled ->
-                                LocalAccountSessionManager.updateFcmPushSettings(
-                                    context = context,
-                                    newSettings = fcmPushSettings.copy(budgetThresholdAlertsEnabled = enabled)
-                                )
-                            },
-                            modifier = Modifier.testTag("fcm_budget_threshold_alerts_switch")
-                        )
-                    }
-
-                    OutlinedButton(
-                        onClick = onSendTestFcmAlertClick,
-                        shape = RoundedCornerShape(50),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .testTag("fcm_test_push_button")
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.NotificationsActive,
-                            contentDescription = null,
-                            modifier = Modifier.size(dimens.rowIconSize * 0.75f)
-                        )
-                        Spacer(modifier = Modifier.width(dimens.horizontalPadding * 0.35f))
-                        Text("Send Test FCM Budget Push Alert")
-                    }
-                }
-            }
-        }
-
-        // 3C. Firebase Crashlytics & Real-Time Stability Guard Card
-        item {
-            Card(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .testTag("crashlytics_settings_card"),
-                shape = RoundedCornerShape(dimens.cardCornerRadius),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
-            ) {
-                Column(
-                    modifier = Modifier.padding(dimens.cardPadding),
-                    verticalArrangement = Arrangement.spacedBy(dimens.itemSpacing * 0.75f)
-                ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Box(
-                            modifier = Modifier
-                                .size(dimens.rowIconBoxSize * 0.85f)
-                                .clip(CircleShape)
-                                .background(MaterialTheme.colorScheme.tertiaryContainer),
-                            contentAlignment = Alignment.Center
+                    // Once user enables the Feature Flag switch, reveal sub-flags & expert modules
+                    AnimatedVisibility(visible = expertFeatureFlags.expertModeEnabled) {
+                        Column(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalArrangement = Arrangement.spacedBy(dimens.itemSpacing * 0.85f)
                         ) {
-                            Icon(
-                                imageVector = Icons.Default.Shield,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.tertiary,
-                                modifier = Modifier.size(dimens.rowIconSize * 0.85f)
-                            )
-                        }
-                        Spacer(modifier = Modifier.width(dimens.horizontalPadding * 0.75f))
-                        Column {
+                            ReceiptDashedDividerLine()
+
                             Text(
-                                text = "Firebase Crashlytics & Stability Guard",
-                                style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.Bold
-                            )
-                            Text(
-                                text = "Real-time crash protection for SMS auto-sync & responsive typography",
-                                style = MaterialTheme.typography.labelSmall,
+                                text = "Experimental Feature Flags",
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.Bold,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
-                        }
-                    }
 
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = "Real-Time Crashlytics Reporting",
-                                style = MaterialTheme.typography.titleSmall,
-                                fontWeight = FontWeight.SemiBold
-                            )
-                            Text(
-                                text = "Track, prioritize, and capture uncaught & non-fatal exceptions",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                        Switch(
-                            checked = crashlyticsSettings.crashReportingEnabled,
-                            onCheckedChange = { enabled ->
-                                LocalAccountSessionManager.updateCrashlyticsSettings(
-                                    context = context,
-                                    newSettings = crashlyticsSettings.copy(crashReportingEnabled = enabled)
-                                )
-                            },
-                            modifier = Modifier.testTag("crashlytics_enabled_switch")
-                        )
-                    }
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = "SMS Auto-Sync Stability Guardrails",
-                                style = MaterialTheme.typography.titleSmall,
-                                fontWeight = FontWeight.SemiBold
-                            )
-                            Text(
-                                text = "Paced IO batching & cursor isolation on OEM messaging providers",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                        Switch(
-                            checked = crashlyticsSettings.smsSyncGuardEnabled,
-                            onCheckedChange = { enabled ->
-                                LocalAccountSessionManager.updateCrashlyticsSettings(
-                                    context = context,
-                                    newSettings = crashlyticsSettings.copy(smsSyncGuardEnabled = enabled)
-                                )
-                            },
-                            modifier = Modifier.testTag("crashlytics_sms_guard_switch")
-                        )
-                    }
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = "Responsive Typography Guardrails",
-                                style = MaterialTheme.typography.titleSmall,
-                                fontWeight = FontWeight.SemiBold
-                            )
-                            Text(
-                                text = "Clamps extreme font/screen scales across foldables & small devices",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                        Switch(
-                            checked = crashlyticsSettings.typographyGuardEnabled,
-                            onCheckedChange = { enabled ->
-                                LocalAccountSessionManager.updateCrashlyticsSettings(
-                                    context = context,
-                                    newSettings = crashlyticsSettings.copy(typographyGuardEnabled = enabled)
-                                )
-                            },
-                            modifier = Modifier.testTag("crashlytics_typography_guard_switch")
-                        )
-                    }
-
-                    if (stabilityDiagnostics.isNotEmpty()) {
-                        Surface(
-                            shape = RoundedCornerShape(dimens.smallCornerRadius),
-                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .testTag("crashlytics_diagnostics_list")
-                        ) {
-                            Column(
-                                modifier = Modifier.padding(dimens.cardPadding * 0.75f),
-                                verticalArrangement = Arrangement.spacedBy(4.dp)
+                            // Icon Sub-Feature Flag Toggles Row
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .testTag("expert_subflags_row"),
+                                horizontalArrangement = Arrangement.SpaceEvenly,
+                                verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Text(
-                                    text = "Recent Stability Breadcrumbs (${stabilityDiagnostics.size})",
-                                    style = MaterialTheme.typography.labelMedium,
-                                    fontWeight = FontWeight.Bold,
-                                    color = MaterialTheme.colorScheme.primary
+                                FilterChip(
+                                    selected = expertFeatureFlags.crashAnalyticsFeatureEnabled,
+                                    onClick = {
+                                        LocalAccountSessionManager.updateExpertFeatureFlags(
+                                            context = context,
+                                            newSettings = expertFeatureFlags.copy(
+                                                crashAnalyticsFeatureEnabled = !expertFeatureFlags.crashAnalyticsFeatureEnabled
+                                            )
+                                        )
+                                    },
+                                    label = {
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.Shield,
+                                                contentDescription = "Crash Analytics",
+                                                modifier = Modifier.size(dimens.rowIconSize * 0.72f)
+                                            )
+                                            Text("Crashlytics", style = MaterialTheme.typography.labelSmall)
+                                        }
+                                    },
+                                    modifier = Modifier.testTag("expert_flag_crashlytics_chip")
                                 )
-                                stabilityDiagnostics.take(4).forEach { entry ->
-                                    Text(
-                                        text = "• [${entry.subsystem}] ${entry.message}",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        maxLines = 2,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
+
+                                FilterChip(
+                                    selected = expertFeatureFlags.fcmPushDiagnosticsEnabled,
+                                    onClick = {
+                                        LocalAccountSessionManager.updateExpertFeatureFlags(
+                                            context = context,
+                                            newSettings = expertFeatureFlags.copy(
+                                                fcmPushDiagnosticsEnabled = !expertFeatureFlags.fcmPushDiagnosticsEnabled
+                                            )
+                                        )
+                                    },
+                                    label = {
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.NotificationsActive,
+                                                contentDescription = "FCM Push",
+                                                modifier = Modifier.size(dimens.rowIconSize * 0.72f)
+                                            )
+                                            Text("FCM", style = MaterialTheme.typography.labelSmall)
+                                        }
+                                    },
+                                    modifier = Modifier.testTag("expert_flag_fcm_chip")
+                                )
+
+                                FilterChip(
+                                    selected = expertFeatureFlags.parallelSmsEngineTuningEnabled,
+                                    onClick = {
+                                        LocalAccountSessionManager.updateExpertFeatureFlags(
+                                            context = context,
+                                            newSettings = expertFeatureFlags.copy(
+                                                parallelSmsEngineTuningEnabled = !expertFeatureFlags.parallelSmsEngineTuningEnabled
+                                            )
+                                        )
+                                    },
+                                    label = {
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.Bolt,
+                                                contentDescription = "Parallel SMS Engine",
+                                                modifier = Modifier.size(dimens.rowIconSize * 0.72f)
+                                            )
+                                            Text("SMS ⚡", style = MaterialTheme.typography.labelSmall)
+                                        }
+                                    },
+                                    modifier = Modifier.testTag("expert_flag_parallel_sms_chip")
+                                )
+
+                                FilterChip(
+                                    selected = expertFeatureFlags.strictDuplicateLinkerEnabled,
+                                    onClick = {
+                                        LocalAccountSessionManager.updateExpertFeatureFlags(
+                                            context = context,
+                                            newSettings = expertFeatureFlags.copy(
+                                                strictDuplicateLinkerEnabled = !expertFeatureFlags.strictDuplicateLinkerEnabled
+                                            )
+                                        )
+                                    },
+                                    label = {
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.Link,
+                                                contentDescription = "Duplicate Guard",
+                                                modifier = Modifier.size(dimens.rowIconSize * 0.72f)
+                                            )
+                                            Text("Linker", style = MaterialTheme.typography.labelSmall)
+                                        }
+                                    },
+                                    modifier = Modifier.testTag("expert_flag_duplicate_guard_chip")
+                                )
+                            }
+
+                            // 1. Expert Parallel SMS Engine Tuning Panel (5+ Reader & Writer Threads)
+                            AnimatedVisibility(visible = expertFeatureFlags.parallelSmsEngineTuningEnabled) {
+                                Surface(
+                                    shape = RoundedCornerShape(dimens.smallCornerRadius),
+                                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .testTag("expert_parallel_sms_card")
+                                ) {
+                                    Column(
+                                        modifier = Modifier.padding(dimens.cardPadding * 0.85f),
+                                        verticalArrangement = Arrangement.spacedBy(dimens.itemSpacing * 0.7f)
+                                    ) {
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.Bolt,
+                                                contentDescription = null,
+                                                tint = MaterialTheme.colorScheme.primary,
+                                                modifier = Modifier.size(dimens.rowIconSize * 0.85f)
+                                            )
+                                            Text(
+                                                text = "Parallel SMS Engine Tuning",
+                                                style = MaterialTheme.typography.titleSmall,
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                        }
+
+                                        // Reader Threads Selector (Min 5 Threads)
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.SpaceBetween
+                                        ) {
+                                            Row(
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Default.Sync,
+                                                    contentDescription = "Reader Threads",
+                                                    tint = MaterialTheme.colorScheme.primary,
+                                                    modifier = Modifier.size(dimens.rowIconSize * 0.8f)
+                                                )
+                                                Text(
+                                                    text = "Reader Threads (⚡R):",
+                                                    style = MaterialTheme.typography.bodySmall,
+                                                    fontWeight = FontWeight.Medium
+                                                )
+                                            }
+                                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                                listOf(5, 6, 8, 10).forEach { count ->
+                                                    FilterChip(
+                                                        selected = expertFeatureFlags.readerThreadCount == count,
+                                                        onClick = {
+                                                            LocalAccountSessionManager.updateExpertFeatureFlags(
+                                                                context = context,
+                                                                newSettings = expertFeatureFlags.copy(readerThreadCount = count)
+                                                            )
+                                                        },
+                                                        label = { Text("$count") },
+                                                        modifier = Modifier.testTag("expert_reader_threads_chip_$count")
+                                                    )
+                                                }
+                                            }
+                                        }
+
+                                        // Writer Threads Selector (Min 5 Threads)
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.SpaceBetween
+                                        ) {
+                                            Row(
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Default.Bolt,
+                                                    contentDescription = "Writer Threads",
+                                                    tint = MaterialTheme.colorScheme.secondary,
+                                                    modifier = Modifier.size(dimens.rowIconSize * 0.8f)
+                                                )
+                                                Text(
+                                                    text = "Writer Threads (⚡W):",
+                                                    style = MaterialTheme.typography.bodySmall,
+                                                    fontWeight = FontWeight.Medium
+                                                )
+                                            }
+                                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                                listOf(5, 6, 8, 10).forEach { count ->
+                                                    FilterChip(
+                                                        selected = expertFeatureFlags.writerThreadCount == count,
+                                                        onClick = {
+                                                            LocalAccountSessionManager.updateExpertFeatureFlags(
+                                                                context = context,
+                                                                newSettings = expertFeatureFlags.copy(writerThreadCount = count)
+                                                            )
+                                                        },
+                                                        label = { Text("$count") },
+                                                        modifier = Modifier.testTag("expert_writer_threads_chip_$count")
+                                                    )
+                                                }
+                                            }
+                                        }
+
+                                        // Raw SMS Inspector & Strict Duplicate Guard Switches
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.SpaceBetween
+                                        ) {
+                                            Row(
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                                modifier = Modifier.weight(1f)
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Default.Code,
+                                                    contentDescription = "Raw SMS Inspector",
+                                                    tint = MaterialTheme.colorScheme.primary,
+                                                    modifier = Modifier.size(dimens.rowIconSize * 0.8f)
+                                                )
+                                                Text(
+                                                    text = "Raw SMS Inspector",
+                                                    style = MaterialTheme.typography.bodySmall
+                                                )
+                                            }
+                                            Switch(
+                                                checked = expertFeatureFlags.rawSmsDebugInspectorEnabled,
+                                                onCheckedChange = { enabled ->
+                                                    LocalAccountSessionManager.updateExpertFeatureFlags(
+                                                        context = context,
+                                                        newSettings = expertFeatureFlags.copy(rawSmsDebugInspectorEnabled = enabled)
+                                                    )
+                                                },
+                                                modifier = Modifier.testTag("expert_raw_sms_inspector_switch")
+                                            )
+                                        }
+
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.SpaceBetween
+                                        ) {
+                                            Row(
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                                modifier = Modifier.weight(1f)
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Default.Link,
+                                                    contentDescription = "Strict Duplicate Linker",
+                                                    tint = MaterialTheme.colorScheme.tertiary,
+                                                    modifier = Modifier.size(dimens.rowIconSize * 0.8f)
+                                                )
+                                                Text(
+                                                    text = "Strict Duplicate Linker Guard",
+                                                    style = MaterialTheme.typography.bodySmall
+                                                )
+                                            }
+                                            Switch(
+                                                checked = expertFeatureFlags.strictDuplicateLinkerEnabled,
+                                                onCheckedChange = { enabled ->
+                                                    LocalAccountSessionManager.updateExpertFeatureFlags(
+                                                        context = context,
+                                                        newSettings = expertFeatureFlags.copy(strictDuplicateLinkerEnabled = enabled)
+                                                    )
+                                                },
+                                                modifier = Modifier.testTag("expert_strict_duplicate_switch")
+                                            )
+                                        }
+                                    }
                                 }
                             }
-                        }
-                    }
 
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(dimens.horizontalPadding * 0.5f)
-                    ) {
-                        OutlinedButton(
-                            onClick = onRunStabilityCheckClick,
-                            shape = RoundedCornerShape(50),
-                            modifier = Modifier
-                                .weight(1f)
-                                .testTag("crashlytics_run_check_button")
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.BugReport,
-                                contentDescription = null,
-                                modifier = Modifier.size(dimens.rowIconSize * 0.72f)
-                            )
-                            Spacer(modifier = Modifier.width(dimens.horizontalPadding * 0.3f))
-                            Text("Verify Stability")
-                        }
-                        if (stabilityDiagnostics.isNotEmpty()) {
-                            TextButton(
-                                onClick = { LocalAccountSessionManager.clearStabilityDiagnostics(context) },
-                                modifier = Modifier.testTag("crashlytics_clear_logs_button")
-                            ) {
-                                Text("Clear")
+                            // 2. Firebase Cloud Messaging (FCM) Push Diagnostics Panel (Feature-Flagged)
+                            AnimatedVisibility(visible = expertFeatureFlags.fcmPushDiagnosticsEnabled) {
+                                Surface(
+                                    shape = RoundedCornerShape(dimens.smallCornerRadius),
+                                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .testTag("fcm_push_settings_card")
+                                ) {
+                                    Column(
+                                        modifier = Modifier.padding(dimens.cardPadding * 0.85f),
+                                        verticalArrangement = Arrangement.spacedBy(dimens.itemSpacing * 0.7f)
+                                    ) {
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.NotificationsActive,
+                                                contentDescription = null,
+                                                tint = MaterialTheme.colorScheme.primary,
+                                                modifier = Modifier.size(dimens.rowIconSize * 0.85f)
+                                            )
+                                            Text(
+                                                text = "FCM Push Notifications",
+                                                style = MaterialTheme.typography.titleSmall,
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                        }
+
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.SpaceBetween
+                                        ) {
+                                            Row(
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                                modifier = Modifier.weight(1f)
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Default.Groups,
+                                                    contentDescription = "Family Push Alerts",
+                                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                    modifier = Modifier.size(dimens.rowIconSize * 0.8f)
+                                                )
+                                                Text(
+                                                    text = "Family Transaction Alerts",
+                                                    style = MaterialTheme.typography.bodySmall
+                                                )
+                                            }
+                                            Switch(
+                                                checked = fcmPushSettings.familyTransactionAlertsEnabled,
+                                                onCheckedChange = { enabled ->
+                                                    LocalAccountSessionManager.updateFcmPushSettings(
+                                                        context = context,
+                                                        newSettings = fcmPushSettings.copy(familyTransactionAlertsEnabled = enabled)
+                                                    )
+                                                },
+                                                modifier = Modifier.testTag("fcm_family_tx_alerts_switch")
+                                            )
+                                        }
+
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.SpaceBetween
+                                        ) {
+                                            Row(
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                                modifier = Modifier.weight(1f)
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.AutoMirrored.Filled.ReceiptLong,
+                                                    contentDescription = "Budget Threshold Push Alerts",
+                                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                    modifier = Modifier.size(dimens.rowIconSize * 0.8f)
+                                                )
+                                                Text(
+                                                    text = "Budget Threshold Alerts",
+                                                    style = MaterialTheme.typography.bodySmall
+                                                )
+                                            }
+                                            Switch(
+                                                checked = fcmPushSettings.budgetThresholdAlertsEnabled,
+                                                onCheckedChange = { enabled ->
+                                                    LocalAccountSessionManager.updateFcmPushSettings(
+                                                        context = context,
+                                                        newSettings = fcmPushSettings.copy(budgetThresholdAlertsEnabled = enabled)
+                                                    )
+                                                },
+                                                modifier = Modifier.testTag("fcm_budget_threshold_alerts_switch")
+                                            )
+                                        }
+
+                                        OutlinedButton(
+                                            onClick = onSendTestFcmAlertClick,
+                                            shape = RoundedCornerShape(50),
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .testTag("fcm_test_push_button")
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.NotificationsActive,
+                                                contentDescription = "Test Push Alert",
+                                                modifier = Modifier.size(dimens.rowIconSize * 0.8f)
+                                            )
+                                            Spacer(modifier = Modifier.width(6.dp))
+                                            Text(
+                                                text = "Send Test Push Alert",
+                                                style = MaterialTheme.typography.labelLarge,
+                                                fontWeight = FontWeight.SemiBold
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+
+                            // 3. Firebase Crashlytics & Real-Time Stability Guard Panel (Feature-Flagged)
+                            AnimatedVisibility(visible = expertFeatureFlags.crashAnalyticsFeatureEnabled) {
+                                Surface(
+                                    shape = RoundedCornerShape(dimens.smallCornerRadius),
+                                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .testTag("crashlytics_settings_card")
+                                ) {
+                                    Column(
+                                        modifier = Modifier.padding(dimens.cardPadding * 0.85f),
+                                        verticalArrangement = Arrangement.spacedBy(dimens.itemSpacing * 0.7f)
+                                    ) {
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.Shield,
+                                                contentDescription = "Crashlytics Reporting",
+                                                tint = MaterialTheme.colorScheme.tertiary,
+                                                modifier = Modifier.size(dimens.rowIconSize * 0.85f)
+                                            )
+                                            Text(
+                                                text = "Crash Analytics & Stability Guardrails",
+                                                style = MaterialTheme.typography.titleSmall,
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                        }
+
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.SpaceBetween
+                                        ) {
+                                            Row(
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                                modifier = Modifier.weight(1f)
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Default.BugReport,
+                                                    contentDescription = null,
+                                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                    modifier = Modifier.size(dimens.rowIconSize * 0.8f)
+                                                )
+                                                Text(
+                                                    text = "Crashlytics Crash Reporting",
+                                                    style = MaterialTheme.typography.bodySmall
+                                                )
+                                            }
+                                            Switch(
+                                                checked = crashlyticsSettings.crashReportingEnabled,
+                                                onCheckedChange = { enabled ->
+                                                    LocalAccountSessionManager.updateCrashlyticsSettings(
+                                                        context = context,
+                                                        newSettings = crashlyticsSettings.copy(crashReportingEnabled = enabled)
+                                                    )
+                                                },
+                                                modifier = Modifier.testTag("crashlytics_enabled_switch")
+                                            )
+                                        }
+
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.SpaceBetween
+                                        ) {
+                                            Row(
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                                modifier = Modifier.weight(1f)
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Default.Sync,
+                                                    contentDescription = "SMS Sync Guard",
+                                                    tint = MaterialTheme.colorScheme.primary,
+                                                    modifier = Modifier.size(dimens.rowIconSize * 0.8f)
+                                                )
+                                                Text(
+                                                    text = "SMS Batch Sync Guard",
+                                                    style = MaterialTheme.typography.bodySmall
+                                                )
+                                            }
+                                            Switch(
+                                                checked = crashlyticsSettings.smsSyncGuardEnabled,
+                                                onCheckedChange = { enabled ->
+                                                    LocalAccountSessionManager.updateCrashlyticsSettings(
+                                                        context = context,
+                                                        newSettings = crashlyticsSettings.copy(smsSyncGuardEnabled = enabled)
+                                                    )
+                                                },
+                                                modifier = Modifier.testTag("crashlytics_sms_guard_switch")
+                                            )
+                                        }
+
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.SpaceBetween
+                                        ) {
+                                            Row(
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                                modifier = Modifier.weight(1f)
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Default.TextFields,
+                                                    contentDescription = "Typography Guard",
+                                                    tint = MaterialTheme.colorScheme.secondary,
+                                                    modifier = Modifier.size(dimens.rowIconSize * 0.8f)
+                                                )
+                                                Text(
+                                                    text = "Typography Scale Guard",
+                                                    style = MaterialTheme.typography.bodySmall
+                                                )
+                                            }
+                                            Switch(
+                                                checked = crashlyticsSettings.typographyGuardEnabled,
+                                                onCheckedChange = { enabled ->
+                                                    LocalAccountSessionManager.updateCrashlyticsSettings(
+                                                        context = context,
+                                                        newSettings = crashlyticsSettings.copy(typographyGuardEnabled = enabled)
+                                                    )
+                                                },
+                                                modifier = Modifier.testTag("crashlytics_typography_guard_switch")
+                                            )
+                                        }
+
+                                        if (stabilityDiagnostics.isNotEmpty()) {
+                                            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                                Text(
+                                                    text = "Stability Diagnostics Log",
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                )
+                                                Surface(
+                                                    shape = RoundedCornerShape(dimens.smallCornerRadius),
+                                                    color = MaterialTheme.colorScheme.surface.copy(alpha = 0.75f),
+                                                    modifier = Modifier
+                                                        .fillMaxWidth()
+                                                        .testTag("crashlytics_diagnostics_list")
+                                                ) {
+                                                    Column(
+                                                        modifier = Modifier.padding(dimens.cardPadding * 0.65f),
+                                                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                                                    ) {
+                                                        stabilityDiagnostics.take(3).forEach { entry ->
+                                                            Text(
+                                                                text = "⚡ [${entry.subsystem}] ${entry.message}",
+                                                                style = MaterialTheme.typography.labelSmall,
+                                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                                maxLines = 1,
+                                                                overflow = TextOverflow.Ellipsis
+                                                            )
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.spacedBy(dimens.horizontalPadding * 0.5f)
+                                        ) {
+                                            OutlinedButton(
+                                                onClick = onRunStabilityCheckClick,
+                                                shape = RoundedCornerShape(50),
+                                                modifier = Modifier
+                                                    .weight(1f)
+                                                    .testTag("crashlytics_run_check_button")
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Default.BugReport,
+                                                    contentDescription = "Verify Stability",
+                                                    modifier = Modifier.size(dimens.rowIconSize * 0.8f)
+                                                )
+                                                Spacer(modifier = Modifier.width(6.dp))
+                                                Text(
+                                                    text = "Run Stability Diagnostic Check",
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    fontWeight = FontWeight.SemiBold
+                                                )
+                                            }
+                                            if (stabilityDiagnostics.isNotEmpty()) {
+                                                IconButton(
+                                                    onClick = { LocalAccountSessionManager.clearStabilityDiagnostics(context) },
+                                                    modifier = Modifier.testTag("crashlytics_clear_logs_button")
+                                                ) {
+                                                    Icon(
+                                                        imageVector = Icons.Default.Clear,
+                                                        contentDescription = "Clear Logs"
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
                             }
                         }
                     }

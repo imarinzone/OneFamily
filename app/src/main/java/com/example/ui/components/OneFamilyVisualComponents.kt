@@ -1492,44 +1492,128 @@ fun ThemeModeSelectorBar(
 ) {
     val dimens = LocalAppDimens.current
     Surface(
-        modifier = modifier.fillMaxWidth(),
+        modifier = modifier
+            .fillMaxWidth()
+            .testTag("theme_color_swatch_bar"),
         shape = RoundedCornerShape(50),
-        color = MaterialTheme.colorScheme.surfaceVariant
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.75f)
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(dimens.horizontalPadding * 0.25f),
-            horizontalArrangement = Arrangement.spacedBy(dimens.horizontalPadding * 0.4f)
+                .padding(
+                    horizontal = dimens.horizontalPadding * 0.5f,
+                    vertical = dimens.itemSpacing * 0.55f
+                ),
+            horizontalArrangement = Arrangement.SpaceEvenly,
+            verticalAlignment = Alignment.CenterVertically
         ) {
             com.example.ui.theme.AppThemeMode.entries.forEach { mode ->
                 val isSelected = currentMode == mode
-                val bgColor by animateColorAsState(
-                    targetValue = if (isSelected) MaterialTheme.colorScheme.primary else Color.Transparent,
+                val ringScale by animateFloatAsState(
+                    targetValue = if (isSelected) 1.12f else 1.0f,
                     animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
-                    label = "theme_mode_bg"
+                    label = "theme_swatch_scale"
                 )
-                val fgColor by animateColorAsState(
-                    targetValue = if (isSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
+                val borderColor by animateColorAsState(
+                    targetValue = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline.copy(alpha = 0.45f),
                     animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
-                    label = "theme_mode_fg"
+                    label = "theme_swatch_border"
                 )
+
                 Box(
                     modifier = Modifier
                         .weight(1f)
+                        .height(48.dp)
                         .clip(RoundedCornerShape(50))
-                        .background(bgColor)
+                        .background(
+                            if (isSelected) {
+                                MaterialTheme.colorScheme.primary.copy(alpha = 0.16f)
+                            } else {
+                                Color.Transparent
+                            }
+                        )
                         .clickable { onSelectMode(mode) }
-                        .padding(vertical = dimens.itemSpacing * 0.65f)
                         .testTag("theme_mode_${mode.name.lowercase()}"),
                     contentAlignment = Alignment.Center
                 ) {
-                    Text(
-                        text = mode.label,
-                        style = MaterialTheme.typography.labelLarge,
-                        fontWeight = FontWeight.Bold,
-                        color = fgColor
-                    )
+                    Canvas(
+                        modifier = Modifier.size((34.dp * ringScale).coerceIn(30.dp, 42.dp))
+                    ) {
+                        val radius = size.minDimension / 2f
+                        val centerOffset = Offset(size.width / 2f, size.height / 2f)
+
+                        when (mode) {
+                            com.example.ui.theme.AppThemeMode.SYSTEM -> {
+                                // Dual-tone split swatch: Warm Cream (Light) + AMOLED Black (Dark)
+                                drawArc(
+                                    color = Color(0xFFFAF6F0),
+                                    startAngle = 90f,
+                                    sweepAngle = 180f,
+                                    useCenter = true,
+                                    topLeft = Offset(centerOffset.x - radius, centerOffset.y - radius),
+                                    size = Size(radius * 2f, radius * 2f)
+                                )
+                                drawArc(
+                                    color = Color(0xFF050505),
+                                    startAngle = -90f,
+                                    sweepAngle = 180f,
+                                    useCenter = true,
+                                    topLeft = Offset(centerOffset.x - radius, centerOffset.y - radius),
+                                    size = Size(radius * 2f, radius * 2f)
+                                )
+                                drawCircle(
+                                    color = Color(0xFFFF5A5F),
+                                    radius = radius * 0.42f,
+                                    center = centerOffset
+                                )
+                            }
+                            com.example.ui.theme.AppThemeMode.LIGHT -> {
+                                // Warm Cream & Coral Light Swatch
+                                drawCircle(
+                                    color = Color(0xFFFAF6F0),
+                                    radius = radius,
+                                    center = centerOffset
+                                )
+                                drawCircle(
+                                    color = Color(0xFFFFB703),
+                                    radius = radius * 0.62f,
+                                    center = centerOffset
+                                )
+                                drawCircle(
+                                    color = Color(0xFFFF5A5F),
+                                    radius = radius * 0.36f,
+                                    center = centerOffset
+                                )
+                            }
+                            com.example.ui.theme.AppThemeMode.DARK -> {
+                                // Pure AMOLED Black & Neon Accent Dark Swatch
+                                drawCircle(
+                                    color = Color(0xFF000000),
+                                    radius = radius,
+                                    center = centerOffset
+                                )
+                                drawCircle(
+                                    color = Color(0xFF1F1F26),
+                                    radius = radius * 0.66f,
+                                    center = centerOffset
+                                )
+                                drawCircle(
+                                    color = Color(0xFF06D6A0),
+                                    radius = radius * 0.36f,
+                                    center = centerOffset
+                                )
+                            }
+                        }
+
+                        // Outer selection ring
+                        drawCircle(
+                            color = borderColor,
+                            radius = radius - 1.5.dp.toPx(),
+                            center = centerOffset,
+                            style = Stroke(width = if (isSelected) 3.dp.toPx() else 1.5.dp.toPx())
+                        )
+                    }
                 }
             }
         }
@@ -2131,10 +2215,15 @@ fun FinanceWallpaperPreviewBanner(
     modifier: Modifier = Modifier
 ) {
     val dimens = LocalAppDimens.current
+    val styleSymbol = when (settings.style) {
+        WallpaperPatternStyle.WHATSAPP_DOODLES -> "💳 🧾"
+        WallpaperPatternStyle.FINANCE_ICONS_AND_EMOJIS -> "💰 📊"
+        WallpaperPatternStyle.MINIMAL_GEOMETRIC -> "❖ ◇"
+    }
     Surface(
         modifier = modifier
             .fillMaxWidth()
-            .height(dimens.barChartHeight * 0.64f)
+            .height(dimens.barChartHeight * 0.56f)
             .clip(RoundedCornerShape(dimens.smallCornerRadius))
             .testTag("wallpaper_live_preview_banner"),
         shape = RoundedCornerShape(dimens.smallCornerRadius),
@@ -2147,7 +2236,7 @@ fun FinanceWallpaperPreviewBanner(
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(dimens.horizontalPadding * 0.75f),
+                    .padding(dimens.horizontalPadding * 0.65f),
                 contentAlignment = Alignment.Center
             ) {
                 Surface(
@@ -2157,16 +2246,16 @@ fun FinanceWallpaperPreviewBanner(
                 ) {
                     Text(
                         text = if (settings.enabled) {
-                            "${settings.style.label} • ${settings.colorAccent.label} (${settings.opacityPercent}%)"
+                            "$styleSymbol  ${settings.opacityPercent}%"
                         } else {
-                            "Finance Background Off (Solid Theme Surface)"
+                            "⊘"
                         },
-                        style = MaterialTheme.typography.labelMedium,
+                        style = MaterialTheme.typography.labelLarge,
                         fontWeight = FontWeight.Bold,
                         color = MaterialTheme.colorScheme.onSurface,
                         modifier = Modifier.padding(
-                            horizontal = dimens.horizontalPadding * 0.85f,
-                            vertical = dimens.itemSpacing * 0.45f
+                            horizontal = dimens.horizontalPadding * 0.75f,
+                            vertical = dimens.itemSpacing * 0.35f
                         )
                     )
                 }

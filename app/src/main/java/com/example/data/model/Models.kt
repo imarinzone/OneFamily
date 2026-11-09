@@ -103,6 +103,22 @@ enum class BudgetScope(val label: String) {
     PERSONAL_ONLY("Personal")
 }
 
+enum class FamilyCurrencyOption(
+    val symbol: String,
+    val code: String,
+    val displayName: String
+) {
+    INR("₹", "INR", "Indian Rupee (₹)"),
+    USD("$", "USD", "US Dollar ($)"),
+    EUR("€", "EUR", "Euro (€)"),
+    GBP("£", "GBP", "British Pound (£)"),
+    AED("AED", "AED", "UAE Dirham (AED)"),
+    SGD("S$", "SGD", "Singapore Dollar (S$)"),
+    JPY("¥", "JPY", "Japanese Yen (¥)"),
+    CAD("C$", "CAD", "Canadian Dollar (C$)"),
+    AUD("A$", "AUD", "Australian Dollar (A$)")
+}
+
 enum class WallpaperPatternStyle(val label: String) {
     WHATSAPP_DOODLES("Finance Doodles"),
     FINANCE_ICONS_AND_EMOJIS("Icons & Emojis"),
@@ -141,6 +157,18 @@ data class CrashlyticsSettings(
     val crashReportingEnabled: Boolean = true,
     val smsSyncGuardEnabled: Boolean = true,
     val typographyGuardEnabled: Boolean = true
+)
+
+data class ExpertFeatureFlagsSettings(
+    val expertModeEnabled: Boolean = false,
+    val crashAnalyticsFeatureEnabled: Boolean = true,
+    val fcmPushDiagnosticsEnabled: Boolean = true,
+    val parallelSmsEngineTuningEnabled: Boolean = true,
+    val strictDuplicateLinkerEnabled: Boolean = true,
+    val rawSmsDebugInspectorEnabled: Boolean = true,
+    val readerThreadCount: Int = 6,
+    val writerThreadCount: Int = 6,
+    val smsBatchSize: Int = 12
 )
 
 data class StabilityDiagnosticEntry(

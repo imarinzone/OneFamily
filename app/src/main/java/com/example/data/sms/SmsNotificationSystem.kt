@@ -520,7 +520,7 @@ class SmsInboxContentObserver(
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val observerMutex = Mutex()
-    private var lastProcessedSmsDateMillis: Long = System.currentTimeMillis() - 5_000L
+    private var lastProcessedSmsDateMillis: Long = System.currentTimeMillis()
 
     override fun onChange(selfChange: Boolean, uri: Uri?) {
         super.onChange(selfChange, uri)

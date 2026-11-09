@@ -51,6 +51,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -68,6 +69,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.credentials.CredentialManager
@@ -360,7 +362,8 @@ fun OneFamilyMainShell(
                 LocalAccountSessionManager.setInitialSmsSyncCompleted(context, currentUserId, true)
                 viewModel.resetSmsSyncProgress()
                 showSmsSyncScreen = false
-            }
+            },
+            currencySymbol = uiState.activeCurrencySymbol
         )
         return
     }
@@ -373,7 +376,7 @@ fun OneFamilyMainShell(
         }
     }
 
-    val currency = uiState.userProfile?.currencySymbol ?: "₹"
+    val currency = uiState.activeCurrencySymbol
 
     Scaffold(
         contentWindowInsets = WindowInsets.safeDrawing,
@@ -419,7 +422,7 @@ fun OneFamilyMainShell(
                 .padding(innerPadding)
         ) {
             Column(modifier = Modifier.fillMaxSize()) {
-                // Status / Error Banner
+                // Status / Error Banner (with Undo button for unwanted swipes)
                 val bannerMsg = uiState.errorMessage ?: uiState.statusBannerMessage
                 AnimatedVisibility(visible = bannerMsg != null) {
                     if (bannerMsg != null) {
@@ -430,14 +433,15 @@ fun OneFamilyMainShell(
                                 .padding(
                                     horizontal = dimens.horizontalPadding,
                                     vertical = dimens.itemSpacing * 0.35f
-                                ),
+                                )
+                                .testTag("status_banner_surface"),
                             shape = RoundedCornerShape(dimens.smallCornerRadius),
                             color = if (isErr) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.primaryContainer
                         ) {
                             Row(
                                 modifier = Modifier.padding(
                                     horizontal = dimens.horizontalPadding * 0.85f,
-                                    vertical = dimens.itemSpacing * 0.65f
+                                    vertical = dimens.itemSpacing * 0.55f
                                 ),
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.SpaceBetween
@@ -448,10 +452,26 @@ fun OneFamilyMainShell(
                                     color = if (isErr) MaterialTheme.colorScheme.onErrorContainer else MaterialTheme.colorScheme.onPrimaryContainer,
                                     modifier = Modifier.weight(1f)
                                 )
-                                Spacer(modifier = Modifier.width(dimens.horizontalPadding * 0.5f))
+                                if (uiState.canUndoLastAction && !isErr) {
+                                    Spacer(modifier = Modifier.width(dimens.horizontalPadding * 0.35f))
+                                    TextButton(
+                                        onClick = { viewModel.undoLastSwipeAction() },
+                                        modifier = Modifier.testTag("undo_swipe_action_button")
+                                    ) {
+                                        Text(
+                                            text = "UNDO",
+                                            style = MaterialTheme.typography.labelLarge,
+                                            fontWeight = FontWeight.ExtraBold,
+                                            color = MaterialTheme.colorScheme.primary
+                                        )
+                                    }
+                                }
+                                Spacer(modifier = Modifier.width(dimens.horizontalPadding * 0.35f))
                                 IconButton(
                                     onClick = { viewModel.dismissBanner() },
-                                    modifier = Modifier.size(dimens.rowIconSize)
+                                    modifier = Modifier
+                                        .size(dimens.rowIconSize)
+                                        .testTag("dismiss_banner_button")
                                 ) {
                                     Icon(
                                         imageVector = Icons.Default.Close,
@@ -494,7 +514,8 @@ fun OneFamilyMainShell(
                             onQuickChangeCategory = { quickCategoryTransaction = it },
                             onToggleTransactionPrivacy = { viewModel.toggleTransactionPrivacy(it) },
                             onDeleteTransaction = { viewModel.deleteTransaction(it) },
-                            onLinkDuplicateTransaction = { linkingDuplicateTransaction = it }
+                            onLinkDuplicateTransaction = { linkingDuplicateTransaction = it },
+                            onUndoLastSwipeAction = { viewModel.undoLastSwipeAction() }
                         )
 
                         OneFamilyNavTab.ANALYSIS -> AnalyticsTabScreen(
@@ -523,6 +544,9 @@ fun OneFamilyMainShell(
                             currentUserEmail = currentUserEmail,
                             onUpdateUserName = { newName ->
                                 viewModel.updateUserName(context, newName)
+                            },
+                            onUpdatePreferredCurrency = { newCurrency ->
+                                viewModel.updatePreferredCurrency(newCurrency)
                             },
                             onAddAccountClick = { showAddAccountDialog = true },
                             onScanSmsClick = triggerSmsSync,

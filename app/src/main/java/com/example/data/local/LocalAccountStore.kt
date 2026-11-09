@@ -5,6 +5,7 @@ import android.content.SharedPreferences
 import android.os.Build
 import com.example.data.model.CategoryBudget
 import com.example.data.model.CrashlyticsSettings
+import com.example.data.model.ExpertFeatureFlagsSettings
 import com.example.data.model.ExpenseTransaction
 import com.example.data.model.FcmPushSettings
 import com.example.data.model.FinancialAccount
@@ -45,6 +46,7 @@ object LocalAccountSessionManager {
     private const val KEY_WALLPAPER_SETTINGS = "wallpaper_settings_json"
     private const val KEY_FCM_SETTINGS = "fcm_push_settings_json"
     private const val KEY_CRASHLYTICS_SETTINGS = "crashlytics_settings_json"
+    private const val KEY_EXPERT_FEATURE_FLAGS = "expert_feature_flags_json"
     private const val KEY_STABILITY_DIAGNOSTICS = "stability_diagnostics_json"
 
     const val DEFAULT_TEST_USERNAME = "test"
@@ -66,6 +68,9 @@ object LocalAccountSessionManager {
 
     private val _crashlyticsSettings = MutableStateFlow(CrashlyticsSettings())
     val crashlyticsSettings: StateFlow<CrashlyticsSettings> = _crashlyticsSettings.asStateFlow()
+
+    private val _expertFeatureFlags = MutableStateFlow(ExpertFeatureFlagsSettings())
+    val expertFeatureFlags: StateFlow<ExpertFeatureFlagsSettings> = _expertFeatureFlags.asStateFlow()
 
     private val _stabilityDiagnostics = MutableStateFlow<List<StabilityDiagnosticEntry>>(emptyList())
     val stabilityDiagnostics: StateFlow<List<StabilityDiagnosticEntry>> = _stabilityDiagnostics.asStateFlow()
@@ -91,6 +96,7 @@ object LocalAccountSessionManager {
             _wallpaperSettings.value = decodeWallpaperSettings(prefs.getString(KEY_WALLPAPER_SETTINGS, null))
             _fcmPushSettings.value = decodeFcmSettings(prefs.getString(KEY_FCM_SETTINGS, null))
             _crashlyticsSettings.value = decodeCrashlyticsSettings(prefs.getString(KEY_CRASHLYTICS_SETTINGS, null))
+            _expertFeatureFlags.value = decodeExpertFeatureFlags(prefs.getString(KEY_EXPERT_FEATURE_FLAGS, null))
             _stabilityDiagnostics.value = decodeStabilityDiagnostics(prefs.getString(KEY_STABILITY_DIAGNOSTICS, null))
                 .ifEmpty { seedInitialStabilityBreadcrumbs() }
             initialized = true
@@ -105,7 +111,7 @@ object LocalAccountSessionManager {
                 timestampMillis = System.currentTimeMillis() - 120_000L,
                 subsystem = "SMS_AUTO_SYNC",
                 severity = "INFO",
-                message = "Paced background SMS sync guard active (Dispatchers.IO, 65ms batching).",
+                message = "Parallel 6-reader / 6-writer batch SMS sync guard active.",
                 deviceModel = deviceLabel
             ),
             StabilityDiagnosticEntry(
@@ -185,6 +191,32 @@ object LocalAccountSessionManager {
 
     fun updateCrashlyticsSettings(context: Context, newSettings: CrashlyticsSettings) {
         setCrashlyticsSettings(context, newSettings)
+    }
+
+    fun setExpertFeatureFlags(context: Context, settings: ExpertFeatureFlagsSettings) {
+        ensureInitialized(context)
+        val clamped = settings.copy(
+            readerThreadCount = settings.readerThreadCount.coerceIn(5, 12),
+            writerThreadCount = settings.writerThreadCount.coerceIn(5, 12),
+            smsBatchSize = settings.smsBatchSize.coerceIn(5, 50)
+        )
+        _expertFeatureFlags.value = clamped
+        val obj = JSONObject().apply {
+            put("expertModeEnabled", clamped.expertModeEnabled)
+            put("crashAnalyticsFeatureEnabled", clamped.crashAnalyticsFeatureEnabled)
+            put("fcmPushDiagnosticsEnabled", clamped.fcmPushDiagnosticsEnabled)
+            put("parallelSmsEngineTuningEnabled", clamped.parallelSmsEngineTuningEnabled)
+            put("strictDuplicateLinkerEnabled", clamped.strictDuplicateLinkerEnabled)
+            put("rawSmsDebugInspectorEnabled", clamped.rawSmsDebugInspectorEnabled)
+            put("readerThreadCount", clamped.readerThreadCount)
+            put("writerThreadCount", clamped.writerThreadCount)
+            put("smsBatchSize", clamped.smsBatchSize)
+        }
+        prefs(context).edit().putString(KEY_EXPERT_FEATURE_FLAGS, obj.toString()).apply()
+    }
+
+    fun updateExpertFeatureFlags(context: Context, newSettings: ExpertFeatureFlagsSettings) {
+        setExpertFeatureFlags(context, newSettings)
     }
 
     fun recordDiagnostic(
@@ -271,6 +303,24 @@ object LocalAccountSessionManager {
                 typographyGuardEnabled = o.optBoolean("typographyGuardEnabled", true)
             )
         }.getOrDefault(CrashlyticsSettings())
+    }
+
+    private fun decodeExpertFeatureFlags(raw: String?): ExpertFeatureFlagsSettings {
+        if (raw.isNullOrBlank()) return ExpertFeatureFlagsSettings()
+        return runCatching {
+            val o = JSONObject(raw)
+            ExpertFeatureFlagsSettings(
+                expertModeEnabled = o.optBoolean("expertModeEnabled", false),
+                crashAnalyticsFeatureEnabled = o.optBoolean("crashAnalyticsFeatureEnabled", true),
+                fcmPushDiagnosticsEnabled = o.optBoolean("fcmPushDiagnosticsEnabled", true),
+                parallelSmsEngineTuningEnabled = o.optBoolean("parallelSmsEngineTuningEnabled", true),
+                strictDuplicateLinkerEnabled = o.optBoolean("strictDuplicateLinkerEnabled", true),
+                rawSmsDebugInspectorEnabled = o.optBoolean("rawSmsDebugInspectorEnabled", true),
+                readerThreadCount = o.optInt("readerThreadCount", 6).coerceIn(5, 12),
+                writerThreadCount = o.optInt("writerThreadCount", 6).coerceIn(5, 12),
+                smsBatchSize = o.optInt("smsBatchSize", 12).coerceIn(5, 50)
+            )
+        }.getOrDefault(ExpertFeatureFlagsSettings())
     }
 
     private fun decodeStabilityDiagnostics(raw: String?): List<StabilityDiagnosticEntry> {
@@ -518,19 +568,26 @@ object LocalAccountDataStore {
     private val accountsFlow = MutableStateFlow<List<FinancialAccount>>(emptyList())
     private val smsRawMapFlow = MutableStateFlow<Map<String, SmsRawRecord>>(emptyMap())
 
+    private val storeLock = Any()
+    private val accountTimestampMap = mutableMapOf<String, Long>()
+
     private var appContext: Context? = null
     private var loaded = false
 
     fun ensureInitialized(context: Context) {
         appContext = context.applicationContext
         if (loaded) return
-        synchronized(this) {
+        synchronized(storeLock) {
             if (loaded) return
             val p = prefs() ?: return
             profilesFlow.value = decodeProfiles(p.getString(KEY_PROFILES, null))
             householdsFlow.value = decodeHouseholds(p.getString(KEY_HOUSEHOLDS, null))
             val rawExpenses = decodeExpenses(p.getString(KEY_EXPENSES, null))
-            val dedupedExpenses = deduplicateSmsExpenses(rawExpenses)
+            val validExpenses = rawExpenses.filter {
+                it.userId == LocalAccountSessionManager.DEFAULT_TEST_UID ||
+                    (!it.id.startsWith("mock_tx_") && !it.id.startsWith("demo_"))
+            }
+            val dedupedExpenses = deduplicateSmsExpenses(validExpenses)
             expensesFlow.value = dedupedExpenses
             if (dedupedExpenses.size != rawExpenses.size) {
                 saveExpenses(dedupedExpenses)
@@ -542,9 +599,10 @@ object LocalAccountDataStore {
         }
     }
 
-    fun getAllExistingSmsSignatures(uid: String): Set<String> {
-        return expensesFlow.value
-            .filter { it.userId == uid || it.memberUids.contains(uid) }
+    fun getAllExistingSmsSignatures(uid: String): Set<String> = synchronized(storeLock) {
+        if (uid.isBlank()) return emptySet()
+        expensesFlow.value
+            .filter { it.userId == uid || (it.memberUids.contains(uid) && (uid == LocalAccountSessionManager.DEFAULT_TEST_UID || it.userId != LocalAccountSessionManager.DEFAULT_TEST_UID)) }
             .flatMap { tx ->
                 val rawBody = tx.notes.substringAfter("] ", tx.notes).trim()
                 val contentKey = if (rawBody.isNotBlank() && tx.smsSignature.isNotBlank()) {
@@ -569,8 +627,11 @@ object LocalAccountDataStore {
         val seenSignatures = mutableSetOf<String>()
         val seenContentFingerprints = mutableSetOf<String>()
 
-        // Remove any legacy synthetic duplicate mock_tx_groc_dup_* entries
-        val cleaned = list.filterNot { it.id.startsWith("mock_tx_groc_dup_") }
+        // Synthetic mock entries are preserved only for the demo Test User; real users never get synthetic entries
+        val cleaned = list.filter {
+            it.userId == LocalAccountSessionManager.DEFAULT_TEST_UID ||
+                (!it.id.startsWith("mock_tx_") && !it.id.startsWith("demo_"))
+        }
 
         for (tx in cleaned) {
             val sig = tx.smsSignature.trim().removePrefix("sms_")
@@ -602,21 +663,25 @@ object LocalAccountDataStore {
         persistImmediately: Boolean = true
     ) {
         if (signature.isBlank() || body.isBlank()) return
-        val current = smsRawMapFlow.value.toMutableMap()
-        current[signature] = SmsRawRecord(
-            signature = signature,
-            sender = sender,
-            body = body,
-            timestamp = timestamp
-        )
-        smsRawMapFlow.value = current
-        if (persistImmediately) {
-            saveSmsRawMap(current)
+        synchronized(storeLock) {
+            val current = smsRawMapFlow.value.toMutableMap()
+            current[signature] = SmsRawRecord(
+                signature = signature,
+                sender = sender,
+                body = body,
+                timestamp = timestamp
+            )
+            smsRawMapFlow.value = current
+            if (persistImmediately) {
+                saveSmsRawMap(current)
+            }
         }
     }
 
     fun persistSmsRawCache() {
-        saveSmsRawMap(smsRawMapFlow.value)
+        synchronized(storeLock) {
+            saveSmsRawMap(smsRawMapFlow.value)
+        }
     }
 
     fun getSmsMessageForTransaction(tx: ExpenseTransaction): SmsRawRecord? {
@@ -710,7 +775,6 @@ object LocalAccountDataStore {
                 updatedAt = Timestamp.now()
             )
             profilesFlow.value = currentProfiles
-            saveProfiles(currentProfiles)
         } else if (currentProfiles[user.uid]?.personalMonthlyBudget == 35000.0) {
             val existingProf = currentProfiles[user.uid]!!
             currentProfiles[user.uid] = existingProf.copy(personalMonthlyBudget = 0.0)
@@ -719,435 +783,129 @@ object LocalAccountDataStore {
         }
 
         if (isTestUser) {
-            LocalAccountSessionManager.setInitialSmsSyncCompleted(context, user.uid, true)
             seedMockDataForTestUser(user, defaultHouseholdId)
         }
     }
 
     private fun seedMockDataForTestUser(user: LocalAuthUser, householdId: String) {
-        if (expensesFlow.value.any { it.userId == user.uid && it.id.startsWith("mock_tx_") }) {
-            return
-        }
+        seedDefaultAccountsIfEmpty(user)
 
-        fun makeTimestamp(calYear: Int, calMonth: Int, calDay: Int, hour: Int, min: Int, sec: Int): Long {
-            return Calendar.getInstance().apply {
-                set(Calendar.YEAR, calYear)
-                set(Calendar.MONTH, calMonth)
-                set(Calendar.DAY_OF_MONTH, calDay)
-                set(Calendar.HOUR_OF_DAY, hour)
-                set(Calendar.MINUTE, min)
-                set(Calendar.SECOND, sec)
-                set(Calendar.MILLISECOND, 0)
-            }.timeInMillis
-        }
+        // Seed realistic mock transactions across past 3 months for the Test/Demo user
+        if (expensesFlow.value.none { it.userId == user.uid }) {
+            val memberUids = listOf(user.uid)
+            val mockList = mutableListOf<ExpenseTransaction>()
+            val rawMapUpdates = smsRawMapFlow.value.toMutableMap()
 
-        val baseCal = Calendar.getInstance()
-        // Cover the last 3 months (current month + 3 prior months)
-        val monthsToSeed = (0..3).map { offset ->
-            Calendar.getInstance().apply {
-                timeInMillis = baseCal.timeInMillis
-                add(Calendar.MONTH, -offset)
-            }
-        }
+            data class MockItemDef(
+                val monthOffset: Int,
+                val dayOfMonth: Int,
+                val hour: Int,
+                val title: String,
+                val amount: Double,
+                val type: String,
+                val category: String,
+                val accountName: String,
+                val paymentMode: String,
+                val isShared: Boolean,
+                val sender: String,
+                val smsBody: String,
+                val ref: String
+            )
 
-        val mockTxList = mutableListOf<ExpenseTransaction>()
-        val mockSmsMap = smsRawMapFlow.value.toMutableMap()
-        val memberUids = listOf(user.uid)
+            val mockDefs = listOf(
+                // Month 0 (Current Month)
+                MockItemDef(0, 1, 10, "Infosys Tech Ltd Salary", 85000.0, "INCOME", "Salary", "HDFC Salary A/c", "BANK", true, "VM-HDFCBK", "Rs. 85,000.00 credited to your A/c XX4321 on 01-11-2026 by INFOSYS TECH LTD SALARY NEFT Ref 9911223344. Avl Bal: Rs. 1,02,450.00.", "9911223344"),
+                MockItemDef(0, 3, 11, "Apartment Rent", 24000.0, "EXPENSE", "Rent & Housing", "HDFC Salary A/c", "BANK", true, "VM-HDFCBK", "Rs. 24,000.00 debited from A/c XX4321 on 03-11-2026 to LANDLORD RENT via NEFT Ref 7766554433. Avl Bal: Rs. 78,450.00.", "7766554433"),
+                MockItemDef(0, 5, 16, "Nature's Basket Groceries", 3450.0, "EXPENSE", "Groceries", "HDFC Salary A/c", "UPI", true, "VM-HDFCBK", "Rs. 3,450.00 debited from A/c XX4321 on 05-11-2026 at Nature's Basket via UPI Ref 8877665544. Avl Bal: Rs. 75,000.00.", "8877665544"),
+                MockItemDef(0, 7, 9, "Blue Tokai Coffee Roasters", 380.0, "EXPENSE", "Food & Dining", "ICICI Savings A/c", "UPI", false, "VM-ICICIB", "Rs. 380.00 debited from A/c XX9012 on 07-11-2026 at Blue Tokai Coffee via UPI Ref 3344556677. Avl Bal: Rs. 35,220.00.", "3344556677"),
+                MockItemDef(0, 9, 14, "Shell Petrol Pump", 2800.0, "EXPENSE", "Transportation", "Axis Neo Credit Card", "CARD", true, "AX-AXISBK", "Alert: Rs. 2,800.00 spent on Axis Card 7788 at Shell Petrol Pump on 09-11-2026. Avail Limit: Rs. 1,47,200.00.", "TX778809"),
+                MockItemDef(0, 11, 18, "Apollo Pharmacy", 850.0, "EXPENSE", "Health & Medical", "HDFC Salary A/c", "UPI", true, "VM-HDFCBK", "Rs. 850.00 debited from A/c XX4321 on 11-11-2026 at Apollo Pharmacy via UPI Ref 1122334455. Avl Bal: Rs. 74,150.00.", "1122334455"),
+                MockItemDef(0, 13, 20, "Swiggy Gourmet Dinner", 1240.0, "EXPENSE", "Food & Dining", "HDFC Salary A/c", "UPI", true, "VM-HDFCBK", "Rs. 1,240.00 debited from A/c XX4321 on 13-11-2026 at Swiggy via UPI Ref 4433221100. Avl Bal: Rs. 72,910.00.", "4433221100"),
+                MockItemDef(0, 15, 12, "Tata Power Electricity Bill", 2100.0, "EXPENSE", "Utilities", "ICICI Savings A/c", "UPI", true, "VM-ICICIB", "Rs. 2,100.00 debited from A/c XX9012 on 15-11-2026 to Tata Power Electricity Bill via UPI Ref 5566778899. Avl Bal: Rs. 33,120.00.", "5566778899"),
+                MockItemDef(0, 17, 17, "Zara Clothing & Apparel", 4500.0, "EXPENSE", "Shopping", "Axis Neo Credit Card", "CARD", false, "AX-AXISBK", "Alert: Rs. 4,500.00 spent on Axis Card 7788 at Zara Clothing on 17-11-2026. Avail Limit: Rs. 1,42,700.00.", "TX778817"),
+                MockItemDef(0, 19, 15, "Local Bakery Treat", 450.0, "EXPENSE", "Food & Dining", "Cash Pocket", "CASH", false, "Cash", "Cash payment of Rs. 450.00 at Local Bakery.", "CSH019"),
 
-        monthsToSeed.forEachIndexed { monthIndex, mCal ->
-            val y = mCal.get(Calendar.YEAR)
-            val m = mCal.get(Calendar.MONTH) // 0-indexed
-            val maxDaysInMonth = mCal.getActualMaximum(Calendar.DAY_OF_MONTH)
-            val isCurrentMonth = monthIndex == 0
-            val effectiveMaxDay = if (isCurrentMonth) baseCal.get(Calendar.DAY_OF_MONTH).coerceAtLeast(8) else maxDaysInMonth
+                // Month -1 (Previous Month)
+                MockItemDef(-1, 1, 10, "Infosys Tech Ltd Salary", 85000.0, "INCOME", "Salary", "HDFC Salary A/c", "BANK", true, "VM-HDFCBK", "Rs. 85,000.00 credited to your A/c XX4321 on 01-10-2026 by INFOSYS TECH LTD SALARY NEFT Ref 9900112233. Avl Bal: Rs. 98,200.00.", "9900112233"),
+                MockItemDef(-1, 3, 11, "Apartment Rent", 24000.0, "EXPENSE", "Rent & Housing", "HDFC Salary A/c", "BANK", true, "VM-HDFCBK", "Rs. 24,000.00 debited from A/c XX4321 on 03-10-2026 to LANDLORD RENT via NEFT Ref 7755443322. Avl Bal: Rs. 74,200.00.", "7755443322"),
+                MockItemDef(-1, 6, 17, "BigBasket Monthly Grocery", 4200.0, "EXPENSE", "Groceries", "HDFC Salary A/c", "UPI", true, "VM-HDFCBK", "Rs. 4,200.00 debited from A/c XX4321 on 06-10-2026 at BigBasket via UPI Ref 8844332211. Avl Bal: Rs. 70,000.00.", "8844332211"),
+                MockItemDef(-1, 8, 9, "Starbucks Coffee", 450.0, "EXPENSE", "Food & Dining", "ICICI Savings A/c", "UPI", false, "VM-ICICIB", "Rs. 450.00 debited from A/c XX9012 on 08-10-2026 at Starbucks via UPI Ref 3322110099. Avl Bal: Rs. 36,000.00.", "3322110099"),
+                MockItemDef(-1, 12, 14, "HPCL Fuel Station", 2500.0, "EXPENSE", "Transportation", "Axis Neo Credit Card", "CARD", true, "AX-AXISBK", "Alert: Rs. 2,500.00 spent on Axis Card 7788 at HPCL Fuel Station on 12-10-2026. Avail Limit: Rs. 1,47,500.00.", "TX778812"),
+                MockItemDef(-1, 15, 20, "Swiggy Weekend Family Meal", 1650.0, "EXPENSE", "Food & Dining", "HDFC Salary A/c", "UPI", true, "VM-HDFCBK", "Rs. 1,650.00 debited from A/c XX4321 on 15-10-2026 at Swiggy via UPI Ref 4411009988. Avl Bal: Rs. 68,350.00.", "4411009988"),
+                MockItemDef(-1, 18, 12, "Airtel Fiber Broadband Bill", 1180.0, "EXPENSE", "Utilities", "ICICI Savings A/c", "UPI", true, "VM-ICICIB", "Rs. 1,180.00 debited from A/c XX9012 on 18-10-2026 to Airtel Fiber Bill via UPI Ref 5544332211. Avl Bal: Rs. 34,820.00.", "5544332211"),
+                MockItemDef(-1, 22, 19, "PVR Cinemas Movie Tickets", 1400.0, "EXPENSE", "Entertainment", "Axis Neo Credit Card", "CARD", false, "AX-AXISBK", "Alert: Rs. 1,400.00 spent on Axis Card 7788 at PVR Cinemas on 22-10-2026. Avail Limit: Rs. 1,46,100.00.", "TX778822"),
 
-            // 1. Monthly Salary (Income)
-            val salTime = makeTimestamp(y, m, 1, 10, 0, 0)
-            val salSig = "sms_mock_sal_${y}_$m"
-            mockTxList.add(
-                ExpenseTransaction(
-                    id = "mock_tx_sal_${y}_$m",
-                    userId = user.uid,
-                    userName = user.displayName,
-                    householdId = householdId,
-                    title = "TechCorp Monthly Salary Deposit",
-                    amount = 85000.0,
-                    type = "INCOME",
-                    category = "Salary",
-                    accountName = "HDFC Salary A/c",
-                    paymentMode = "BANK",
-                    tags = listOf("salary", "income"),
-                    notes = "Monthly payroll transfer from employer",
-                    visibility = "SHARED",
-                    smsSignature = salSig,
-                    referenceNumber = "SAL-$y-$m-8821",
-                    transactionDateMillis = salTime,
-                    memberUids = memberUids,
-                    createdAt = Timestamp(Date(salTime)),
-                    updatedAt = Timestamp.now()
+                // Month -2 (Two Months Ago)
+                MockItemDef(-2, 1, 10, "Infosys Tech Ltd Salary", 85000.0, "INCOME", "Salary", "HDFC Salary A/c", "BANK", true, "VM-HDFCBK", "Rs. 85,000.00 credited to your A/c XX4321 on 01-09-2026 by INFOSYS TECH LTD SALARY NEFT Ref 9988776655. Avl Bal: Rs. 92,000.00.", "9988776655"),
+                MockItemDef(-2, 3, 11, "Apartment Rent", 24000.0, "EXPENSE", "Rent & Housing", "HDFC Salary A/c", "BANK", true, "VM-HDFCBK", "Rs. 24,000.00 debited from A/c XX4321 on 03-09-2026 to LANDLORD RENT via NEFT Ref 7744332211. Avl Bal: Rs. 68,000.00.", "7744332211"),
+                MockItemDef(-2, 7, 16, "Spencer's Retail Groceries", 3900.0, "EXPENSE", "Groceries", "HDFC Salary A/c", "UPI", true, "VM-HDFCBK", "Rs. 3,900.00 debited from A/c XX4321 on 07-09-2026 at Spencers Retail via UPI Ref 8833221100. Avl Bal: Rs. 64,100.00.", "8833221100"),
+                MockItemDef(-2, 11, 13, "City Fuel Station", 2400.0, "EXPENSE", "Transportation", "Axis Neo Credit Card", "CARD", true, "AX-AXISBK", "Alert: Rs. 2,400.00 spent on Axis Card 7788 at City Fuel Station on 11-09-2026. Avail Limit: Rs. 1,47,600.00.", "TX778811"),
+                MockItemDef(-2, 16, 11, "Family Dental Clinic", 1500.0, "EXPENSE", "Health & Medical", "HDFC Salary A/c", "UPI", true, "VM-HDFCBK", "Rs. 1,500.00 debited from A/c XX4321 on 16-09-2026 at Dental Care via UPI Ref 1100998877. Avl Bal: Rs. 62,600.00.", "1100998877"),
+                MockItemDef(-2, 20, 20, "Barbeque Nation Family Dinner", 2800.0, "EXPENSE", "Food & Dining", "HDFC Salary A/c", "CARD", true, "VM-HDFCBK", "Rs. 2,800.00 spent on HDFC Debit Card XX4321 at Barbeque Nation on 20-09-2026. Avl Bal: Rs. 59,800.00.", "TX432120")
+            )
+
+            mockDefs.forEachIndexed { idx, def ->
+                val cal = Calendar.getInstance().apply {
+                    if (def.monthOffset != 0) {
+                        add(Calendar.MONTH, def.monthOffset)
+                    }
+                    val maxDay = getActualMaximum(Calendar.DAY_OF_MONTH)
+                    set(Calendar.DAY_OF_MONTH, def.dayOfMonth.coerceAtMost(maxDay))
+                    set(Calendar.HOUR_OF_DAY, def.hour)
+                    set(Calendar.MINUTE, 25)
+                    set(Calendar.SECOND, 0)
+                    set(Calendar.MILLISECOND, 0)
+                }
+                val txMillis = cal.timeInMillis
+                val docId = "mock_tx_${idx + 1}"
+                val sig = "mock_sms_sig_${idx + 1}"
+                val targetHouseholdId = if (def.isShared) householdId else ""
+
+                // Cache realistic raw bank SMS for each mock transaction so EditTransactionDialog shows the raw SMS
+                rawMapUpdates[sig] = SmsRawRecord(
+                    signature = sig,
+                    sender = def.sender,
+                    body = def.smsBody,
+                    timestamp = txMillis
                 )
-            )
-            mockSmsMap[salSig] = SmsRawRecord(
-                signature = salSig,
-                sender = "VM-HDFCBK",
-                body = "Salary of Rs 85,000.00 credited to HDFC Bank A/c XX4321 on 01-${m+1}-$y by TechCorp India Pvt Ltd. Avail Bal: Rs 88,450.00.",
-                timestamp = salTime
-            )
 
-            // 2. Apartment Rent
-            val rentDay = 2.coerceAtMost(effectiveMaxDay)
-            val rentTime = makeTimestamp(y, m, rentDay, 11, 30, 0)
-            val rentSig = "sms_mock_rent_${y}_$m"
-            mockTxList.add(
-                ExpenseTransaction(
-                    id = "mock_tx_rent_${y}_$m",
-                    userId = user.uid,
-                    userName = user.displayName,
-                    householdId = householdId,
-                    title = "Monthly Apartment Rent",
-                    amount = 28000.0,
-                    type = "EXPENSE",
-                    category = "Rent & Housing",
-                    accountName = "HDFC Salary A/c",
-                    paymentMode = "BANK",
-                    tags = listOf("rent", "fixed", "home"),
-                    notes = "Transferred to landlord via NEFT",
-                    visibility = "SHARED",
-                    smsSignature = rentSig,
-                    referenceNumber = "NEFT-RENT-$y$m",
-                    transactionDateMillis = rentTime,
-                    memberUids = memberUids,
-                    createdAt = Timestamp(Date(rentTime)),
-                    updatedAt = Timestamp.now()
-                )
-            )
-            mockSmsMap[rentSig] = SmsRawRecord(
-                signature = rentSig,
-                sender = "VM-HDFCBK",
-                body = "Rs 28,000.00 debited from A/c XX4321 on $rentDay-${m+1}-$y towards NEFT Rent Transfer to Landlord. Avail Bal: Rs 60,450.00.",
-                timestamp = rentTime
-            )
-
-            // 3. Supermarket Groceries
-            val grocDay = 3.coerceAtMost(effectiveMaxDay)
-            val grocTime = makeTimestamp(y, m, grocDay, 18, 45, 12)
-            val grocSig = "sms_mock_groc_${y}_$m"
-            mockTxList.add(
-                ExpenseTransaction(
-                    id = "mock_tx_groc_${y}_$m",
-                    userId = user.uid,
-                    userName = user.displayName,
-                    householdId = householdId,
-                    title = "Nature's Basket Organic Groceries",
-                    amount = 3420.0 + (monthIndex * 210.0),
-                    type = "EXPENSE",
-                    category = "Groceries",
-                    accountName = "HDFC Salary A/c",
-                    paymentMode = "UPI",
-                    tags = listOf("groceries", "organic", "weekly"),
-                    notes = "Weekly fresh fruits, veggies, and organic supplies",
-                    visibility = "SHARED",
-                    smsSignature = grocSig,
-                    referenceNumber = "UPI-GROC-9823$monthIndex",
-                    transactionDateMillis = grocTime,
-                    memberUids = memberUids,
-                    createdAt = Timestamp(Date(grocTime)),
-                    updatedAt = Timestamp.now()
-                )
-            )
-            mockSmsMap[grocSig] = SmsRawRecord(
-                signature = grocSig,
-                sender = "VM-HDFCBK",
-                body = "Rs ${3420.0 + (monthIndex * 210.0)} debited from HDFC Bank A/c XX4321 on $grocDay-${m+1}-$y to Nature's Basket via UPI Ref 9823145612.",
-                timestamp = grocTime
-            )
-
-            // 4. Restaurant Dinner
-            val dinDay = 4.coerceAtMost(effectiveMaxDay)
-            val dinTime = makeTimestamp(y, m, dinDay, 20, 15, 30)
-            val dinSig = "sms_mock_din_${y}_$m"
-            mockTxList.add(
-                ExpenseTransaction(
-                    id = "mock_tx_din_${y}_$m",
-                    userId = user.uid,
-                    userName = user.displayName,
-                    householdId = householdId,
-                    title = "Swiggy Gourmet Family Dinner",
-                    amount = 1480.0 + (monthIndex * 150.0),
-                    type = "EXPENSE",
-                    category = "Food & Dining",
-                    accountName = "Axis Credit Card",
-                    paymentMode = "CARD",
-                    tags = listOf("dinner", "family", "swiggy"),
-                    notes = "Family dinner delivery",
-                    visibility = "SHARED",
-                    smsSignature = dinSig,
-                    referenceNumber = "AXIS-SWIG-4412$monthIndex",
-                    transactionDateMillis = dinTime,
-                    memberUids = memberUids,
-                    createdAt = Timestamp(Date(dinTime)),
-                    updatedAt = Timestamp.now()
-                )
-            )
-            mockSmsMap[dinSig] = SmsRawRecord(
-                signature = dinSig,
-                sender = "AX-AXISBK",
-                body = "Spent Rs ${1480.0 + (monthIndex * 150.0)} on your Axis Bank Credit Card XX7788 at Swiggy on $dinDay-${m+1}-$y. Avail Limit: Rs 145000.00.",
-                timestamp = dinTime
-            )
-
-            // 5. Speciality Coffee (Personal)
-            val cofDay = 5.coerceAtMost(effectiveMaxDay)
-            val cofTime = makeTimestamp(y, m, cofDay, 9, 20, 45)
-            val cofSig = "sms_mock_cof_${y}_$m"
-            mockTxList.add(
-                ExpenseTransaction(
-                    id = "mock_tx_cof_${y}_$m",
-                    userId = user.uid,
-                    userName = user.displayName,
-                    householdId = "",
-                    title = "Blue Tokai Coffee & Croissant",
-                    amount = 450.0,
-                    type = "EXPENSE",
-                    category = "Food & Dining",
-                    accountName = "HDFC Salary A/c",
-                    paymentMode = "UPI",
-                    tags = listOf("coffee", "personal"),
-                    notes = "Morning roast & work meeting",
-                    visibility = "PERSONAL",
-                    smsSignature = cofSig,
-                    referenceNumber = "UPI-COF-1122$monthIndex",
-                    transactionDateMillis = cofTime,
-                    memberUids = memberUids,
-                    createdAt = Timestamp(Date(cofTime)),
-                    updatedAt = Timestamp.now()
-                )
-            )
-            mockSmsMap[cofSig] = SmsRawRecord(
-                signature = cofSig,
-                sender = "VM-HDFCBK",
-                body = "Rs 450.00 debited from A/c XX4321 on $cofDay-${m+1}-$y to Blue Tokai Coffee via UPI Ref 11223344.",
-                timestamp = cofTime
-            )
-
-            // 6. Electricity & Utilities
-            val utilDay = 6.coerceAtMost(effectiveMaxDay)
-            val utilTime = makeTimestamp(y, m, utilDay, 17, 10, 20)
-            val utilSig = "sms_mock_util_${y}_$m"
-            mockTxList.add(
-                ExpenseTransaction(
-                    id = "mock_tx_util_${y}_$m",
-                    userId = user.uid,
-                    userName = user.displayName,
-                    householdId = householdId,
-                    title = "Electricity & Power Utility",
-                    amount = 2850.0 + (monthIndex * 90.0),
-                    type = "EXPENSE",
-                    category = "Utilities & Bills",
-                    accountName = "ICICI Savings A/c",
-                    paymentMode = "UPI",
-                    tags = listOf("electricity", "bills"),
-                    notes = "Monthly electricity bill payment",
-                    visibility = "SHARED",
-                    smsSignature = utilSig,
-                    referenceNumber = "UPI-UTIL-8765$monthIndex",
-                    transactionDateMillis = utilTime,
-                    memberUids = memberUids,
-                    createdAt = Timestamp(Date(utilTime)),
-                    updatedAt = Timestamp.now()
-                )
-            )
-            mockSmsMap[utilSig] = SmsRawRecord(
-                signature = utilSig,
-                sender = "VK-ICICIB",
-                body = "Your A/c XX9012 is debited for Rs ${2850.0 + (monthIndex * 90.0)} on $utilDay-${m+1}-$y. Info: UPI/Adani Electricity/Ref 87654321.",
-                timestamp = utilTime
-            )
-
-            // 7. Shopping
-            val shopDay = 7.coerceAtMost(effectiveMaxDay)
-            val shopTime = makeTimestamp(y, m, shopDay, 14, 0, 15)
-            val shopSig = "sms_mock_shop_${y}_$m"
-            mockTxList.add(
-                ExpenseTransaction(
-                    id = "mock_tx_shop_${y}_$m",
-                    userId = user.uid,
-                    userName = user.displayName,
-                    householdId = "",
-                    title = "Amazon Books & Electronics",
-                    amount = 4199.0 + (monthIndex * 300.0),
-                    type = "EXPENSE",
-                    category = "Shopping",
-                    accountName = "Axis Credit Card",
-                    paymentMode = "CARD",
-                    tags = listOf("shopping", "amazon"),
-                    notes = "Headphones and books",
-                    visibility = "PERSONAL",
-                    smsSignature = shopSig,
-                    referenceNumber = "AXIS-AMZ-7711$monthIndex",
-                    transactionDateMillis = shopTime,
-                    memberUids = memberUids,
-                    createdAt = Timestamp(Date(shopTime)),
-                    updatedAt = Timestamp.now()
-                )
-            )
-            mockSmsMap[shopSig] = SmsRawRecord(
-                signature = shopSig,
-                sender = "AX-AXISBK",
-                body = "Spent Rs ${4199.0 + (monthIndex * 300.0)} on Axis Bank Credit Card XX7788 at Amazon India on $shopDay-${m+1}-$y. Avail Limit: Rs 140701.00.",
-                timestamp = shopTime
-            )
-
-            // 8. Fuel & Transport
-            val fuelDay = 8.coerceAtMost(effectiveMaxDay)
-            val fuelTime = makeTimestamp(y, m, fuelDay, 12, 40, 5)
-            val fuelSig = "sms_mock_fuel_${y}_$m"
-            mockTxList.add(
-                ExpenseTransaction(
-                    id = "mock_tx_fuel_${y}_$m",
-                    userId = user.uid,
-                    userName = user.displayName,
-                    householdId = householdId,
-                    title = "Indian Oil Petrol Pump",
-                    amount = 2500.0,
-                    type = "EXPENSE",
-                    category = "Transport & Fuel",
-                    accountName = "Axis Credit Card",
-                    paymentMode = "CARD",
-                    tags = listOf("fuel", "car"),
-                    notes = "Full tank petrol for car",
-                    visibility = "SHARED",
-                    smsSignature = fuelSig,
-                    referenceNumber = "AXIS-IOCL-9988$monthIndex",
-                    transactionDateMillis = fuelTime,
-                    memberUids = memberUids,
-                    createdAt = Timestamp(Date(fuelTime)),
-                    updatedAt = Timestamp.now()
-                )
-            )
-            mockSmsMap[fuelSig] = SmsRawRecord(
-                signature = fuelSig,
-                sender = "AX-AXISBK",
-                body = "Spent Rs 2,500.00 on Axis Bank Credit Card XX7788 at Indian Oil on $fuelDay-${m+1}-$y. Avail Limit: Rs 138201.00.",
-                timestamp = fuelTime
-            )
-
-            // For past months, add second half of month transactions
-            if (!isCurrentMonth) {
-                // Broadband
-                val bbDay = 12.coerceAtMost(maxDaysInMonth)
-                val bbTime = makeTimestamp(y, m, bbDay, 11, 20, 0)
-                val bbSig = "sms_mock_bb_${y}_$m"
-                mockTxList.add(
+                mockList.add(
                     ExpenseTransaction(
-                        id = "mock_tx_bb_${y}_$m",
+                        id = docId,
                         userId = user.uid,
                         userName = user.displayName,
-                        householdId = householdId,
-                        title = "Airtel Fiber Broadband",
-                        amount = 1179.0,
-                        type = "EXPENSE",
-                        category = "Utilities & Bills",
-                        accountName = "ICICI Savings A/c",
-                        paymentMode = "UPI",
-                        tags = listOf("broadband", "wifi"),
-                        notes = "Monthly high-speed internet plan",
-                        visibility = "SHARED",
-                        smsSignature = bbSig,
-                        referenceNumber = "UPI-AIRTEL-$y$m",
-                        transactionDateMillis = bbTime,
+                        householdId = targetHouseholdId,
+                        title = def.title,
+                        amount = def.amount,
+                        type = def.type,
+                        category = def.category,
+                        accountName = def.accountName,
+                        paymentMode = def.paymentMode,
+                        tags = listOf("mock-sample", def.accountName.lowercase().replace(" ", "-")),
+                        notes = "[${def.sender}] ${def.smsBody}",
+                        visibility = if (def.isShared) "SHARED" else "PERSONAL",
+                        smsSignature = sig,
+                        referenceNumber = def.ref,
+                        transactionDateMillis = txMillis,
                         memberUids = memberUids,
-                        createdAt = Timestamp(Date(bbTime)),
+                        createdAt = Timestamp(Date(txMillis)),
                         updatedAt = Timestamp.now()
                     )
-                )
-                mockSmsMap[bbSig] = SmsRawRecord(
-                    signature = bbSig,
-                    sender = "VK-ICICIB",
-                    body = "Your A/c XX9012 is debited for Rs 1,179.00 on $bbDay-${m+1}-$y to Airtel Broadband via UPI Ref 76543210.",
-                    timestamp = bbTime
-                )
-
-                // Cinema & Entertainment
-                val movDay = 18.coerceAtMost(maxDaysInMonth)
-                val movTime = makeTimestamp(y, m, movDay, 21, 30, 0)
-                val movSig = "sms_mock_mov_${y}_$m"
-                mockTxList.add(
-                    ExpenseTransaction(
-                        id = "mock_tx_mov_${y}_$m",
-                        userId = user.uid,
-                        userName = user.displayName,
-                        householdId = householdId,
-                        title = "PVR IMAX Movie & Snacks",
-                        amount = 1650.0,
-                        type = "EXPENSE",
-                        category = "Entertainment",
-                        accountName = "Axis Credit Card",
-                        paymentMode = "CARD",
-                        tags = listOf("movies", "weekend", "entertainment"),
-                        notes = "Family cinema outing",
-                        visibility = "SHARED",
-                        smsSignature = movSig,
-                        referenceNumber = "AXIS-PVR-$y$m",
-                        transactionDateMillis = movTime,
-                        memberUids = memberUids,
-                        createdAt = Timestamp(Date(movTime)),
-                        updatedAt = Timestamp.now()
-                    )
-                )
-                mockSmsMap[movSig] = SmsRawRecord(
-                    signature = movSig,
-                    sender = "AX-AXISBK",
-                    body = "Spent Rs 1,650.00 on Axis Bank Credit Card XX7788 at PVR Cinemas on $movDay-${m+1}-$y. Avail Limit: Rs 136551.00.",
-                    timestamp = movTime
-                )
-
-                // Healthcare / Pharmacy
-                val medDay = 24.coerceAtMost(maxDaysInMonth)
-                val medTime = makeTimestamp(y, m, medDay, 16, 15, 0)
-                val medSig = "sms_mock_med_${y}_$m"
-                mockTxList.add(
-                    ExpenseTransaction(
-                        id = "mock_tx_med_${y}_$m",
-                        userId = user.uid,
-                        userName = user.displayName,
-                        householdId = householdId,
-                        title = "Apollo Pharmacy Health Essentials",
-                        amount = 1380.0,
-                        type = "EXPENSE",
-                        category = "Healthcare",
-                        accountName = "HDFC Salary A/c",
-                        paymentMode = "UPI",
-                        tags = listOf("health", "pharmacy"),
-                        notes = "Monthly vitamins and medicine refill",
-                        visibility = "SHARED",
-                        smsSignature = medSig,
-                        referenceNumber = "UPI-APOLLO-$y$m",
-                        transactionDateMillis = medTime,
-                        memberUids = memberUids,
-                        createdAt = Timestamp(Date(medTime)),
-                        updatedAt = Timestamp.now()
-                    )
-                )
-                mockSmsMap[medSig] = SmsRawRecord(
-                    signature = medSig,
-                    sender = "VM-HDFCBK",
-                    body = "Rs 1,380.00 debited from A/c XX4321 on $medDay-${m+1}-$y to Apollo Pharmacy via UPI Ref 55443322.",
-                    timestamp = medTime
                 )
             }
+
+            smsRawMapFlow.value = rawMapUpdates
+            saveSmsRawMap(rawMapUpdates)
+
+            val updatedExpenses = (expensesFlow.value + mockList).sortedByDescending { it.transactionDateMillis }
+            expensesFlow.value = updatedExpenses
+            saveExpenses(updatedExpenses)
         }
+    }
 
-        val updatedExpenses = expensesFlow.value + mockTxList
-        expensesFlow.value = updatedExpenses
-        saveExpenses(updatedExpenses)
-
-        smsRawMapFlow.value = mockSmsMap
-        saveSmsRawMap(mockSmsMap)
-
-        // Seed default financial accounts if none exist
+    private fun seedDefaultAccountsIfEmpty(user: LocalAuthUser) {
         if (accountsFlow.value.none { it.userId == user.uid }) {
-            val mockAccounts = listOf(
+            val defaultAccounts = listOf(
                 FinancialAccount(
                     id = "${user.uid}_hdfc_salary_4321",
                     userId = user.uid,
@@ -1193,8 +951,8 @@ object LocalAccountDataStore {
                     isSharedVisible = true
                 )
             )
-            accountsFlow.value = mockAccounts
-            saveAccounts(mockAccounts)
+            accountsFlow.value = defaultAccounts
+            saveAccounts(defaultAccounts)
         }
     }
 
@@ -1221,29 +979,37 @@ object LocalAccountDataStore {
 
     fun observePersonalExpenses(userId: String): Flow<List<ExpenseTransaction>> =
         expensesFlow.map { list ->
-            list.filter { it.userId == userId && it.visibility == "PERSONAL" }
-                .sortedByDescending { it.transactionDateMillis }
+            if (userId.isBlank()) {
+                emptyList()
+            } else {
+                list.filter { it.userId == userId && it.visibility == "PERSONAL" }
+                    .sortedByDescending { it.transactionDateMillis }
+            }
         }
 
     fun observeSharedExpenses(householdId: String): Flow<List<ExpenseTransaction>> =
         expensesFlow.map { list ->
-            list.filter { it.householdId == householdId && it.visibility == "SHARED" }
-                .sortedByDescending { it.transactionDateMillis }
+            if (householdId.isBlank()) {
+                emptyList()
+            } else {
+                list.filter { it.householdId == householdId && it.visibility == "SHARED" }
+                    .sortedByDescending { it.transactionDateMillis }
+            }
         }
 
     fun observePersonalCategoryBudgets(userId: String): Flow<List<CategoryBudget>> =
         budgetsFlow.map { list ->
-            list.filter { it.userId == userId && it.householdId.isBlank() }
+            if (userId.isBlank()) emptyList() else list.filter { it.userId == userId && it.householdId.isBlank() }
         }
 
     fun observeSharedCategoryBudgets(householdId: String): Flow<List<CategoryBudget>> =
         budgetsFlow.map { list ->
-            list.filter { it.householdId == householdId }
+            if (householdId.isBlank()) emptyList() else list.filter { it.householdId == householdId }
         }
 
     fun observeAccounts(userId: String): Flow<List<FinancialAccount>> =
         accountsFlow.map { list ->
-            list.filter { it.userId == userId }
+            if (userId.isBlank()) emptyList() else list.filter { it.userId == userId }
         }
 
     // --- MUTATIONS ---
@@ -1287,15 +1053,58 @@ object LocalAccountDataStore {
         personalMonthlyBudget: Double,
         currencySymbol: String
     ) {
+        val cleanCurrency = currencySymbol.trim().ifBlank { "₹" }.take(10)
+        val current = profilesFlow.value.toMutableMap()
+        val existing = current[uid] ?: ensureUserProfile(uid, "Test User", "")
+        val updatedProfile = existing.copy(
+            personalMonthlyBudget = personalMonthlyBudget.coerceAtLeast(0.0),
+            currencySymbol = cleanCurrency,
+            updatedAt = Timestamp.now()
+        )
+        current[uid] = updatedProfile
+        profilesFlow.value = current
+        saveProfiles(current)
+
+        val hid = updatedProfile.activeHouseholdId
+        if (hid.isNotBlank()) {
+            val hMap = householdsFlow.value.toMutableMap()
+            val curHh = hMap[hid]
+            if (curHh != null && curHh.currencySymbol != cleanCurrency) {
+                hMap[hid] = curHh.copy(currencySymbol = cleanCurrency, updatedAt = Timestamp.now())
+                householdsFlow.value = hMap
+                saveHouseholds(hMap)
+            }
+        }
+    }
+
+    fun updatePreferredCurrency(
+        uid: String,
+        currencySymbol: String,
+        household: Household?
+    ) {
+        val cleanCurrency = currencySymbol.trim().ifBlank { "₹" }.take(10)
         val current = profilesFlow.value.toMutableMap()
         val existing = current[uid] ?: ensureUserProfile(uid, "Test User", "")
         current[uid] = existing.copy(
-            personalMonthlyBudget = personalMonthlyBudget.coerceAtLeast(0.0),
-            currencySymbol = currencySymbol.ifBlank { "₹" }.take(10),
+            currencySymbol = cleanCurrency,
             updatedAt = Timestamp.now()
         )
         profilesFlow.value = current
         saveProfiles(current)
+
+        val targetHouseholdId = household?.id?.ifBlank { existing.activeHouseholdId } ?: existing.activeHouseholdId
+        if (targetHouseholdId.isNotBlank()) {
+            val hMap = householdsFlow.value.toMutableMap()
+            val curHh = hMap[targetHouseholdId]
+            if (curHh != null) {
+                hMap[targetHouseholdId] = curHh.copy(
+                    currencySymbol = cleanCurrency,
+                    updatedAt = Timestamp.now()
+                )
+                householdsFlow.value = hMap
+                saveHouseholds(hMap)
+            }
+        }
     }
 
     fun updateUserDisplayName(
@@ -1442,12 +1251,20 @@ object LocalAccountDataStore {
         saveHouseholds(hMap)
     }
 
-    fun updateHouseholdSettings(householdId: String, name: String, monthlyBudgetLimit: Double) {
+    fun updateHouseholdSettings(
+        householdId: String,
+        name: String,
+        monthlyBudgetLimit: Double,
+        currencySymbol: String? = null
+    ) {
         val hMap = householdsFlow.value.toMutableMap()
         val current = hMap[householdId] ?: return
+        val nextCurrency = currencySymbol?.trim()?.takeIf { it.isNotBlank() }?.take(10)
+            ?: current.currencySymbol.ifBlank { "₹" }
         hMap[householdId] = current.copy(
             name = name.trim().ifBlank { "Family Budget" },
             monthlyBudgetLimit = monthlyBudgetLimit.coerceAtLeast(0.0),
+            currencySymbol = nextCurrency,
             updatedAt = Timestamp.now()
         )
         householdsFlow.value = hMap
@@ -1504,16 +1321,18 @@ object LocalAccountDataStore {
             updatedAt = Timestamp.now()
         )
 
-        val withoutSameDocOrSig = expensesFlow.value.filterNot { existing ->
-            existing.id == docId ||
-                (smsSignature.isNotBlank() && (
-                    existing.smsSignature.removePrefix("sms_") == smsSignature.removePrefix("sms_") ||
-                        existing.linkedSmsSignatures.any { it.removePrefix("sms_") == smsSignature.removePrefix("sms_") }
-                    ))
+        synchronized(storeLock) {
+            val withoutSameDocOrSig = expensesFlow.value.filterNot { existing ->
+                existing.id == docId ||
+                    (smsSignature.isNotBlank() && (
+                        existing.smsSignature.removePrefix("sms_") == smsSignature.removePrefix("sms_") ||
+                            existing.linkedSmsSignatures.any { it.removePrefix("sms_") == smsSignature.removePrefix("sms_") }
+                        ))
+            }
+            val updated = deduplicateSmsExpenses(withoutSameDocOrSig + tx)
+            expensesFlow.value = updated
+            saveExpenses(updated)
         }
-        val updated = deduplicateSmsExpenses(withoutSameDocOrSig + tx)
-        expensesFlow.value = updated
-        saveExpenses(updated)
         return docId
     }
 
@@ -1523,7 +1342,7 @@ object LocalAccountDataStore {
         userName: String,
         household: Household?,
         shareByDefault: Boolean = true
-    ): Int {
+    ): Int = synchronized(storeLock) {
         if (candidates.isEmpty()) return 0
         val effectiveShared = shareByDefault && household != null
         val targetHouseholdId = if (effectiveShared) household!!.id else ""
@@ -1533,6 +1352,7 @@ object LocalAccountDataStore {
         val currentMap = expensesFlow.value.associateBy { it.id }.toMutableMap()
         val alreadyLinkedSignatures = getAllExistingSmsSignatures(uid).toMutableSet()
         val accountsToUpsert = mutableMapOf<String, SmsCandidate>()
+        val rawMapUpdates = smsRawMapFlow.value.toMutableMap()
         var importedCount = 0
 
         for (candidate in sortedCandidates) {
@@ -1558,12 +1378,14 @@ object LocalAccountDataStore {
                 "UPI"
             }
 
-            cacheSmsMessage(
-                signature = candidate.id,
-                sender = parsed.sender,
-                body = parsed.smsBody,
-                timestamp = parsed.timestamp
-            )
+            if (candidate.id.isNotBlank() && parsed.smsBody.isNotBlank()) {
+                rawMapUpdates[candidate.id] = SmsRawRecord(
+                    signature = candidate.id,
+                    sender = parsed.sender,
+                    body = parsed.smsBody,
+                    timestamp = parsed.timestamp
+                )
+            }
 
             currentMap[docId] = ExpenseTransaction(
                 id = docId,
@@ -1589,8 +1411,16 @@ object LocalAccountDataStore {
             importedCount++
 
             if (parsed.balance != null || parsed.creditLimit != null || parsed.accountNumber != null) {
-                accountsToUpsert[candidate.suggestedAccountName] = candidate
+                val prevCandidate = accountsToUpsert[candidate.suggestedAccountName]
+                if (prevCandidate == null || parsed.timestamp >= prevCandidate.parsed.timestamp) {
+                    accountsToUpsert[candidate.suggestedAccountName] = candidate
+                }
             }
+        }
+
+        if (rawMapUpdates.size != smsRawMapFlow.value.size) {
+            smsRawMapFlow.value = rawMapUpdates
+            saveSmsRawMap(rawMapUpdates)
         }
 
         val updatedList = deduplicateSmsExpenses(currentMap.values.toList())
@@ -1612,7 +1442,8 @@ object LocalAccountDataStore {
                 lastFourDigits = parsed.accountNumber.orEmpty(),
                 balance = parsed.balance?.toDouble() ?: 0.0,
                 creditLimit = parsed.creditLimit?.toDouble() ?: 0.0,
-                isSharedVisible = effectiveShared
+                isSharedVisible = effectiveShared,
+                asOfTimestampMillis = parsed.timestamp
             )
         }
 
@@ -1633,7 +1464,7 @@ object LocalAccountDataStore {
         notes: String,
         transactionDateMillis: Long,
         isShared: Boolean
-    ) {
+    ) = synchronized(storeLock) {
         val wantShared = isShared && household != null
         val targetHouseholdId = if (wantShared) household!!.id else ""
         val memberUids = if (wantShared) (household!!.memberUids + uid).distinct() else listOf(uid)
@@ -1662,7 +1493,7 @@ object LocalAccountDataStore {
         saveExpenses(updatedList)
     }
 
-    fun updateExpenseCategoryById(expenseId: String, newCategory: String) {
+    fun updateExpenseCategoryById(expenseId: String, newCategory: String) = synchronized(storeLock) {
         val updatedList = expensesFlow.value.map { tx ->
             if (tx.id == expenseId) {
                 tx.copy(
@@ -1677,7 +1508,7 @@ object LocalAccountDataStore {
         saveExpenses(updatedList)
     }
 
-    fun toggleExpensePrivacy(uid: String, expense: ExpenseTransaction, household: Household) {
+    fun toggleExpensePrivacy(uid: String, expense: ExpenseTransaction, household: Household) = synchronized(storeLock) {
         val movingToShared = expense.visibility == "PERSONAL"
         val updatedTx = expense.copy(
             householdId = if (movingToShared) household.id else "",
@@ -1690,8 +1521,20 @@ object LocalAccountDataStore {
         saveExpenses(updatedList)
     }
 
-    fun deleteExpense(expenseId: String) {
+    fun deleteExpense(expenseId: String) = synchronized(storeLock) {
         val updatedList = expensesFlow.value.filterNot { it.id == expenseId }
+        expensesFlow.value = updatedList
+        saveExpenses(updatedList)
+    }
+
+    /**
+     * Restores an exact [ExpenseTransaction] (used when undoing an accidental swipe delete,
+     * swipe duplicate link, or privacy toggle on the Home Screen).
+     */
+    fun restoreExpense(expense: ExpenseTransaction) = synchronized(storeLock) {
+        val withoutId = expensesFlow.value.filterNot { it.id == expense.id }
+        val updatedList = (withoutId + expense.copy(updatedAt = Timestamp.now()))
+            .sortedByDescending { it.transactionDateMillis }
         expensesFlow.value = updatedList
         saveExpenses(updatedList)
     }
@@ -1703,7 +1546,7 @@ object LocalAccountDataStore {
     fun linkDuplicateTransaction(
         primaryTx: ExpenseTransaction,
         duplicateTx: ExpenseTransaction
-    ): ExpenseTransaction {
+    ): ExpenseTransaction = synchronized(storeLock) {
         require(primaryTx.id != duplicateTx.id) { "Cannot link a transaction to itself." }
 
         // Ensure duplicate's raw SMS is cached under its signature or ID if present in notes
@@ -1763,7 +1606,7 @@ object LocalAccountDataStore {
         alertThresholdPercent: Int,
         isShared: Boolean,
         household: Household?
-    ): String {
+    ): String = synchronized(storeLock) {
         val effectiveShared = isShared && household != null
         val sanitizedId = category.lowercase().replace(Regex("[^a-z0-9]+"), "_").trim('_').ifBlank { "general" }
         val docId = if (effectiveShared) "sh_${household!!.id}_$sanitizedId" else "pe_${uid}_$sanitizedId"
@@ -1791,7 +1634,7 @@ object LocalAccountDataStore {
         return docId
     }
 
-    fun deleteCategoryBudget(budgetId: String) {
+    fun deleteCategoryBudget(budgetId: String) = synchronized(storeLock) {
         val updated = budgetsFlow.value.filterNot { it.id == budgetId }
         budgetsFlow.value = updated
         saveBudgets(updated)
@@ -1805,14 +1648,21 @@ object LocalAccountDataStore {
         lastFourDigits: String,
         balance: Double,
         creditLimit: Double = 0.0,
-        isSharedVisible: Boolean = true
-    ): String {
+        isSharedVisible: Boolean = true,
+        asOfTimestampMillis: Long = Long.MAX_VALUE
+    ): String = synchronized(storeLock) {
         val docKey = "${uid}_${bankName}_${accountType}_${lastFourDigits}"
             .lowercase()
             .replace(Regex("[^a-z0-9]+"), "_")
             .trim('_')
             .take(64)
             .ifBlank { UUID.randomUUID().toString().take(16) }
+
+        val prevTimestamp = accountTimestampMap[docKey] ?: Long.MIN_VALUE
+        if (asOfTimestampMillis != Long.MAX_VALUE && prevTimestamp != Long.MAX_VALUE && asOfTimestampMillis < prevTimestamp) {
+            return docKey
+        }
+        accountTimestampMap[docKey] = asOfTimestampMillis
 
         val acc = FinancialAccount(
             id = docKey,
@@ -1834,7 +1684,8 @@ object LocalAccountDataStore {
         return docKey
     }
 
-    fun deleteAccount(accountId: String) {
+    fun deleteAccount(accountId: String) = synchronized(storeLock) {
+        accountTimestampMap.remove(accountId)
         val updated = accountsFlow.value.filterNot { it.id == accountId }
         accountsFlow.value = updated
         saveAccounts(updated)
