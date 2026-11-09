@@ -8,18 +8,24 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.database.ContentObserver
+import android.net.Uri
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.provider.Telephony
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
 import com.example.MainActivity
 import com.example.R
+import com.example.data.local.LocalAccountSessionManager
 import com.example.data.repository.AxioRepository
 import com.google.firebase.Firebase
 import com.google.firebase.auth.auth
 import com.ritesh.parser.core.TransactionType
 import java.text.NumberFormat
+import java.util.Collections
 import java.util.Locale
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -36,14 +42,18 @@ object TransactionNotificationHelper {
     const val extraTitle = "extra_tx_title"
     const val extraAmount = "extra_tx_amount"
 
+    private val notifiedSignatures: MutableSet<String> =
+        Collections.synchronizedSet(mutableSetOf<String>())
+
     fun ensureChannel(context: Context) {
-        if (Build.VERSION.SDK_INT >= Build.BOARD.length && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(
                 CHANNEL_ID,
                 "Real-Time Expense & Category Alerts",
                 NotificationManager.IMPORTANCE_HIGH
             ).apply {
                 description = "Instant alerts for new SMS transactions with quick category editing"
+                enableVibration(true)
             }
             val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
             manager?.createNotificationChannel(channel)
@@ -99,15 +109,16 @@ object TransactionNotificationHelper {
         val scopeLabel = if (visibility == "SHARED" && householdId.isNotBlank()) "Household Shared" else "Personal"
 
         val builder = NotificationCompat.Builder(context, CHANNEL_ID)
-            .setSmallIcon(R.mipmap.ic_launcher)
+            .setSmallIcon(R.drawable.ic_notification_receipt)
             .setContentTitle("$currencySymbol$formattedAmt • $title")
-            .setContentText("Category: $currentCategory ($scopeLabel) • Tap to edit")
+            .setContentText("New SMS Transaction • Category: $currentCategory ($scopeLabel)")
             .setStyle(
                 NotificationCompat.BigTextStyle().bigText(
-                    "Category: $currentCategory ($scopeLabel)\nTap notification to open full editor, or tap a button below to change category in real time:"
+                    "New SMS Transaction Detected\nCategory: $currentCategory ($scopeLabel)\nTap notification to edit details, or tap a button below to change category:"
                 )
             )
             .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setCategory(NotificationCompat.CATEGORY_MESSAGE)
             .setAutoCancel(true)
             .setContentIntent(contentPendingIntent)
 
@@ -134,11 +145,71 @@ object TransactionNotificationHelper {
             NotificationManagerCompat.from(context).notify(notificationId, builder.build())
         }
     }
+
+    /**
+     * Shared processor used by both `IncomingSmsBroadcastReceiver` (`SMS_RECEIVED`) and
+     * `SmsInboxContentObserver` (`content://sms`) to deduplicate, save, and notify when a new
+     * bank/UPI SMS arrives.
+     */
+    suspend fun processIncomingSmsCandidateAndNotify(
+        context: Context,
+        candidate: SmsCandidate
+    ) {
+        if (!notifiedSignatures.add(candidate.id)) return
+        val appContext = context.applicationContext
+        LocalAccountSessionManager.ensureInitialized(appContext)
+        val firebaseUser = runCatching { Firebase.auth.currentUser }.getOrNull()
+        val localUser = LocalAccountSessionManager.getCurrentUser(appContext)
+        if (firebaseUser == null && localUser == null) return
+
+        val repo = AxioRepository(appContext)
+        val profile = repo.getUserProfileOnce()
+        val household = profile?.activeHouseholdId?.takeIf { it.isNotBlank() }?.let {
+            repo.getHouseholdOnce(it)
+        }
+
+        val parsed = candidate.parsed
+        val isIncome = parsed.type == TransactionType.INCOME
+        val merchantTitle = parsed.merchant?.takeIf { it.isNotBlank() }
+            ?: "${parsed.bankName} ${parsed.type.name.lowercase().replaceFirstChar { it.uppercase() }}"
+        val effectiveShared = household != null
+        val docId = "sms_${candidate.id}"
+
+        val savedResult = repo.addExpense(
+            userName = firebaseUser?.displayName ?: localUser?.displayName ?: profile?.displayName ?: "Member",
+            household = household,
+            title = merchantTitle,
+            amount = parsed.amount.toDouble(),
+            type = if (isIncome) "INCOME" else "EXPENSE",
+            category = candidate.suggestedCategory,
+            accountName = candidate.suggestedAccountName,
+            paymentMode = candidate.suggestedPaymentMode,
+            tags = listOf("sms-auto", parsed.bankName.lowercase().replace(" ", "-")),
+            notes = "[${parsed.sender}] ${parsed.smsBody}".take(500),
+            isShared = effectiveShared,
+            smsSignature = candidate.id,
+            referenceNumber = parsed.reference.orEmpty(),
+            transactionDateMillis = parsed.timestamp,
+            customDocId = docId
+        )
+
+        val expenseIdToNotify = savedResult.getOrDefault(docId)
+        showNewTransactionNotification(
+            context = appContext,
+            expenseId = expenseIdToNotify,
+            householdId = household?.id.orEmpty(),
+            visibility = if (effectiveShared) "SHARED" else "PERSONAL",
+            title = merchantTitle,
+            amount = parsed.amount.toDouble(),
+            currentCategory = candidate.suggestedCategory,
+            currencySymbol = profile?.currencySymbol ?: "₹"
+        )
+    }
 }
 
 /**
  * Handles clicks on the quick category action buttons inside the Android notification
- * and updates the transaction category in Firestore in real time.
+ * and updates the transaction category in real time.
  */
 class NotificationCategoryActionReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
@@ -151,8 +222,9 @@ class NotificationCategoryActionReceiver : BroadcastReceiver() {
         val amountText = intent.getStringExtra(TransactionNotificationHelper.extraAmount).orEmpty()
 
         if (expenseId.isBlank() || newCategory.isBlank()) return
-        val hasSession = Firebase.auth.currentUser != null ||
-            com.example.data.local.LocalAccountSessionManager.getCurrentUser(context) != null
+        LocalAccountSessionManager.ensureInitialized(context.applicationContext)
+        val hasSession = runCatching { Firebase.auth.currentUser }.getOrNull() != null ||
+            LocalAccountSessionManager.getCurrentUser(context) != null
         if (!hasSession) return
 
         val pendingResult = goAsync()
@@ -166,12 +238,11 @@ class NotificationCategoryActionReceiver : BroadcastReceiver() {
                     newCategory = newCategory
                 )
 
-                // Update notification to confirm real-time category change
                 if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
                     ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
                 ) {
                     val updatedBuilder = NotificationCompat.Builder(context, TransactionNotificationHelper.CHANNEL_ID)
-                        .setSmallIcon(R.mipmap.ic_launcher)
+                        .setSmallIcon(R.drawable.ic_notification_receipt)
                         .setContentTitle("$amountText • $title")
                         .setContentText("Category updated to $newCategory ✓")
                         .setPriority(NotificationCompat.PRIORITY_DEFAULT)
@@ -189,15 +260,16 @@ class NotificationCategoryActionReceiver : BroadcastReceiver() {
 }
 
 /**
- * Listens for real-time incoming SMS messages (`SMS_RECEIVED_ACTION`), parses bank/UPI alerts
- * via Cashiro's `BankParserFactory`, saves them to Firestore (Shared Household by default when linked),
- * and posts an interactive notification allowing instant category editing.
+ * Listens for real-time incoming SMS messages (`android.provider.Telephony.SMS_RECEIVED`),
+ * parses bank/UPI alerts, saves them, and posts an interactive notification.
  */
 class IncomingSmsBroadcastReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action != Telephony.Sms.Intents.SMS_RECEIVED_ACTION) return
-        val firebaseUser = Firebase.auth.currentUser
-        val localUser = com.example.data.local.LocalAccountSessionManager.getCurrentUser(context)
+        val appContext = context.applicationContext
+        LocalAccountSessionManager.ensureInitialized(appContext)
+        val firebaseUser = runCatching { Firebase.auth.currentUser }.getOrNull()
+        val localUser = LocalAccountSessionManager.getCurrentUser(appContext)
         if (firebaseUser == null && localUser == null) return
 
         val messages = Telephony.Sms.Intents.getMessagesFromIntent(intent)
@@ -209,7 +281,7 @@ class IncomingSmsBroadcastReceiver : BroadcastReceiver() {
 
         if (sender.isBlank() || fullBody.isBlank()) return
 
-        val reader = SmsInboxReader(context.applicationContext)
+        val reader = SmsInboxReader(appContext)
         val candidate = reader.parseRawSms(
             sender = sender,
             body = fullBody,
@@ -220,51 +292,83 @@ class IncomingSmsBroadcastReceiver : BroadcastReceiver() {
         val pendingResult = goAsync()
         CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
             try {
-                val repo = AxioRepository(context.applicationContext)
-                val profile = repo.getUserProfileOnce()
-                val household = profile?.activeHouseholdId?.takeIf { it.isNotBlank() }?.let {
-                    repo.getHouseholdOnce(it)
-                }
-
-                val parsed = candidate.parsed
-                val isIncome = parsed.type == TransactionType.INCOME
-                val merchantTitle = parsed.merchant?.takeIf { it.isNotBlank() }
-                    ?: "${parsed.bankName} ${parsed.type.name.lowercase().replaceFirstChar { it.uppercase() }}"
-                val effectiveShared = household != null
-                val docId = "sms_${candidate.id}"
-
-                val savedResult = repo.addExpense(
-                    userName = firebaseUser?.displayName ?: localUser?.displayName ?: profile?.displayName ?: "Member",
-                    household = household,
-                    title = merchantTitle,
-                    amount = parsed.amount.toDouble(),
-                    type = if (isIncome) "INCOME" else "EXPENSE",
-                    category = candidate.suggestedCategory,
-                    accountName = candidate.suggestedAccountName,
-                    paymentMode = candidate.suggestedPaymentMode,
-                    tags = listOf("sms-auto", parsed.bankName.lowercase().replace(" ", "-")),
-                    notes = "[${parsed.sender}] ${parsed.smsBody}".take(500),
-                    isShared = effectiveShared,
-                    smsSignature = candidate.id,
-                    referenceNumber = parsed.reference.orEmpty(),
-                    transactionDateMillis = parsed.timestamp,
-                    customDocId = docId
+                TransactionNotificationHelper.processIncomingSmsCandidateAndNotify(
+                    context = appContext,
+                    candidate = candidate
                 )
-
-                savedResult.onSuccess { savedId ->
-                    TransactionNotificationHelper.showNewTransactionNotification(
-                        context = context.applicationContext,
-                        expenseId = savedId,
-                        householdId = household?.id.orEmpty(),
-                        visibility = if (effectiveShared) "SHARED" else "PERSONAL",
-                        title = merchantTitle,
-                        amount = parsed.amount.toDouble(),
-                        currentCategory = candidate.suggestedCategory,
-                        currencySymbol = profile?.currencySymbol ?: "₹"
-                    )
-                }
             } finally {
                 pendingResult.finish()
+            }
+        }
+    }
+}
+
+/**
+ * Observes `content://sms` for newly inserted SMS messages while the app is active so that even
+ * on OEMs where the default messaging app intercepts `SMS_RECEIVED`, newly received bank/UPI
+ * SMS messages are immediately parsed, saved, and notified.
+ */
+class SmsInboxContentObserver(
+    private val context: Context
+) : ContentObserver(Handler(Looper.getMainLooper())) {
+
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private var lastProcessedSmsDateMillis: Long = System.currentTimeMillis() - 5_000L
+
+    override fun onChange(selfChange: Boolean, uri: Uri?) {
+        super.onChange(selfChange, uri)
+        val hasReadSms = ContextCompat.checkSelfPermission(
+            context,
+            Manifest.permission.READ_SMS
+        ) == PackageManager.PERMISSION_GRANTED
+        if (!hasReadSms) return
+
+        scope.launch {
+            runCatching {
+                val projection = arrayOf(
+                    Telephony.Sms.ADDRESS,
+                    Telephony.Sms.BODY,
+                    Telephony.Sms.DATE,
+                    Telephony.Sms.TYPE
+                )
+                context.contentResolver.query(
+                    Telephony.Sms.Inbox.CONTENT_URI,
+                    projection,
+                    "${Telephony.Sms.DATE} > ?",
+                    arrayOf(lastProcessedSmsDateMillis.toString()),
+                    "${Telephony.Sms.DATE} DESC LIMIT 3"
+                )?.use { cursor ->
+                    val addrIdx = cursor.getColumnIndex(Telephony.Sms.ADDRESS)
+                    val bodyIdx = cursor.getColumnIndex(Telephony.Sms.BODY)
+                    val dateIdx = cursor.getColumnIndex(Telephony.Sms.DATE)
+                    if (addrIdx < 0 || bodyIdx < 0 || dateIdx < 0) return@use
+
+                    val reader = SmsInboxReader(context.applicationContext)
+                    var newestSeen = lastProcessedSmsDateMillis
+                    while (cursor.moveToNext()) {
+                        val sender = cursor.getString(addrIdx).orEmpty()
+                        val body = cursor.getString(bodyIdx).orEmpty()
+                        val dateMillis = cursor.getLong(dateIdx)
+                        if (dateMillis > newestSeen) {
+                            newestSeen = dateMillis
+                        }
+                        if (sender.isNotBlank() && body.isNotBlank()) {
+                            val candidate = reader.parseRawSms(
+                                sender = sender,
+                                body = body,
+                                timestamp = dateMillis,
+                                defaultShared = true
+                            )
+                            if (candidate != null) {
+                                TransactionNotificationHelper.processIncomingSmsCandidateAndNotify(
+                                    context = context.applicationContext,
+                                    candidate = candidate
+                                )
+                            }
+                        }
+                    }
+                    lastProcessedSmsDateMillis = newestSeen
+                }
             }
         }
     }

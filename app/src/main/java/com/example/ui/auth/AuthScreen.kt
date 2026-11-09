@@ -440,14 +440,38 @@ fun AuthScreen(
                         }
                     }
 
+                    val usernameError = when {
+                        usernameInput.isEmpty() -> null
+                        usernameInput.trim().length < 2 -> "Username must be at least 2 characters"
+                        usernameInput.trim().length > 40 -> "Username must be 40 characters or fewer"
+                        else -> null
+                    }
+                    val passwordError = when {
+                        passwordInput.isEmpty() -> null
+                        passwordInput.length < 3 -> "Password must be at least 3 characters"
+                        else -> null
+                    }
+                    val displayNameError = when {
+                        !isCreateAccountMode || displayNameInput.isEmpty() -> null
+                        displayNameInput.trim().length < 2 -> "Name must be at least 2 characters"
+                        displayNameInput.trim().length > 50 -> "Name must be 50 characters or fewer"
+                        else -> null
+                    }
+
                     OutlinedTextField(
                         value = usernameInput,
                         onValueChange = {
-                            usernameInput = it
-                            errorMessage = null
+                            if (it.length <= 50) {
+                                usernameInput = it
+                                errorMessage = null
+                            }
                         },
                         label = { Text("Username") },
                         placeholder = { Text("test") },
+                        isError = usernameError != null,
+                        supportingText = if (usernameError != null) {
+                            { Text(usernameError) }
+                        } else null,
                         leadingIcon = {
                             Icon(
                                 imageVector = Icons.Default.Person,
@@ -465,11 +489,17 @@ fun AuthScreen(
                     OutlinedTextField(
                         value = passwordInput,
                         onValueChange = {
-                            passwordInput = it
-                            errorMessage = null
+                            if (it.length <= 64) {
+                                passwordInput = it
+                                errorMessage = null
+                            }
                         },
                         label = { Text("Password") },
                         placeholder = { Text("pass") },
+                        isError = passwordError != null,
+                        supportingText = if (passwordError != null) {
+                            { Text(passwordError) }
+                        } else null,
                         leadingIcon = {
                             Icon(
                                 imageVector = Icons.Default.Key,
@@ -497,8 +527,17 @@ fun AuthScreen(
                     if (isCreateAccountMode) {
                         OutlinedTextField(
                             value = displayNameInput,
-                            onValueChange = { displayNameInput = it },
+                            onValueChange = {
+                                if (it.length <= 50) {
+                                    displayNameInput = it
+                                    errorMessage = null
+                                }
+                            },
                             label = { Text("Name") },
+                            isError = displayNameError != null,
+                            supportingText = if (displayNameError != null) {
+                                { Text(displayNameError) }
+                            } else null,
                             singleLine = true,
                             shape = RoundedCornerShape(16.dp),
                             modifier = Modifier
@@ -510,6 +549,18 @@ fun AuthScreen(
                     Button(
                         onClick = {
                             errorMessage = null
+                            if (usernameInput.isBlank()) {
+                                errorMessage = "Please enter your username."
+                                return@Button
+                            }
+                            if (passwordInput.isBlank()) {
+                                errorMessage = "Please enter your password."
+                                return@Button
+                            }
+                            if (usernameError != null || passwordError != null || displayNameError != null) {
+                                errorMessage = usernameError ?: passwordError ?: displayNameError
+                                return@Button
+                            }
                             val result = if (isCreateAccountMode) {
                                 LocalAccountSessionManager.registerUsernamePassword(
                                     context = context,

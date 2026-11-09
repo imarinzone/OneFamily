@@ -89,6 +89,18 @@ object LocalAccountSessionManager {
         return _activeUser.value
     }
 
+    fun hasCompletedInitialSmsSync(context: Context, userId: String): Boolean {
+        if (userId.isBlank()) return false
+        ensureInitialized(context)
+        return prefs(context).getBoolean("initial_sms_sync_done_$userId", false)
+    }
+
+    fun setInitialSmsSyncCompleted(context: Context, userId: String, completed: Boolean = true) {
+        if (userId.isBlank()) return
+        ensureInitialized(context)
+        prefs(context).edit().putBoolean("initial_sms_sync_done_$userId", completed).apply()
+    }
+
     fun signInWithUsernamePassword(
         context: Context,
         rawUsername: String,
@@ -289,7 +301,13 @@ object LocalAccountDataStore {
         }
     }
 
-    fun cacheSmsMessage(signature: String, sender: String, body: String, timestamp: Long) {
+    fun cacheSmsMessage(
+        signature: String,
+        sender: String,
+        body: String,
+        timestamp: Long,
+        persistImmediately: Boolean = true
+    ) {
         if (signature.isBlank() || body.isBlank()) return
         val current = smsRawMapFlow.value.toMutableMap()
         current[signature] = SmsRawRecord(
@@ -299,7 +317,13 @@ object LocalAccountDataStore {
             timestamp = timestamp
         )
         smsRawMapFlow.value = current
-        saveSmsRawMap(current)
+        if (persistImmediately) {
+            saveSmsRawMap(current)
+        }
+    }
+
+    fun persistSmsRawCache() {
+        saveSmsRawMap(smsRawMapFlow.value)
     }
 
     fun getSmsMessageForTransaction(tx: ExpenseTransaction): SmsRawRecord? {
@@ -882,6 +906,10 @@ object LocalAccountDataStore {
         val effectiveShared = isShared && household != null
         val sanitizedId = category.lowercase().replace(Regex("[^a-z0-9]+"), "_").trim('_').ifBlank { "general" }
         val docId = if (effectiveShared) "sh_${household!!.id}_$sanitizedId" else "pe_${uid}_$sanitizedId"
+        if (monthlyLimit <= 0.0) {
+            deleteCategoryBudget(docId)
+            return docId
+        }
         val memberUids = if (effectiveShared) (household!!.memberUids + uid).distinct() else listOf(uid)
 
         val budget = CategoryBudget(
@@ -889,7 +917,7 @@ object LocalAccountDataStore {
             userId = uid,
             householdId = if (effectiveShared) household!!.id else "",
             category = category.take(60),
-            monthlyLimit = monthlyLimit.coerceAtLeast(1.0),
+            monthlyLimit = monthlyLimit.coerceAtLeast(0.0),
             alertThresholdPercent = alertThresholdPercent.coerceIn(1, 100).toLong(),
             memberUids = memberUids,
             createdAt = Timestamp.now(),
@@ -1238,16 +1266,20 @@ object LocalAccountDataStore {
 
     private fun saveSmsRawMap(map: Map<String, SmsRawRecord>) {
         val arr = JSONArray()
-        map.values.forEach { r ->
-            arr.put(
-                JSONObject().apply {
-                    put("signature", r.signature)
-                    put("sender", r.sender)
-                    put("body", r.body)
-                    put("timestamp", r.timestamp)
-                }
-            )
-        }
+        // Keep up to the 800 most recent SMS bodies so SharedPreferences stays fast and compact
+        map.values
+            .sortedByDescending { it.timestamp }
+            .take(800)
+            .forEach { r ->
+                arr.put(
+                    JSONObject().apply {
+                        put("signature", r.signature)
+                        put("sender", r.sender)
+                        put("body", r.body)
+                        put("timestamp", r.timestamp)
+                    }
+                )
+            }
         prefs()?.edit()?.putString(KEY_SMS_RAW_MAP, arr.toString())?.apply()
     }
 

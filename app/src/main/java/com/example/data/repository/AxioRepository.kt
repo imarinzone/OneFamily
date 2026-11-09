@@ -1057,7 +1057,7 @@ class AxioRepository(private val dbProvider: () -> FirebaseFirestore) {
             "userId" to uid,
             "householdId" to if (effectiveShared) household!!.id else "",
             "category" to category.take(60),
-            "monthlyLimit" to monthlyLimit.coerceAtLeast(1.0),
+            "monthlyLimit" to monthlyLimit.coerceAtLeast(0.0),
             "alertThresholdPercent" to alertThresholdPercent.coerceIn(1, 100),
             "memberUids" to memberUids,
             "createdAt" to FieldValue.serverTimestamp(),

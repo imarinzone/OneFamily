@@ -1,83 +1,67 @@
 # One Family — Smart Personal & Family Expense Tracker
 
-**One Family** is a modern Android personal and family expense management application built with **Kotlin** and **Jetpack Compose (Material 3)**. It automatically detects and imports bank/UPI SMS transactions, supports personal and shared family household ledgers, provides interactive category and payment-mode analytics, and adapts dynamically to every device's screen size.
+**One Family** is a modern Android personal and family expense management application built with **Kotlin** and **Jetpack Compose (Material 3)**. It automatically detects and imports bank/UPI SMS transactions, provides a dedicated first-time SMS sync setup screen with live progress tracking and paced non-blocking background processing, supports personal and shared family household ledgers, enforces comprehensive input validation across all forms, offers category-based and overall budgeting, sends instant notifications when new SMS transactions arrive, and adapts dynamically to every device's screen size.
 
 ---
 
 ## Key Features & Functionality
 
-### 1. Top Month & Year Navigation Header & Gesture Controls
-- **Clean Top Header Bar**:
-  - **Left**: Previous month button (`< MMM`) for one-tap backward navigation.
-  - **Middle**: Current selected **Month & Year** pill (or active custom date range badge with one-tap reset).
-  - **Right**: Next month button (`MMM >`) for one-tap forward navigation.
-  - All extra clutter buttons have been removed from the top bar.
-- **Full-Screen Horizontal Swipe Gestures**:
-  - **Swipe Left / Right near the top bar** to smoothly scroll between previous and next months.
-  - **Swipe Left / Right on the main screen body** to smoothly switch between the 4 main navigation tabs (`Home`, `Analysis`, `Budgets`, `Settings`).
+### 1. First-Time SMS Sync Setup with Live Progress Bar & Non-Blocking Processing
+- **Dedicated First-Time SMS Sync Prompt**:
+  - When setting up an account for the first time (or when manually triggering **Sync SMS** from Settings or Home), the app presents the dedicated **Sync Bank & UPI SMS** screen and stays on that page until all SMS messages are processed.
+- **Live Progress Bar & Detailed Counters**:
+  - Shows a smooth animated progress bar (`0%` – `100%`) alongside live metrics for **SMS Read**, **Remaining**, **Total SMS**, and **Transactions Synced**.
+- **Paced Background Processing (No App Hangs or Crashes)**:
+  - Runs entirely on background coroutines (`Dispatchers.IO`) with paced batch intervals (`65ms` per batch of 10 SMS messages read and `110ms` per batch of transactions saved) and batched disk persistence so the UI stays 60fps responsive and never hangs or crashes on devices with large SMS inboxes.
 
-### 2. Home Screen (`Home`)
-- **Personal & Family Scope Switcher (Exclusive to Home Screen)**:
-  - Switch between **Family Shared** and **Personal** ledgers right from the top of the Home screen.
-- **Floating Add (`+`) Button (Exclusive to Home Screen)**:
-  - The primary `+` Floating Action Button in the floating bottom navigation bar appears only on the Home screen to log new expenses or income.
-- **Monthly Budget Pulse Banner**:
-  - Shows total spent, total income, net flow, and personal vs. shared breakdown for the selected month.
-  - Displays **"Unassigned"** when a monthly budget has not yet been set, and prompts to assign a budget or auto-scales when category budgets are configured.
-- **Search, Date Range & Category Filtering**:
-  - Search transactions by merchant title, category, account, payment mode, or tag.
-  - Filter by **Selected Month**, **Last 7 Days**, **Last 30 Days**, **Last 90 Days**, **All Time**, or pick a **Custom Date Range** (`Start Date` to `End Date`).
-- **Transaction List with Exact Timestamps**:
-  - Every transaction displays its exact date and time (`dd MMM yyyy, hh:mm a`) — no vague `"Today"`, `"Yesterday"`, or `"Day -1"` labels.
-  - Tap any transaction card (or its edit button) to open the **Edit Transaction** modal.
+### 2. Real-Time Incoming SMS Transaction Parsing & Notifications
+- **Dual Real-Time Detection (`BroadcastReceiver` + `ContentObserver`)**:
+  - Listens for `android.provider.Telephony.SMS_RECEIVED` broadcasts via `IncomingSmsBroadcastReceiver` (even when the app is in the background) and observes `content://sms` via `SmsInboxContentObserver` while the app is open.
+- **Instant High-Priority Transaction Notifications**:
+  - Whenever a new bank or UPI SMS arrives and is parsed into a transaction, a high-priority system notification is posted showing the debit/credit amount, merchant/category, and payment mode. Tapping the notification opens the app directly into the **Edit Transaction** sheet for that transaction.
 
-### 3. Exact Timestamp Storage & Original SMS Viewer while Editing
-- **Millisecond-Accurate Date + Time Storage**:
-  - Both new and edited transactions store and preserve the full epoch millisecond timestamp (`transactionDateMillis`), including hours, minutes, and seconds.
-  - `AddTransactionDialog` and `EditTransactionDialog` provide separate **Date (`dd MMM yyyy`)** and **Time (`hh:mm a`)** pickers so changing the date never resets the time-of-day.
-- **Original Bank / UPI SMS Viewer in Edit Transaction Dialog**:
-  - When editing any SMS-imported transaction, the **Original SMS** box automatically displays the sender address (e.g., `VM-HDFCBK`), the exact SMS timestamp (`dd MMM yyyy, hh:mm:ss a`), and the complete raw SMS message body.
-- **Complete Transaction Editing**:
-  - Edit merchant/title, amount, transaction type (`EXPENSE` / `INCOME`), exact date & time, category, bank/card/wallet account, payment mode (`UPI`, `Card`, `Bank Transfer`, `Cash`, `Wallet`), tags, notes, and `Family Shared` vs. `Personal Only` visibility.
+### 3. Category-Based & Overall Monthly Budgets (`Budgets`)
+- **Set Budget per Category**:
+  - Every expense category (`Groceries`, `Food & Dining`, `Rent & Housing`, `Utilities & Bills`, `Transport & Fuel`, `Shopping`, `Healthcare`, `Entertainment`, `Education`, `Travel`, plus any custom category) is listed on the **Budgets** tab with its current monthly spend, assigned category budget limit, utilization progress bar, alert threshold indicator, and a **Set Budget** / **Edit** button.
+  - Supports creating custom category budgets and clearing any category limit (`Clear Limit`).
+- **Overall Monthly Budget & Auto-Scaling**:
+  - Supports setting or clearing both Personal and Family Household monthly budget limits, with automatic upward scaling when combined category budgets exceed the overall limit.
 
-### 4. Interactive Analysis Dashboard (`Analysis`)
-- **Interactive Category Donut Chart**:
-  - Tap any slice on the donut chart or any category chip to select or inspect a category.
-- **Expandable Category Breakdown with Full Transaction List & Editing**:
-  - Shows all categories with their spend amount, percentage of total spend, transaction count, and optional category budget progress.
-  - **Tap any category card** to expand and view **all transactions for that category** during the active period.
-  - **Tap any transaction inside the category breakdown** (or its edit icon) to open the full `EditTransactionDialog` and edit any field of the transaction (not just its category).
-- **Daily Spend Velocity Bar Chart**:
-  - Visualizes daily spending across the month with an optional daily budget target line.
-- **Payment Method & Account Breakdown**:
-  - Summarizes spending across UPI, Credit/Debit Cards, Bank Transfers, Wallets, and Cash.
+### 4. Comprehensive Input Validation Across All Forms
+- **Inline Validation & Sanitization**:
+  - Every text input field across the app includes real-time input sanitization, `isError` highlighting, and descriptive `supportingText` error messages:
+    - **Overall & Category Budget Dialogs**: Validates numeric decimal formatting, non-negative/positive limits, maximum amount bounds, custom category names (`2–40` characters), and currency symbols (`1–5` characters).
+    - **Add & Edit Transaction Sheet**: Validates required title/merchant (`1–80` characters), positive numeric amount, custom category name, custom account name, tags length, and notes length.
+    - **Add Financial Account Dialog**: Validates account nickname (`2–50` characters), bank/issuer name (`2–50` characters), exact 4-digit card/account suffix, numeric current balance, and credit limit.
+    - **Settings & Household Sharing**: Validates user display name (`2–50` characters), household name (`2–50` characters), optional monthly budget, 6-character alphanumeric invite code, and email address format.
+    - **Authentication Screen**: Validates username, password, and display name length and required fields.
 
-### 5. Category & Monthly Budgets (`Budgets`)
-- **Zero-Default Unassigned Budgets**:
-  - Overall and category budgets remain **Unassigned (`0.0`)** until explicitly configured by the user.
-- **Overall & Per-Category Limits**:
-  - Set or clear the overall monthly household budget or individual limits for `Groceries`, `Food & Dining`, `Rent & Housing`, `Utilities & Bills`, `Transport & Fuel`, `Shopping`, `Healthcare`, `Entertainment`, `Education`, and `Travel`.
+### 5. Contextual Top Gesture Date Bar & Full-Bar Swap Animation
+- **Shown Only on Applicable Screens (`Home` & `Analysis`)**:
+  - Automatically appears on date-driven screens (`Home` and `Analysis`) and hides on configuration screens (`Budgets` and `Settings`).
+- **Stacked Year-on-Top & Month-Below Gesture Bar**:
+  - **Left**: Previous month's **Year** on top and `< MMM` below.
+  - **Middle**: Active **Year** on top and full **Month Name** (`MMMM`, e.g., `November`) below, with a bottom gesture handle pill.
+  - **Right**: Next month's **Year** on top and `MMM >` below.
+- **Full-Bar Directional Swapping Animation**:
+  - Swiping horizontally or tapping Previous/Next animates and swaps the **entire bar** (Left, Center, and Right together) with directional horizontal slide + fade transitions and live finger-tracking drag offset.
 
-### 6. Settings, Profile, SMS Sync & Household (`Settings`)
-- **Edit User Name**:
-  - Update your display name directly from the **User Profile** card (`Your Name` input + `Save` button). Changes immediately update your session, profile, and family household member list.
-- **SMS Inbox Auto-Scan (`Sync SMS`)**:
-  - Dedicated **Sync SMS** button with a Sync icon (`Icons.Default.Sync`) in the Settings screen to scan device bank/UPI SMS messages and import new transactions.
-  - Also supports real-time incoming SMS detection (`RECEIVE_SMS`) with instant high-priority notification alerts.
-- **Appearance & Full AMOLED Black Theme**:
-  - Choose between **System**, **Light**, and **AMOLED Dark** (`#000000` pure black background and surfaces for OLED power efficiency).
-- **Bank Accounts, Cards & Wallets**:
-  - Add or remove custom bank accounts, credit/debit cards, and wallets.
-- **Family Household Sharing**:
-  - Create a family household, share the 6-character invite code, or join an existing family household code.
-- **Logout Section**:
-  - Dedicated **Sign Out of Account** card at the bottom of the Settings screen.
+### 6. Home Screen, Exact Timestamps & Original SMS Viewer
+- **Personal & Family Scope Switcher & Floating Add (`+`) Button (Exclusive to Home Screen)**:
+  - Switch between **Family Shared** and **Personal** ledgers and tap `+` to add transactions directly from the Home screen.
+- **Millisecond-Accurate Date + Time Storage & Original SMS Viewer**:
+  - Transactions store and display exact timestamps (`dd MMM yyyy, hh:mm a`).
+  - Editing any SMS-imported transaction displays the **Original SMS** box with sender address, exact SMS timestamp, and full raw SMS body.
 
-### 7. Relative Screen Sizing & Google Default Typography
+### 7. Interactive Analysis Dashboard (`Analysis`)
+- **Interactive Category Donut Chart & Expandable Category Transactions**:
+  - Tap any category to inspect all transactions in that category and tap any transaction to open the full `EditTransactionDialog`.
+
+### 8. Relative Screen Sizing, Google Default Typography & Full AMOLED Black Theme
 - **Screen-Relative Responsive Layout (`LocalAppDimens` & `buildResponsiveTypography`)**:
-  - All typography, padding, card radii, icon sizes, chart dimensions, and floating navigation bar heights scale dynamically as percentages of the device's actual screen width and height (`screenWidthDp` / `screenHeightDp`) rather than fixed constant sizes.
-- **Google Default Fonts**:
-  - Uses Android's native Google default system font family (`FontFamily.Default` / Roboto) across all text styles.
+  - Scales all text, padding, radii, and component dimensions dynamically relative to each phone's screen width and height using Google's default font family (`FontFamily.Default`).
+- **Full AMOLED Black Theme**:
+  - Supports **System**, **Light**, and **AMOLED Dark** (`#000000` pure black background and surfaces).
 
 ---
 

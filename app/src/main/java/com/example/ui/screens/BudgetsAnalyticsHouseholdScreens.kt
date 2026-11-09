@@ -1038,20 +1038,30 @@ fun BudgetsTabScreen(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text(
-                    text = "Categories",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold
-                )
-                IconButton(
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "Category Budgets",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        text = "Tap any category to set or edit its monthly limit",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                OutlinedButton(
                     onClick = { onAddOrEditCategoryBudgetClick(null) },
+                    shape = RoundedCornerShape(50),
                     modifier = Modifier.testTag("add_category_budget_button")
                 ) {
                     Icon(
                         imageVector = Icons.Default.Add,
                         contentDescription = "Set Category Limit",
-                        tint = MaterialTheme.colorScheme.primary
+                        modifier = Modifier.size(dimens.rowIconSize * 0.75f)
                     )
+                    Spacer(modifier = Modifier.width(dimens.horizontalPadding * 0.3f))
+                    Text("Custom Category")
                 }
             }
         }
@@ -1066,12 +1076,14 @@ fun BudgetsTabScreen(
                 item.isNearAlert -> BudgetWarnAmber
                 else -> BudgetSafeGreen
             }
+            val safeTag = item.category.lowercase().replace(Regex("[^a-z0-9]+"), "_")
             Box(modifier = Modifier.padding(horizontal = dimens.horizontalPadding)) {
                 Card(
                     modifier = Modifier
                         .fillMaxWidth()
                         .clip(RoundedCornerShape(dimens.cardCornerRadius))
-                        .clickable { onAddOrEditCategoryBudgetClick(item) },
+                        .clickable { onAddOrEditCategoryBudgetClick(item) }
+                        .testTag("category_budget_card_$safeTag"),
                     shape = RoundedCornerShape(dimens.cardCornerRadius),
                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
                     elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
@@ -1101,24 +1113,49 @@ fun BudgetsTabScreen(
                                 )
                             }
                             Spacer(modifier = Modifier.width(dimens.horizontalPadding * 0.85f))
-                            Text(
-                                text = item.category,
-                                style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.SemiBold,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier.weight(1f)
-                            )
-                            Spacer(modifier = Modifier.width(dimens.horizontalPadding * 0.75f))
-                            Text(
-                                text = formatCurrency(item.spent, currency),
-                                style = MaterialTheme.typography.titleLarge,
-                                fontWeight = FontWeight.Bold,
-                                color = if (item.limit > 0 && item.isOverBudget) barColor else MaterialTheme.colorScheme.onSurface
-                            )
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = item.category,
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.SemiBold,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Text(
+                                    text = if (item.limit > 0.0) {
+                                        "Spent ${formatCurrency(item.spent, currency)} of ${formatCurrency(item.limit, currency)}"
+                                    } else {
+                                        "Spent ${formatCurrency(item.spent, currency)} • Budget not set"
+                                    },
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = if (item.limit > 0.0 && item.isOverBudget) {
+                                        barColor
+                                    } else {
+                                        MaterialTheme.colorScheme.onSurfaceVariant
+                                    }
+                                )
+                            }
+                            Spacer(modifier = Modifier.width(dimens.horizontalPadding * 0.5f))
+                            OutlinedButton(
+                                onClick = { onAddOrEditCategoryBudgetClick(item) },
+                                shape = RoundedCornerShape(50),
+                                modifier = Modifier.testTag("set_category_budget_$safeTag")
+                            ) {
+                                Icon(
+                                    imageVector = if (item.limit > 0.0) Icons.Default.Edit else Icons.Default.Add,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(dimens.rowIconSize * 0.7f)
+                                )
+                                Spacer(modifier = Modifier.width(dimens.horizontalPadding * 0.25f))
+                                Text(
+                                    text = if (item.limit > 0.0) formatCurrency(item.limit, currency) else "Set Budget",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
                         }
 
-                        if (item.limit > 0) {
+                        if (item.limit > 0.0) {
                             Spacer(modifier = Modifier.height(dimens.itemSpacing * 0.8f))
                             LinearProgressIndicator(
                                 progress = { item.progressFraction.coerceIn(0f, 1f) },
@@ -1129,6 +1166,29 @@ fun BudgetsTabScreen(
                                     .height(8.dp)
                                     .clip(RoundedCornerShape(50))
                             )
+                            Spacer(modifier = Modifier.height(dimens.itemSpacing * 0.35f))
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text(
+                                    text = "${item.percentage}% used",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = barColor,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                                val diff = item.limit - item.spent
+                                Text(
+                                    text = if (diff >= 0.0) {
+                                        "${formatCurrency(diff, currency)} remaining"
+                                    } else {
+                                        "Over by ${formatCurrency(-diff, currency)}"
+                                    },
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = if (diff >= 0.0) MaterialTheme.colorScheme.onSurfaceVariant else barColor,
+                                    fontWeight = FontWeight.Medium
+                                )
+                            }
                         }
                     }
                 }
@@ -1240,16 +1300,19 @@ fun HouseholdTabScreen(
                         }
                     }
 
-                    // Edit User Name Row
+                    // Edit User Name Row with Validation
+                    val userNameError = validateDisplayName(editableUserName)
                     Row(
                         modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
+                        verticalAlignment = Alignment.Top,
                         horizontalArrangement = Arrangement.spacedBy(dimens.horizontalPadding * 0.6f)
                     ) {
                         OutlinedTextField(
                             value = editableUserName,
-                            onValueChange = { editableUserName = it },
+                            onValueChange = { editableUserName = it.take(60) },
                             label = { Text("Your Name") },
+                            isError = userNameError != null,
+                            supportingText = userNameError?.let { err -> { Text(err) } },
                             singleLine = true,
                             shape = RoundedCornerShape(dimens.smallCornerRadius),
                             modifier = Modifier
@@ -1258,11 +1321,11 @@ fun HouseholdTabScreen(
                         )
                         Button(
                             onClick = {
-                                if (editableUserName.isNotBlank()) {
+                                if (validateDisplayName(editableUserName) == null) {
                                     onUpdateUserName(editableUserName.trim())
                                 }
                             },
-                            enabled = editableUserName.isNotBlank() && editableUserName.trim() != displayName,
+                            enabled = userNameError == null && editableUserName.trim() != displayName,
                             shape = RoundedCornerShape(dimens.smallCornerRadius),
                             modifier = Modifier
                                 .height(dimens.navPillHeight)
@@ -1484,10 +1547,14 @@ fun HouseholdTabScreen(
                             )
                         }
                         ReceiptDashedDividerLine()
+                        val hhNameError = validateDisplayName(newHouseholdName)
+                        val hhLimitError = validateNonNegativeAmount(newHouseholdLimit)
                         OutlinedTextField(
                             value = newHouseholdName,
-                            onValueChange = { newHouseholdName = it },
+                            onValueChange = { newHouseholdName = it.take(60) },
                             label = { Text("Household Name") },
+                            isError = hhNameError != null,
+                            supportingText = hhNameError?.let { err -> { Text(err) } },
                             singleLine = true,
                             shape = RoundedCornerShape(dimens.smallCornerRadius),
                             modifier = Modifier
@@ -1497,9 +1564,12 @@ fun HouseholdTabScreen(
                         Spacer(modifier = Modifier.height(dimens.itemSpacing * 0.8f))
                         OutlinedTextField(
                             value = newHouseholdLimit,
-                            onValueChange = { newHouseholdLimit = it },
+                            onValueChange = { newHouseholdLimit = sanitizeDecimalInput(it) },
                             label = { Text("Monthly Budget ($currency)") },
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            placeholder = { Text("Optional") },
+                            isError = hhLimitError != null,
+                            supportingText = hhLimitError?.let { err -> { Text(err) } },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                             singleLine = true,
                             shape = RoundedCornerShape(dimens.smallCornerRadius),
                             modifier = Modifier
@@ -1509,9 +1579,12 @@ fun HouseholdTabScreen(
                         Spacer(modifier = Modifier.height(dimens.itemSpacing))
                         Button(
                             onClick = {
-                                val limit = newHouseholdLimit.toDoubleOrNull() ?: 0.0
-                                onCreateHousehold(newHouseholdName, limit)
+                                if (hhNameError == null && hhLimitError == null) {
+                                    val limit = newHouseholdLimit.trim().toDoubleOrNull() ?: 0.0
+                                    onCreateHousehold(newHouseholdName.trim(), limit)
+                                }
                             },
+                            enabled = hhNameError == null && hhLimitError == null,
                             shape = RoundedCornerShape(dimens.smallCornerRadius),
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -1536,10 +1609,19 @@ fun HouseholdTabScreen(
                             fontWeight = FontWeight.Bold
                         )
                         Spacer(modifier = Modifier.height(dimens.itemSpacing))
+                        val joinCodeError = if (joinCodeInput.isNotEmpty()) {
+                            validateHouseholdJoinCode(joinCodeInput)
+                        } else {
+                            null
+                        }
                         OutlinedTextField(
                             value = joinCodeInput,
-                            onValueChange = { joinCodeInput = it.uppercase().take(8) },
-                            label = { Text("Code") },
+                            onValueChange = {
+                                joinCodeInput = it.filter { ch -> ch.isLetterOrDigit() }.uppercase().take(6)
+                            },
+                            label = { Text("6-Character Invite Code") },
+                            isError = joinCodeError != null,
+                            supportingText = joinCodeError?.let { err -> { Text(err) } },
                             singleLine = true,
                             shape = RoundedCornerShape(dimens.smallCornerRadius),
                             modifier = Modifier
@@ -1549,11 +1631,11 @@ fun HouseholdTabScreen(
                         Spacer(modifier = Modifier.height(dimens.itemSpacing))
                         Button(
                             onClick = {
-                                if (joinCodeInput.isNotBlank()) {
-                                    onJoinByCode(joinCodeInput)
+                                if (validateHouseholdJoinCode(joinCodeInput) == null) {
+                                    onJoinByCode(joinCodeInput.trim())
                                 }
                             },
-                            enabled = joinCodeInput.trim().length >= 4,
+                            enabled = validateHouseholdJoinCode(joinCodeInput) == null,
                             shape = RoundedCornerShape(dimens.smallCornerRadius),
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -1642,15 +1724,22 @@ fun HouseholdTabScreen(
 
                         Spacer(modifier = Modifier.height(dimens.itemSpacing))
 
+                        val inviteEmailError = if (inviteEmailInput.isNotEmpty()) {
+                            validateEmailAddress(inviteEmailInput)
+                        } else {
+                            null
+                        }
                         Row(
                             modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically,
+                            verticalAlignment = Alignment.Top,
                             horizontalArrangement = Arrangement.spacedBy(dimens.horizontalPadding * 0.6f)
                         ) {
                             OutlinedTextField(
                                 value = inviteEmailInput,
-                                onValueChange = { inviteEmailInput = it },
-                                label = { Text("Email") },
+                                onValueChange = { inviteEmailInput = it.trim().take(120) },
+                                label = { Text("Email Address") },
+                                isError = inviteEmailError != null,
+                                supportingText = inviteEmailError?.let { err -> { Text(err) } },
                                 leadingIcon = {
                                     Icon(Icons.Default.PersonAdd, contentDescription = null)
                                 },
@@ -1662,13 +1751,16 @@ fun HouseholdTabScreen(
                             )
                             Button(
                                 onClick = {
-                                    if (inviteEmailInput.contains("@")) {
-                                        onInviteByEmail(inviteEmailInput)
+                                    if (validateEmailAddress(inviteEmailInput) == null) {
+                                        onInviteByEmail(inviteEmailInput.trim())
                                         inviteEmailInput = ""
                                     }
                                 },
+                                enabled = validateEmailAddress(inviteEmailInput) == null,
                                 shape = RoundedCornerShape(dimens.smallCornerRadius),
-                                modifier = Modifier.testTag("send_email_invite_button")
+                                modifier = Modifier
+                                    .height(dimens.navPillHeight)
+                                    .testTag("send_email_invite_button")
                             ) {
                                 Text("Invite")
                             }

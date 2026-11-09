@@ -280,11 +280,12 @@ fun CustomDateRangePickerModal(
 }
 
 /**
- * Top Month & Year Switcher Header:
- * - Left: Previous Month (`< Oct`)
- * - Middle: Current Selected Month & Year (`Nov 2026`)
- * - Right: Next Month (`Dec >`)
- * - Supports horizontal swipe gestures to smoothly step between months, plus optional date range chips.
+ * Top Gesture Date Bar (`MonthPeriodSelectorBar`):
+ * - Gesture-driven bar where the Year is displayed on top and the Month name is displayed below.
+ * - Left: Previous Year (top) & `< PrevMonth` (bottom)
+ * - Middle: Current Year (top) & Full Month Name (bottom)
+ * - Right: Next Year (top) & `NextMonth >` (bottom)
+ * - Full-bar directional swapping animation (`AnimatedContent` wrapping the entire bar) plus live finger-tracking drag offset.
  */
 @Composable
 fun MonthPeriodSelectorBar(
@@ -303,17 +304,15 @@ fun MonthPeriodSelectorBar(
 ) {
     val dimens = LocalAppDimens.current
     val activePeriod = selectedPeriod ?: YearMonthPeriod.current()
-    val prevPeriod = activePeriod.previousMonth()
-    val nextPeriod = activePeriod.nextMonth()
-    val centerMonthYearLabel = if (selectedDateRangePreset == DateRangePreset.MONTH) {
-        activePeriod.formatDisplay()
-    } else {
-        periodLabel
-    }
 
     var showCustomRangePicker by rememberSaveable { mutableStateOf(false) }
     var dragAccumulated by remember { mutableFloatStateOf(0f) }
     var barWidthPx by remember { mutableFloatStateOf(1f) }
+    val animatedDragOffset by animateFloatAsState(
+        targetValue = dragAccumulated * 0.35f,
+        animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
+        label = "gesture_bar_drag_offset"
+    )
 
     Column(
         modifier = Modifier
@@ -321,10 +320,11 @@ fun MonthPeriodSelectorBar(
             .padding(horizontal = dimens.horizontalPadding),
         verticalArrangement = Arrangement.spacedBy(dimens.itemSpacing * 0.65f)
     ) {
-        // Top Header: Left = Previous Month, Middle = Current Month & Year, Right = Next Month
+        // Gesture Date Bar: Entire bar animates/swaps together, with Year on top and Month name below
         Surface(
-            shape = RoundedCornerShape(50),
-            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f),
+            shape = RoundedCornerShape(dimens.cardCornerRadius * 1.15f),
+            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.72f),
+            tonalElevation = 2.dp,
             modifier = Modifier
                 .fillMaxWidth()
                 .onSizeChanged { barWidthPx = it.width.toFloat().coerceAtLeast(1f) }
@@ -335,8 +335,9 @@ fun MonthPeriodSelectorBar(
                             change.consume()
                             dragAccumulated += dragAmount
                         },
+                        onDragCancel = { dragAccumulated = 0f },
                         onDragEnd = {
-                            val swipeThreshold = barWidthPx * 0.12f
+                            val swipeThreshold = barWidthPx * 0.10f
                             if (dragAccumulated > swipeThreshold) {
                                 onStepMonth(-1)
                             } else if (dragAccumulated < -swipeThreshold) {
@@ -348,118 +349,175 @@ fun MonthPeriodSelectorBar(
                 }
                 .testTag("top_month_switcher_bar")
         ) {
-            Row(
+            AnimatedContent(
+                targetState = Triple(activePeriod, selectedDateRangePreset, periodLabel),
+                transitionSpec = {
+                    val movingForward = targetState.first >= initialState.first
+                    val enterSlide = slideInHorizontally(
+                        animationSpec = spring(
+                            dampingRatio = Spring.DampingRatioNoBouncy,
+                            stiffness = Spring.StiffnessMediumLow
+                        ),
+                        initialOffsetX = { fullWidth -> if (movingForward) fullWidth else -fullWidth }
+                    ) + fadeIn()
+                    val exitSlide = slideOutHorizontally(
+                        animationSpec = spring(
+                            dampingRatio = Spring.DampingRatioNoBouncy,
+                            stiffness = Spring.StiffnessMediumLow
+                        ),
+                        targetOffsetX = { fullWidth -> if (movingForward) -fullWidth else fullWidth }
+                    ) + fadeOut()
+                    enterSlide.togetherWith(exitSlide)
+                },
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(
-                        horizontal = dimens.horizontalPadding * 0.5f,
-                        vertical = dimens.itemSpacing * 0.45f
-                    ),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                // Left: Previous Month
-                Row(
-                    modifier = Modifier
-                        .weight(1f)
-                        .clip(RoundedCornerShape(50))
-                        .clickable { onStepMonth(-1) }
-                        .padding(
-                            horizontal = dimens.horizontalPadding * 0.5f,
-                            vertical = dimens.itemSpacing * 0.45f
-                        )
-                        .testTag("prev_month_button"),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.Start
-                ) {
-                    Icon(
-                        imageVector = Icons.AutoMirrored.Filled.KeyboardArrowLeft,
-                        contentDescription = "Previous Month",
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.size(dimens.rowIconSize * 0.85f)
-                    )
-                    Spacer(modifier = Modifier.width(dimens.horizontalPadding * 0.2f))
-                    Text(
-                        text = prevPeriod.formatShortMonth(),
-                        style = MaterialTheme.typography.labelLarge,
-                        fontWeight = FontWeight.Medium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1
-                    )
+                    .offset { IntOffset(animatedDragOffset.roundToInt(), 0) },
+                label = "full_bar_month_swap_animation"
+            ) { (periodState, presetState, labelState) ->
+                val prevPeriod = periodState.previousMonth()
+                val nextPeriod = periodState.nextMonth()
+                val topYearLabel = if (presetState == DateRangePreset.MONTH) {
+                    periodState.year.toString()
+                } else {
+                    presetState.label
+                }
+                val bottomMonthLabel = if (presetState == DateRangePreset.MONTH) {
+                    periodState.formatFullMonth()
+                } else {
+                    labelState
                 }
 
-                // Middle: Current Selected Month & Year
-                Surface(
-                    shape = RoundedCornerShape(50),
-                    color = MaterialTheme.colorScheme.primaryContainer,
+                Column(
                     modifier = Modifier
-                        .clip(RoundedCornerShape(50))
-                        .clickable {
-                            showCustomRangePicker = true
-                        }
-                        .testTag("center_month_year_pill")
+                        .fillMaxWidth()
+                        .padding(
+                            horizontal = dimens.horizontalPadding * 0.45f,
+                            vertical = dimens.itemSpacing * 0.45f
+                        ),
+                    horizontalAlignment = Alignment.CenterHorizontally
                 ) {
                     Row(
-                        modifier = Modifier.padding(
-                            horizontal = dimens.horizontalPadding * 0.9f,
-                            vertical = dimens.itemSpacing * 0.55f
-                        ),
+                        modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.Center
+                        horizontalArrangement = Arrangement.SpaceBetween
                     ) {
-                        Icon(
-                            imageVector = Icons.Default.CalendarMonth,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(dimens.rowIconSize * 0.75f)
-                        )
-                        Spacer(modifier = Modifier.width(dimens.horizontalPadding * 0.35f))
-                        AnimatedContent(
-                            targetState = centerMonthYearLabel,
-                            transitionSpec = {
-                                (slideInHorizontally { width -> width / 2 } + fadeIn())
-                                    .togetherWith(slideOutHorizontally { width -> -width / 2 } + fadeOut())
-                            },
-                            label = "smooth_month_label"
-                        ) { targetLabel ->
+                        // Left: Previous Month (Year on top, < Month below)
+                        Column(
+                            modifier = Modifier
+                                .weight(1f)
+                                .clip(RoundedCornerShape(dimens.smallCornerRadius))
+                                .clickable { onStepMonth(-1) }
+                                .padding(
+                                    horizontal = dimens.horizontalPadding * 0.45f,
+                                    vertical = dimens.itemSpacing * 0.35f
+                                )
+                                .testTag("prev_month_button"),
+                            horizontalAlignment = Alignment.Start
+                        ) {
                             Text(
-                                text = targetLabel,
-                                style = MaterialTheme.typography.titleSmall,
-                                fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                text = prevPeriod.year.toString(),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
                                 maxLines = 1
                             )
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(
+                                    imageVector = Icons.AutoMirrored.Filled.KeyboardArrowLeft,
+                                    contentDescription = "Previous Month",
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.size(dimens.rowIconSize * 0.78f)
+                                )
+                                Spacer(modifier = Modifier.width(dimens.horizontalPadding * 0.12f))
+                                Text(
+                                    text = prevPeriod.formatShortMonth(),
+                                    style = MaterialTheme.typography.labelLarge,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1
+                                )
+                            }
+                        }
+
+                        // Middle: Current Selected Period (Year on top, Month Name below)
+                        Surface(
+                            shape = RoundedCornerShape(dimens.cardCornerRadius),
+                            color = MaterialTheme.colorScheme.primaryContainer,
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(dimens.cardCornerRadius))
+                                .clickable { showCustomRangePicker = true }
+                                .testTag("center_month_year_pill")
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(
+                                    horizontal = dimens.horizontalPadding * 1.15f,
+                                    vertical = dimens.itemSpacing * 0.45f
+                                ),
+                                horizontalAlignment = Alignment.CenterHorizontally
+                            ) {
+                                Text(
+                                    text = topYearLabel,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    maxLines = 1
+                                )
+                                Text(
+                                    text = bottomMonthLabel,
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                    maxLines = 1
+                                )
+                            }
+                        }
+
+                        // Right: Next Month (Year on top, Month > below)
+                        Column(
+                            modifier = Modifier
+                                .weight(1f)
+                                .clip(RoundedCornerShape(dimens.smallCornerRadius))
+                                .clickable { onStepMonth(1) }
+                                .padding(
+                                    horizontal = dimens.horizontalPadding * 0.45f,
+                                    vertical = dimens.itemSpacing * 0.35f
+                                )
+                                .testTag("next_month_button"),
+                            horizontalAlignment = Alignment.End
+                        ) {
+                            Text(
+                                text = nextPeriod.year.toString(),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                                maxLines = 1
+                            )
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    text = nextPeriod.formatShortMonth(),
+                                    style = MaterialTheme.typography.labelLarge,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1
+                                )
+                                Spacer(modifier = Modifier.width(dimens.horizontalPadding * 0.12f))
+                                Icon(
+                                    imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                                    contentDescription = "Next Month",
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.size(dimens.rowIconSize * 0.78f)
+                                )
+                            }
                         }
                     }
-                }
 
-                // Right: Next Month
-                Row(
-                    modifier = Modifier
-                        .weight(1f)
-                        .clip(RoundedCornerShape(50))
-                        .clickable { onStepMonth(1) }
-                        .padding(
-                            horizontal = dimens.horizontalPadding * 0.5f,
-                            vertical = dimens.itemSpacing * 0.45f
-                        )
-                        .testTag("next_month_button"),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.End
-                ) {
-                    Text(
-                        text = nextPeriod.formatShortMonth(),
-                        style = MaterialTheme.typography.labelLarge,
-                        fontWeight = FontWeight.Medium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1
-                    )
-                    Spacer(modifier = Modifier.width(dimens.horizontalPadding * 0.2f))
-                    Icon(
-                        imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
-                        contentDescription = "Next Month",
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.size(dimens.rowIconSize * 0.85f)
+                    Spacer(modifier = Modifier.height(dimens.itemSpacing * 0.3f))
+
+                    // Subtle Gesture Pill Handle at the bottom of the gesture bar
+                    Box(
+                        modifier = Modifier
+                            .width(dimens.screenWidth * 0.11f)
+                            .height(3.dp)
+                            .clip(CircleShape)
+                            .background(MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.32f))
                     )
                 }
             }

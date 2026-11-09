@@ -34,6 +34,9 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 
 enum class DateRangePreset(val label: String) {
     MONTH("Current Month"),
@@ -48,7 +51,15 @@ enum class DateRangePreset(val label: String) {
 data class YearMonthPeriod(
     val year: Int,
     val month: Int // 0..11 (Calendar.MONTH)
-) {
+) : Comparable<YearMonthPeriod> {
+    override fun compareTo(other: YearMonthPeriod): Int {
+        return if (year != other.year) {
+            year.compareTo(other.year)
+        } else {
+            month.compareTo(other.month)
+        }
+    }
+
     fun formatDisplay(): String {
         val cal = Calendar.getInstance().apply {
             set(Calendar.YEAR, year)
@@ -56,6 +67,15 @@ data class YearMonthPeriod(
             set(Calendar.DAY_OF_MONTH, 1)
         }
         return SimpleDateFormat("MMM yyyy", Locale.getDefault()).format(cal.time)
+    }
+
+    fun formatFullMonth(): String {
+        val cal = Calendar.getInstance().apply {
+            set(Calendar.YEAR, year)
+            set(Calendar.MONTH, month)
+            set(Calendar.DAY_OF_MONTH, 1)
+        }
+        return SimpleDateFormat("MMMM", Locale.getDefault()).format(cal.time)
     }
 
     fun formatShortMonth(): String {
@@ -131,6 +151,28 @@ data class CategorySpendProgress(
         get() = limit > 0 && percentage >= alertThresholdPercent && !isOverBudget
 }
 
+data class SmsSyncProgressState(
+    val isSyncing: Boolean = false,
+    val isCompleted: Boolean = false,
+    val totalSmsCount: Int = 0,
+    val readSmsCount: Int = 0,
+    val matchedTransactionsCount: Int = 0,
+    val savedTransactionsCount: Int = 0,
+    val statusMessage: String = ""
+) {
+    val remainingSmsCount: Int
+        get() = (totalSmsCount - readSmsCount).coerceAtLeast(0)
+
+    val progressFraction: Float
+        get() = if (totalSmsCount > 0) {
+            (readSmsCount.toFloat() / totalSmsCount.toFloat()).coerceIn(0f, 1f)
+        } else if (isCompleted) {
+            1f
+        } else {
+            0f
+        }
+}
+
 data class AxioDashboardUiState(
     val isLoading: Boolean = true,
     val userProfile: UserProfile? = null,
@@ -195,12 +237,12 @@ class AxioViewModel(
     private val _sortOrder = MutableStateFlow("NEWEST")
     private val _customCategories = MutableStateFlow<List<String>>(emptyList())
     private val _smsCandidates = MutableStateFlow<List<SmsCandidate>>(emptyList())
+    private val _smsSyncProgress = MutableStateFlow(SmsSyncProgressState())
     private val _statusBanner = MutableStateFlow<String?>(null)
     private val _errorMessage = MutableStateFlow<String?>(null)
 
-    private var hasAutoScannedSmsThisSession = false
-
     val smsCandidates: StateFlow<List<SmsCandidate>> = _smsCandidates.asStateFlow()
+    val smsSyncProgress: StateFlow<SmsSyncProgressState> = _smsSyncProgress.asStateFlow()
 
     init {
         viewModelScope.launch {
@@ -469,8 +511,14 @@ class AxioViewModel(
             .filter { it.isNotBlank() }
             .distinctBy { it.lowercase() }
 
-        val categoriesInPlay = (activeBudgets.map { it.category } + periodExpensesOnly.map { it.category })
-            .filter { it.isNotBlank() }
+        val categoriesInPlay = (
+            ExpenseCategories.EXPENSE_ONLY +
+                filter.customCategories +
+                activeBudgets.map { it.category } +
+                periodExpensesOnly.map { it.category }
+            )
+            .map { it.trim() }
+            .filter { it.isNotBlank() && !it.equals("Salary & Income", ignoreCase = true) }
             .distinctBy { it.lowercase() }
 
         val categoryProgressList = categoriesInPlay.map { category ->
@@ -489,7 +537,12 @@ class AxioViewModel(
                 budgetDoc = budgetDoc,
                 memberBreakdown = memberBreakdown
             )
-        }.sortedByDescending { it.spent }
+        }.sortedWith(
+            compareByDescending<CategorySpendProgress> { it.spent > 0.0 || it.limit > 0.0 }
+                .thenByDescending { it.spent }
+                .thenByDescending { it.limit }
+                .thenBy { it.category }
+        )
 
         // Build 6-Month Spending Bar Graph points ending at anchor month
         val anchorPeriod = selectedPeriod
@@ -726,51 +779,89 @@ class AxioViewModel(
         _errorMessage.value = null
     }
 
-    // --- AUTOMATIC FULL SMS INBOX SYNC & REAL-TIME NOTIFICATION ---
+    // --- PACED BACKGROUND SMS INBOX SYNC WITH PROGRESS & REAL-TIME NOTIFICATION ---
 
-    fun autoScanSmsOnLaunchIfNeeded(context: Context) {
-        if (hasAutoScannedSmsThisSession) return
-        hasAutoScannedSmsThisSession = true
-        scanDeviceSmsInbox(context = context, silentIfEmpty = true, notifyNewest = false)
+    fun resetSmsSyncProgress() {
+        _smsSyncProgress.value = SmsSyncProgressState()
     }
 
     fun scanDeviceSmsInbox(
         context: Context? = null,
         silentIfEmpty: Boolean = false,
-        notifyNewest: Boolean = true
+        notifyNewest: Boolean = true,
+        onComplete: (() -> Unit)? = null
     ) {
-        viewModelScope.launch {
-            // Ensure profile exists before syncing SMS
-            runCatching {
-                repository.ensureUserProfile(
-                    displayName = currentUserName,
-                    email = currentUserEmail
+        if (_smsSyncProgress.value.isSyncing) return
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                _smsSyncProgress.value = SmsSyncProgressState(
+                    isSyncing = true,
+                    isCompleted = false,
+                    totalSmsCount = 0,
+                    readSmsCount = 0,
+                    matchedTransactionsCount = 0,
+                    savedTransactionsCount = 0,
+                    statusMessage = "Preparing SMS inbox scan..."
                 )
-            }
 
-            val state = uiState.value
-            val existingSignatures = (state.personalExpenses + state.sharedExpenses)
-                .mapNotNull { it.smsSignature.takeIf { sig -> sig.isNotBlank() } }
-                .toSet()
+                // Ensure profile exists before syncing SMS
+                runCatching {
+                    repository.ensureUserProfile(
+                        displayName = currentUserName,
+                        email = currentUserEmail
+                    )
+                }
 
-            val discovered = smsInboxReader.scanDeviceSmsInbox(existingSignatures)
-            if (discovered.isNotEmpty()) {
+                val state = uiState.value
+                val existingSignatures = (state.personalExpenses + state.sharedExpenses)
+                    .mapNotNull { it.smsSignature.takeIf { sig -> sig.isNotBlank() } }
+                    .toSet()
+
+                val discovered = smsInboxReader.scanDeviceSmsInboxWithProgress(
+                    existingSignatures = existingSignatures,
+                    batchSize = 10,
+                    perBatchDelayMs = 65L,
+                    onProgress = { readCount, totalCount, matchedCount ->
+                        val remaining = (totalCount - readCount).coerceAtLeast(0)
+                        _smsSyncProgress.value = _smsSyncProgress.value.copy(
+                            isSyncing = true,
+                            totalSmsCount = totalCount,
+                            readSmsCount = readCount,
+                            matchedTransactionsCount = matchedCount,
+                            statusMessage = "Reading SMS: $readCount read • $remaining remaining"
+                        )
+                    }
+                )
+
+                var totalImported = 0
                 val userName = currentUserName.ifBlank { state.userProfile?.displayName ?: "Me" }
                 val household = state.household ?: repository.getUserProfileOnce()
                     ?.activeHouseholdId
                     ?.takeIf { it.isNotBlank() }
                     ?.let { repository.getHouseholdOnce(it) }
 
-                val importResult = repository.batchImportSmsCandidates(
-                    candidates = discovered,
-                    userName = userName,
-                    household = household,
-                    shareByDefault = true
-                )
+                if (discovered.isNotEmpty()) {
+                    val chunks = discovered.chunked(12)
+                    for (chunk in chunks) {
+                        _smsSyncProgress.value = _smsSyncProgress.value.copy(
+                            statusMessage = "Saving transactions (${totalImported}/${discovered.size})..."
+                        )
+                        val chunkResult = repository.batchImportSmsCandidates(
+                            candidates = chunk,
+                            userName = userName,
+                            household = household,
+                            shareByDefault = true
+                        )
+                        totalImported += chunkResult.getOrDefault(0)
+                        _smsSyncProgress.value = _smsSyncProgress.value.copy(
+                            savedTransactionsCount = totalImported,
+                            statusMessage = "Saved $totalImported of ${discovered.size} transactions..."
+                        )
+                        delay(110L)
+                    }
 
-                importResult.onSuccess { importedCount ->
                     _smsCandidates.value = emptyList()
-                    if (importedCount > 0) {
+                    if (totalImported > 0) {
                         val currentPeriod = _selectedPeriod.value
                         val hasCurrentMonthTx = discovered.any {
                             YearMonthPeriod.fromMillis(it.parsed.timestamp) == currentPeriod
@@ -783,7 +874,7 @@ class AxioViewModel(
                             }
                         }
 
-                        _statusBanner.value = "Synced $importedCount new SMS receipts."
+                        _statusBanner.value = "Synced $totalImported new SMS receipts."
 
                         if (notifyNewest && context != null) {
                             val newest = discovered.maxByOrNull { it.parsed.timestamp }
@@ -806,18 +897,51 @@ class AxioViewModel(
                     } else if (!silentIfEmpty) {
                         _statusBanner.value = "All bank SMS receipts are up to date."
                     }
-                }.onFailure { err ->
-                    if (!silentIfEmpty) {
-                        _errorMessage.value = err.localizedMessage ?: "Failed to sync SMS receipts."
+                } else if (!silentIfEmpty) {
+                    val totalExistingSms = (state.personalExpenses + state.sharedExpenses)
+                        .count { it.smsSignature.isNotBlank() }
+                    _statusBanner.value = if (totalExistingSms > 0) {
+                        "All $totalExistingSms SMS receipts are synced."
+                    } else {
+                        "No new bank/UPI SMS found."
                     }
                 }
-            } else if (!silentIfEmpty) {
-                val totalExistingSms = (state.personalExpenses + state.sharedExpenses)
-                    .count { it.smsSignature.isNotBlank() }
-                _statusBanner.value = if (totalExistingSms > 0) {
-                    "All $totalExistingSms SMS receipts are synced."
-                } else {
-                    "No new bank/UPI SMS found."
+
+                if (context != null) {
+                    com.example.data.local.LocalAccountSessionManager.setInitialSmsSyncCompleted(
+                        context = context,
+                        userId = currentUserId,
+                        completed = true
+                    )
+                }
+
+                val finalRead = _smsSyncProgress.value.readSmsCount
+                val finalTotal = _smsSyncProgress.value.totalSmsCount
+                _smsSyncProgress.value = _smsSyncProgress.value.copy(
+                    isSyncing = false,
+                    isCompleted = true,
+                    readSmsCount = finalTotal.coerceAtLeast(finalRead),
+                    savedTransactionsCount = totalImported,
+                    statusMessage = if (totalImported > 0) {
+                        "Completed! Read $finalTotal SMS and synced $totalImported transactions."
+                    } else {
+                        "Completed! Read $finalTotal SMS messages. All transactions are up to date."
+                    }
+                )
+            } catch (e: Exception) {
+                if (!silentIfEmpty) {
+                    _errorMessage.value = e.localizedMessage ?: "Failed to sync SMS receipts."
+                }
+                _smsSyncProgress.value = _smsSyncProgress.value.copy(
+                    isSyncing = false,
+                    isCompleted = true,
+                    statusMessage = "Sync finished."
+                )
+            } finally {
+                if (onComplete != null) {
+                    withContext(Dispatchers.Main) {
+                        onComplete()
+                    }
                 }
             }
         }
@@ -1137,16 +1261,37 @@ class AxioViewModel(
         isShared: Boolean
     ) {
         viewModelScope.launch {
-            addCustomCategory(category)
-            val household = uiState.value.household
+            val cleanCategory = category.trim()
+            if (cleanCategory.isBlank()) {
+                _errorMessage.value = "Please select or enter a valid category."
+                return@launch
+            }
+            addCustomCategory(cleanCategory)
+            val state = uiState.value
+            val household = state.household
+            if (monthlyLimit <= 0.0) {
+                val existingDoc = state.categoryProgressList
+                    .firstOrNull { it.category.equals(cleanCategory, ignoreCase = true) }
+                    ?.budgetDoc
+                if (existingDoc != null) {
+                    repository.deleteCategoryBudget(existingDoc, isShared)
+                        .onSuccess {
+                            _statusBanner.value = "Cleared $cleanCategory budget limit."
+                        }
+                        .onFailure { err ->
+                            _errorMessage.value = err.localizedMessage ?: "Failed to clear budget."
+                        }
+                }
+                return@launch
+            }
             repository.saveCategoryBudget(
-                category = category,
+                category = cleanCategory,
                 monthlyLimit = monthlyLimit,
-                alertThresholdPercent = alertThresholdPercent,
+                alertThresholdPercent = alertThresholdPercent.coerceIn(10, 100),
                 isShared = isShared,
                 household = household
             ).onSuccess {
-                _statusBanner.value = "Updated $category budget."
+                _statusBanner.value = "Updated $cleanCategory budget."
             }.onFailure { err ->
                 _errorMessage.value = err.localizedMessage ?: "Failed to save budget."
             }

@@ -38,6 +38,7 @@ import androidx.compose.material.icons.filled.Groups
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Message
 import androidx.compose.material.icons.filled.Palette
+import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -47,6 +48,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -89,11 +91,87 @@ import com.example.ui.theme.LocalAppDimens
 import com.example.ui.theme.PersonalBadgeTeal
 import com.example.ui.theme.categoryAccentColor
 import com.example.ui.viewmodel.CategorySpendProgress
+import com.example.ui.viewmodel.SmsSyncProgressState
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
 import java.util.Locale
 import java.util.TimeZone
+import kotlin.math.roundToInt
+
+/**
+ * Sanitizes numeric decimal text input so only digits and at most one decimal point (up to 2 decimal places) are accepted.
+ */
+internal fun sanitizeDecimalInput(raw: String, maxIntegerDigits: Int = 9): String {
+    val filtered = raw.filter { it.isDigit() || it == '.' }
+    val parts = filtered.split('.')
+    val intPart = parts.firstOrNull().orEmpty().take(maxIntegerDigits)
+    return if (parts.size > 1) {
+        val decPart = parts.drop(1).joinToString("").take(2)
+        "$intPart.$decPart"
+    } else {
+        intPart
+    }
+}
+
+internal fun validatePositiveAmount(raw: String, maxAllowed: Double = 100_000_000.0): String? {
+    val trimmed = raw.trim()
+    if (trimmed.isEmpty()) return "Please enter an amount."
+    val value = trimmed.toDoubleOrNull() ?: return "Enter a valid numeric amount."
+    if (value <= 0.0) return "Amount must be greater than 0."
+    if (value > maxAllowed) return "Amount cannot exceed ${maxAllowed.toLong()}."
+    return null
+}
+
+internal fun validateNonNegativeAmount(raw: String, maxAllowed: Double = 100_000_000.0): String? {
+    val trimmed = raw.trim()
+    if (trimmed.isEmpty()) return null // Empty means unassigned (0.0)
+    val value = trimmed.toDoubleOrNull() ?: return "Enter a valid numeric amount."
+    if (value < 0.0) return "Amount cannot be negative."
+    if (value > maxAllowed) return "Amount cannot exceed ${maxAllowed.toLong()}."
+    return null
+}
+
+internal fun validateCategoryName(raw: String): String? {
+    val trimmed = raw.trim()
+    if (trimmed.isEmpty()) return "Category name cannot be empty."
+    if (trimmed.length < 2) return "Category name must be at least 2 characters."
+    if (trimmed.length > 40) return "Category name must be 40 characters or fewer."
+    if (!trimmed.any { it.isLetter() }) return "Category name must contain letters."
+    return null
+}
+
+internal fun validateCurrencySymbol(raw: String): String? {
+    val trimmed = raw.trim()
+    if (trimmed.isEmpty()) return "Enter a currency symbol (e.g. ₹ or $)."
+    if (trimmed.length > 4) return "Currency symbol must be 1–4 characters."
+    if (trimmed.any { it.isDigit() }) return "Currency symbol cannot contain numbers."
+    return null
+}
+
+internal fun validateDisplayName(raw: String): String? {
+    val trimmed = raw.trim()
+    if (trimmed.isEmpty()) return "Name cannot be empty."
+    if (trimmed.length < 2) return "Name must be at least 2 characters."
+    if (trimmed.length > 60) return "Name must be 60 characters or fewer."
+    return null
+}
+
+internal fun validateEmailAddress(raw: String): String? {
+    val trimmed = raw.trim()
+    if (trimmed.isEmpty()) return "Email address cannot be empty."
+    val emailRegex = Regex("^[^@\\s]+@[^@\\s]+\\.[^@\\s]{2,}$")
+    if (!emailRegex.matches(trimmed)) return "Enter a valid email address."
+    return null
+}
+
+internal fun validateHouseholdJoinCode(raw: String): String? {
+    val trimmed = raw.trim().uppercase()
+    if (trimmed.length != 6 || !trimmed.all { it.isLetterOrDigit() }) {
+        return "Enter a valid 6-character household code."
+    }
+    return null
+}
 
 private fun formatExactDate(millis: Long): String {
     return SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date(millis))
@@ -377,32 +455,51 @@ private fun InteractiveReceiptSheet(
 
                     ReceiptDashedDividerLine()
 
+                    var attemptedSubmit by remember { mutableStateOf(false) }
+                    val amountError = if (attemptedSubmit || amountText.isNotEmpty()) {
+                        validatePositiveAmount(amountText)
+                    } else {
+                        null
+                    }
+                    val customCatError = if (showCustomCategoryField && (attemptedSubmit || customCategoryInput.isNotEmpty())) {
+                        validateCategoryName(customCategoryInput)
+                    } else {
+                        null
+                    }
+
                     // Big Receipt Total & Merchant Input
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(dimens.horizontalPadding * 0.6f),
-                        verticalAlignment = Alignment.CenterVertically
+                        verticalAlignment = Alignment.Top
                     ) {
                         OutlinedTextField(
                             value = amountText,
-                            onValueChange = { amountText = it },
+                            onValueChange = { amountText = sanitizeDecimalInput(it) },
                             label = { Text("Total ($currencySymbol)") },
+                            isError = amountError != null,
+                            supportingText = amountError?.let { err -> { Text(err) } },
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                             singleLine = true,
                             shape = RoundedCornerShape(dimens.smallCornerRadius),
                             modifier = Modifier
-                                .weight(0.45f)
+                                .weight(0.48f)
                                 .testTag(amountTestTag)
                         )
 
                         OutlinedTextField(
                             value = title,
-                            onValueChange = { title = it },
+                            onValueChange = { title = it.take(100) },
                             label = { Text("Merchant") },
+                            supportingText = if (title.length >= 95) {
+                                { Text("${title.length}/100") }
+                            } else {
+                                null
+                            },
                             singleLine = true,
                             shape = RoundedCornerShape(dimens.smallCornerRadius),
                             modifier = Modifier
-                                .weight(0.55f)
+                                .weight(0.52f)
                                 .testTag(titleTestTag)
                         )
                     }
@@ -437,10 +534,12 @@ private fun InteractiveReceiptSheet(
                         OutlinedTextField(
                             value = customCategoryInput,
                             onValueChange = {
-                                customCategoryInput = it
+                                customCategoryInput = it.take(40)
                                 if (it.isNotBlank()) category = it.trim()
                             },
                             label = { Text("Custom Category") },
+                            isError = customCatError != null,
+                            supportingText = customCatError?.let { err -> { Text(err) } },
                             singleLine = true,
                             shape = RoundedCornerShape(dimens.smallCornerRadius),
                             modifier = Modifier
@@ -575,7 +674,7 @@ private fun InteractiveReceiptSheet(
                         ) {
                             OutlinedTextField(
                                 value = accountName,
-                                onValueChange = { accountName = it },
+                                onValueChange = { accountName = it.take(80) },
                                 label = { Text("Account / Card") },
                                 singleLine = true,
                                 shape = RoundedCornerShape(dimens.smallCornerRadius),
@@ -583,7 +682,7 @@ private fun InteractiveReceiptSheet(
                             )
                             OutlinedTextField(
                                 value = tagsInput,
-                                onValueChange = { tagsInput = it },
+                                onValueChange = { tagsInput = it.take(120) },
                                 label = { Text("#Tags") },
                                 singleLine = true,
                                 shape = RoundedCornerShape(dimens.smallCornerRadius),
@@ -593,8 +692,8 @@ private fun InteractiveReceiptSheet(
                             )
                             OutlinedTextField(
                                 value = notes,
-                                onValueChange = { notes = it },
-                                label = { Text("Note") },
+                                onValueChange = { notes = it.take(500) },
+                                label = { Text("Note (${notes.length}/500)") },
                                 maxLines = 3,
                                 shape = RoundedCornerShape(dimens.smallCornerRadius),
                                 modifier = Modifier.fillMaxWidth()
@@ -607,24 +706,34 @@ private fun InteractiveReceiptSheet(
                     // Save Receipt Button
                     Button(
                         onClick = {
+                            attemptedSubmit = true
+                            val amtErr = validatePositiveAmount(amountText)
+                            val catErr = if (showCustomCategoryField && customCategoryInput.isNotBlank()) {
+                                validateCategoryName(customCategoryInput)
+                            } else {
+                                null
+                            }
                             val amt = amountText.toDoubleOrNull() ?: 0.0
-                            if (amt > 0) {
-                                val finalCat = customCategoryInput.trim().ifBlank { category }
+                            if (amtErr == null && catErr == null && amt > 0.0) {
+                                val finalCat = if (showCustomCategoryField && customCategoryInput.isNotBlank()) {
+                                    customCategoryInput.trim()
+                                } else {
+                                    category
+                                }
                                 onSave(
-                                    title.ifBlank { finalCat },
+                                    title.trim().ifBlank { finalCat },
                                     amt,
                                     type,
                                     finalCat,
-                                    accountName,
+                                    accountName.trim().ifBlank { "Cash" },
                                     paymentMode,
-                                    tagsInput,
-                                    notes,
+                                    tagsInput.trim(),
+                                    notes.trim(),
                                     isShared,
                                     txDateMillis
                                 )
                             }
                         },
-                        enabled = (amountText.toDoubleOrNull() ?: 0.0) > 0.0,
                         shape = RoundedCornerShape(dimens.smallCornerRadius),
                         colors = ButtonDefaults.buttonColors(
                             containerColor = if (type == "INCOME") BudgetSafeGreen else MaterialTheme.colorScheme.primary
@@ -918,10 +1027,13 @@ fun QuickCategoryPickerDialog(
                     }
                 }
 
+                val customCatErr = if (customCategory.isNotEmpty()) validateCategoryName(customCategory) else null
                 OutlinedTextField(
                     value = customCategory,
-                    onValueChange = { customCategory = it },
+                    onValueChange = { customCategory = it.take(40) },
                     label = { Text("New Category") },
+                    isError = customCatErr != null,
+                    supportingText = customCatErr?.let { err -> { Text(err) } },
                     singleLine = true,
                     shape = RoundedCornerShape(dimens.smallCornerRadius),
                     modifier = Modifier.fillMaxWidth()
@@ -938,7 +1050,13 @@ fun QuickCategoryPickerDialog(
                         Text("Edit Full Receipt")
                     }
                     if (customCategory.isNotBlank()) {
-                        Button(onClick = { onSelectCategory(customCategory.trim()) }) {
+                        Button(
+                            onClick = {
+                                if (validateCategoryName(customCategory) == null) {
+                                    onSelectCategory(customCategory.trim())
+                                }
+                            }
+                        ) {
                             Text("Save")
                         }
                     }
@@ -1017,14 +1135,55 @@ fun AddCategoryBudgetDialog(
     onSave: (category: String, limit: Double, alertPct: Int, isShared: Boolean) -> Unit
 ) {
     val dimens = LocalAppDimens.current
-    var category by remember { mutableStateOf(initialProgress?.category ?: "Groceries") }
+    var category by remember(initialProgress?.category) {
+        mutableStateOf(initialProgress?.category ?: "Groceries")
+    }
     var customCategory by remember { mutableStateOf("") }
-    var limitText by remember {
+    var limitText by remember(initialProgress?.limit) {
         mutableStateOf(
-            if ((initialProgress?.limit ?: 0.0) > 0) initialProgress!!.limit.toInt().toString() else ""
+            if ((initialProgress?.limit ?: 0.0) > 0.0) {
+                if (initialProgress!!.limit % 1.0 == 0.0) {
+                    initialProgress.limit.toLong().toString()
+                } else {
+                    initialProgress.limit.toString()
+                }
+            } else {
+                ""
+            }
         )
     }
+    var alertPctText by remember(initialProgress?.alertThresholdPercent) {
+        mutableStateOf((initialProgress?.alertThresholdPercent ?: 80).toString())
+    }
     var isShared by remember { mutableStateOf(hasHousehold && defaultShared) }
+    var attemptedSave by remember { mutableStateOf(false) }
+
+    val customCatError = if (customCategory.isNotBlank()) {
+        validateCategoryName(customCategory)
+    } else {
+        null
+    }
+    val limitError = if (attemptedSave || limitText.isNotEmpty()) {
+        validatePositiveAmount(limitText)
+    } else {
+        null
+    }
+    val alertPctInt = alertPctText.toIntOrNull()
+    val alertPctError = if (attemptedSave || alertPctText.isNotEmpty()) {
+        if (alertPctInt == null || alertPctInt !in 10..100) {
+            "Enter an alert threshold between 10% and 100%."
+        } else {
+            null
+        }
+    } else {
+        null
+    }
+
+    val categoryOptions = remember(initialProgress?.category) {
+        (ExpenseCategories.EXPENSE_ONLY + listOfNotNull(initialProgress?.category))
+            .filter { it.isNotBlank() }
+            .distinctBy { it.lowercase() }
+    }
 
     Dialog(onDismissRequest = onDismiss) {
         ReceiptTicketCard(
@@ -1039,46 +1198,80 @@ fun AddCategoryBudgetDialog(
                 verticalArrangement = Arrangement.spacedBy(dimens.itemSpacing * 0.85f)
             ) {
                 Text(
-                    text = "Category Limit",
+                    text = if ((initialProgress?.limit ?: 0.0) > 0.0) {
+                        "Edit Category Budget"
+                    } else {
+                        "Set Category Budget"
+                    },
                     style = MaterialTheme.typography.titleLarge,
                     fontWeight = FontWeight.Bold
                 )
 
                 ReceiptDashedDividerLine()
 
+                Text(
+                    text = "Select Category",
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+
                 FlowRow(
                     horizontalArrangement = Arrangement.spacedBy(dimens.horizontalPadding * 0.4f),
                     verticalArrangement = Arrangement.spacedBy(dimens.itemSpacing * 0.5f)
                 ) {
-                    ExpenseCategories.EXPENSE_ONLY.forEach { cat ->
+                    categoryOptions.forEach { cat ->
                         FilterChip(
                             selected = category.equals(cat, ignoreCase = true) && customCategory.isBlank(),
                             onClick = {
                                 category = cat
                                 customCategory = ""
                             },
-                            label = { Text(cat, style = MaterialTheme.typography.labelSmall) }
+                            label = { Text(cat, style = MaterialTheme.typography.labelSmall) },
+                            modifier = Modifier.testTag("budget_cat_chip_${cat.lowercase().replace(" ", "_")}")
                         )
                     }
                 }
 
                 OutlinedTextField(
                     value = customCategory,
-                    onValueChange = { customCategory = it },
-                    label = { Text("Custom Category") },
+                    onValueChange = { customCategory = it.take(40) },
+                    label = { Text("Or Custom Category Name") },
+                    isError = customCatError != null,
+                    supportingText = customCatError?.let { err -> { Text(err) } },
                     singleLine = true,
                     shape = RoundedCornerShape(dimens.smallCornerRadius),
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("category_budget_custom_name_input")
                 )
 
                 OutlinedTextField(
                     value = limitText,
-                    onValueChange = { limitText = it },
-                    label = { Text("Limit ($currencySymbol)") },
+                    onValueChange = { limitText = sanitizeDecimalInput(it) },
+                    label = { Text("Monthly Limit ($currencySymbol)") },
+                    isError = limitError != null,
+                    supportingText = limitError?.let { err -> { Text(err) } },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                    singleLine = true,
+                    shape = RoundedCornerShape(dimens.smallCornerRadius),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("category_budget_limit_input")
+                )
+
+                OutlinedTextField(
+                    value = alertPctText,
+                    onValueChange = { alertPctText = it.filter { ch -> ch.isDigit() }.take(3) },
+                    label = { Text("Alert Threshold (%)") },
+                    isError = alertPctError != null,
+                    supportingText = alertPctError?.let { err -> { Text(err) } },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                     singleLine = true,
                     shape = RoundedCornerShape(dimens.smallCornerRadius),
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("category_budget_alert_pct_input")
                 )
 
                 if (hasHousehold) {
@@ -1088,7 +1281,7 @@ fun AddCategoryBudgetDialog(
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
                         Text(
-                            text = "Household",
+                            text = "Apply to Family Household",
                             style = MaterialTheme.typography.bodyMedium
                         )
                         Switch(checked = isShared, onCheckedChange = { isShared = it })
@@ -1097,22 +1290,45 @@ fun AddCategoryBudgetDialog(
 
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.End
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    TextButton(onClick = onDismiss) {
-                        Text("Cancel")
-                    }
-                    Spacer(modifier = Modifier.width(dimens.horizontalPadding * 0.5f))
-                    Button(
-                        onClick = {
-                            val limit = limitText.toDoubleOrNull() ?: 0.0
-                            val targetCat = customCategory.trim().ifBlank { category }
-                            if (limit > 0) {
-                                onSave(targetCat, limit, 80, isShared)
-                            }
+                    if ((initialProgress?.limit ?: 0.0) > 0.0) {
+                        TextButton(
+                            onClick = {
+                                val targetCat = customCategory.trim().ifBlank { category }
+                                onSave(targetCat, 0.0, 80, isShared)
+                            },
+                            modifier = Modifier.testTag("clear_category_budget_button")
+                        ) {
+                            Text("Clear Limit", color = MaterialTheme.colorScheme.error)
                         }
-                    ) {
-                        Text("Save")
+                    } else {
+                        Spacer(modifier = Modifier.width(1.dp))
+                    }
+
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        TextButton(onClick = onDismiss) {
+                            Text("Cancel")
+                        }
+                        Spacer(modifier = Modifier.width(dimens.horizontalPadding * 0.5f))
+                        Button(
+                            onClick = {
+                                attemptedSave = true
+                                val lErr = validatePositiveAmount(limitText)
+                                val cErr = if (customCategory.isNotBlank()) validateCategoryName(customCategory) else null
+                                val pct = alertPctText.toIntOrNull()
+                                val pErr = if (pct == null || pct !in 10..100) "Invalid" else null
+                                if (lErr == null && cErr == null && pErr == null) {
+                                    val limit = limitText.toDoubleOrNull() ?: 0.0
+                                    val targetCat = customCategory.trim().ifBlank { category }
+                                    onSave(targetCat, limit, pct ?: 80, isShared)
+                                }
+                            },
+                            modifier = Modifier.testTag("save_category_budget_button")
+                        ) {
+                            Text("Save")
+                        }
                     }
                 }
             }
@@ -1130,12 +1346,29 @@ fun EditOverallBudgetDialog(
 ) {
     val dimens = LocalAppDimens.current
     var personalText by remember {
-        mutableStateOf(if (personalBudget > 0.0) personalBudget.toInt().toString() else "")
+        mutableStateOf(if (personalBudget > 0.0) personalBudget.toLong().toString() else "")
     }
     var householdText by remember {
-        mutableStateOf(if ((householdBudget ?: 0.0) > 0.0) householdBudget!!.toInt().toString() else "")
+        mutableStateOf(if ((householdBudget ?: 0.0) > 0.0) householdBudget!!.toLong().toString() else "")
     }
-    var currency by remember { mutableStateOf(currencySymbol) }
+    var currency by remember { mutableStateOf(currencySymbol.ifBlank { "₹" }) }
+    var attemptedSave by remember { mutableStateOf(false) }
+
+    val householdError = if (householdBudget != null && (attemptedSave || householdText.isNotEmpty())) {
+        validateNonNegativeAmount(householdText)
+    } else {
+        null
+    }
+    val personalError = if (attemptedSave || personalText.isNotEmpty()) {
+        validateNonNegativeAmount(personalText)
+    } else {
+        null
+    }
+    val currencyError = if (attemptedSave || currency.isNotEmpty()) {
+        validateCurrencySymbol(currency)
+    } else {
+        null
+    }
 
     Dialog(onDismissRequest = onDismiss) {
         ReceiptTicketCard(
@@ -1145,11 +1378,12 @@ fun EditOverallBudgetDialog(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(dimens.cardPadding),
+                    .padding(dimens.cardPadding)
+                    .verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(dimens.itemSpacing * 0.85f)
             ) {
                 Text(
-                    text = "Budget",
+                    text = "Monthly Budgets",
                     style = MaterialTheme.typography.titleLarge,
                     fontWeight = FontWeight.Bold
                 )
@@ -1159,30 +1393,44 @@ fun EditOverallBudgetDialog(
                 if (householdBudget != null) {
                     OutlinedTextField(
                         value = householdText,
-                        onValueChange = { householdText = it },
-                        label = { Text("Household") },
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        onValueChange = { householdText = sanitizeDecimalInput(it) },
+                        label = { Text("Household Monthly Limit ($currency)") },
+                        placeholder = { Text("Leave blank for unassigned") },
+                        isError = householdError != null,
+                        supportingText = householdError?.let { err -> { Text(err) } },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                         singleLine = true,
                         shape = RoundedCornerShape(dimens.smallCornerRadius),
-                        modifier = Modifier.fillMaxWidth()
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("overall_household_budget_input")
                     )
                 }
                 OutlinedTextField(
                     value = personalText,
-                    onValueChange = { personalText = it },
-                    label = { Text("Personal") },
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    onValueChange = { personalText = sanitizeDecimalInput(it) },
+                    label = { Text("Personal Monthly Limit ($currency)") },
+                    placeholder = { Text("Leave blank for unassigned") },
+                    isError = personalError != null,
+                    supportingText = personalError?.let { err -> { Text(err) } },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                     singleLine = true,
                     shape = RoundedCornerShape(dimens.smallCornerRadius),
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("overall_personal_budget_input")
                 )
                 OutlinedTextField(
                     value = currency,
-                    onValueChange = { currency = it.take(4) },
-                    label = { Text("Currency") },
+                    onValueChange = { currency = it.filterNot { ch -> ch.isDigit() }.take(4) },
+                    label = { Text("Currency Symbol") },
+                    isError = currencyError != null,
+                    supportingText = currencyError?.let { err -> { Text(err) } },
                     singleLine = true,
                     shape = RoundedCornerShape(dimens.smallCornerRadius),
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("overall_currency_input")
                 )
 
                 Row(
@@ -1195,10 +1443,21 @@ fun EditOverallBudgetDialog(
                     Spacer(modifier = Modifier.width(dimens.horizontalPadding * 0.5f))
                     Button(
                         onClick = {
-                            val pLimit = personalText.toDoubleOrNull() ?: 0.0
-                            val hLimit = if (householdBudget != null) (householdText.toDoubleOrNull() ?: 0.0) else null
-                            onSave(pLimit, hLimit, currency.ifBlank { "₹" })
-                        }
+                            attemptedSave = true
+                            val hErr = if (householdBudget != null) validateNonNegativeAmount(householdText) else null
+                            val pErr = validateNonNegativeAmount(personalText)
+                            val cErr = validateCurrencySymbol(currency)
+                            if (hErr == null && pErr == null && cErr == null) {
+                                val pLimit = personalText.trim().toDoubleOrNull() ?: 0.0
+                                val hLimit = if (householdBudget != null) {
+                                    householdText.trim().toDoubleOrNull() ?: 0.0
+                                } else {
+                                    null
+                                }
+                                onSave(pLimit, hLimit, currency.trim().ifBlank { "₹" })
+                            }
+                        },
+                        modifier = Modifier.testTag("save_overall_budget_button")
                     ) {
                         Text("Save")
                     }
@@ -1222,11 +1481,40 @@ fun AddAccountDialog(
     ) -> Unit
 ) {
     val dimens = LocalAppDimens.current
-    var bankName by remember { mutableStateOf("HDFC Bank") }
+    var bankName by remember { mutableStateOf("") }
     var accountType by remember { mutableStateOf("BANK") }
-    var lastFour by remember { mutableStateOf("4821") }
-    var balanceText by remember { mutableStateOf("45000") }
-    var creditLimitText by remember { mutableStateOf("150000") }
+    var lastFour by remember { mutableStateOf("") }
+    var balanceText by remember { mutableStateOf("") }
+    var creditLimitText by remember { mutableStateOf("") }
+    var attemptedSave by remember { mutableStateOf(false) }
+
+    val bankNameError = if (attemptedSave || bankName.isNotEmpty()) {
+        if (bankName.trim().length < 2) "Enter a valid bank or account name (min 2 chars)." else null
+    } else {
+        null
+    }
+    val requiresDigits = accountType == "BANK" || accountType == "CREDIT_CARD"
+    val lastFourError = if (attemptedSave || lastFour.isNotEmpty()) {
+        if (requiresDigits && lastFour.length != 4) {
+            "Enter the last 4 digits of your account/card."
+        } else if (!requiresDigits && lastFour.isNotEmpty() && lastFour.length != 4) {
+            "Last 4 digits must be 4 numbers or left blank."
+        } else {
+            null
+        }
+    } else {
+        null
+    }
+    val balanceError = if (attemptedSave || balanceText.isNotEmpty()) {
+        validateNonNegativeAmount(balanceText, maxAllowed = 1_000_000_000.0)
+    } else {
+        null
+    }
+    val creditLimitError = if (accountType == "CREDIT_CARD" && (attemptedSave || creditLimitText.isNotEmpty())) {
+        validatePositiveAmount(creditLimitText, maxAllowed = 100_000_000.0)
+    } else {
+        null
+    }
 
     Dialog(onDismissRequest = onDismiss) {
         ReceiptTicketCard(
@@ -1262,30 +1550,58 @@ fun AddAccountDialog(
                 }
                 OutlinedTextField(
                     value = bankName,
-                    onValueChange = { bankName = it },
-                    label = { Text("Name") },
+                    onValueChange = { bankName = it.take(60) },
+                    label = { Text("Bank / Account Name") },
+                    placeholder = { Text("e.g. HDFC Bank") },
+                    isError = bankNameError != null,
+                    supportingText = bankNameError?.let { err -> { Text(err) } },
                     singleLine = true,
                     shape = RoundedCornerShape(dimens.smallCornerRadius),
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("add_account_name_input")
                 )
                 OutlinedTextField(
                     value = lastFour,
                     onValueChange = { lastFour = it.filter { ch -> ch.isDigit() }.take(4) },
-                    label = { Text("Last 4 Digits") },
+                    label = { Text(if (requiresDigits) "Last 4 Digits" else "Last 4 Digits (Optional)") },
+                    isError = lastFourError != null,
+                    supportingText = lastFourError?.let { err -> { Text(err) } },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                     singleLine = true,
                     shape = RoundedCornerShape(dimens.smallCornerRadius),
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("add_account_last_four_input")
                 )
                 OutlinedTextField(
                     value = balanceText,
-                    onValueChange = { balanceText = it },
-                    label = { Text("Balance ($currencySymbol)") },
+                    onValueChange = { balanceText = sanitizeDecimalInput(it, maxIntegerDigits = 10) },
+                    label = { Text("Current Balance ($currencySymbol)") },
+                    isError = balanceError != null,
+                    supportingText = balanceError?.let { err -> { Text(err) } },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                     singleLine = true,
                     shape = RoundedCornerShape(dimens.smallCornerRadius),
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("add_account_balance_input")
                 )
+                if (accountType == "CREDIT_CARD") {
+                    OutlinedTextField(
+                        value = creditLimitText,
+                        onValueChange = { creditLimitText = sanitizeDecimalInput(it, maxIntegerDigits = 9) },
+                        label = { Text("Credit Limit ($currencySymbol)") },
+                        isError = creditLimitError != null,
+                        supportingText = creditLimitError?.let { err -> { Text(err) } },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                        singleLine = true,
+                        shape = RoundedCornerShape(dimens.smallCornerRadius),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("add_account_credit_limit_input")
+                    )
+                }
 
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -1297,17 +1613,37 @@ fun AddAccountDialog(
                     Spacer(modifier = Modifier.width(dimens.horizontalPadding * 0.5f))
                     Button(
                         onClick = {
-                            val suffix = if (lastFour.isNotBlank()) " ••$lastFour" else ""
-                            val displayName = if (accountType == "CREDIT_CARD") "$bankName Card$suffix" else "$bankName$suffix"
-                            onSave(
-                                displayName,
-                                bankName,
-                                accountType,
-                                lastFour,
-                                balanceText.toDoubleOrNull() ?: 0.0,
-                                if (accountType == "CREDIT_CARD") creditLimitText.toDoubleOrNull() ?: 0.0 else 0.0
-                            )
-                        }
+                            attemptedSave = true
+                            val nameErr = if (bankName.trim().length < 2) "Invalid" else null
+                            val digitsErr = if (requiresDigits && lastFour.length != 4) {
+                                "Invalid"
+                            } else if (!requiresDigits && lastFour.isNotEmpty() && lastFour.length != 4) {
+                                "Invalid"
+                            } else {
+                                null
+                            }
+                            val balErr = validateNonNegativeAmount(balanceText, maxAllowed = 1_000_000_000.0)
+                            val limErr = if (accountType == "CREDIT_CARD") {
+                                validatePositiveAmount(creditLimitText, maxAllowed = 100_000_000.0)
+                            } else {
+                                null
+                            }
+
+                            if (nameErr == null && digitsErr == null && balErr == null && limErr == null) {
+                                val cleanBank = bankName.trim()
+                                val suffix = if (lastFour.isNotBlank()) " ••$lastFour" else ""
+                                val displayName = if (accountType == "CREDIT_CARD") "$cleanBank Card$suffix" else "$cleanBank$suffix"
+                                onSave(
+                                    displayName,
+                                    cleanBank,
+                                    accountType,
+                                    lastFour,
+                                    balanceText.trim().toDoubleOrNull() ?: 0.0,
+                                    if (accountType == "CREDIT_CARD") creditLimitText.trim().toDoubleOrNull() ?: 0.0 else 0.0
+                                )
+                            }
+                        },
+                        modifier = Modifier.testTag("save_account_button")
                     ) {
                         Text("Save")
                     }
@@ -1316,3 +1652,265 @@ fun AddAccountDialog(
         }
     }
 }
+
+/**
+ * First-Time SMS Sync Setup & Live Progress Screen (`FirstTimeSmsSyncScreen`):
+ * - Prompts the user to sync their Bank & UPI SMS messages when setting up for the first time.
+ * - Stays on this page until ALL SMS messages have been read and synced in paced background batches.
+ * - Displays live progress bar, percentage, SMS Read count, SMS Remaining count, Total SMS count,
+ *   and Transactions Synced count so the phone never hangs or crashes.
+ */
+@Composable
+fun FirstTimeSmsSyncScreen(
+    syncState: SmsSyncProgressState,
+    onStartSyncClick: () -> Unit,
+    onContinueToAppClick: () -> Unit,
+    onSkipClick: () -> Unit
+) {
+    val dimens = LocalAppDimens.current
+    val hasStartedOrFinished = syncState.isSyncing || syncState.isCompleted
+
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("first_time_sms_sync_screen"),
+        color = MaterialTheme.colorScheme.background
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(
+                    horizontal = dimens.horizontalPadding * 1.25f,
+                    vertical = dimens.itemSpacing * 2f
+                )
+                .verticalScroll(rememberScrollState()),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(dimens.itemSpacing * 1.2f)
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(dimens.rowIconBoxSize * 1.75f)
+                    .clip(CircleShape)
+                    .background(MaterialTheme.colorScheme.primaryContainer),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = if (syncState.isCompleted) Icons.Default.Check else Icons.Default.Sync,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(dimens.rowIconSize * 1.6f)
+                )
+            }
+
+            Text(
+                text = when {
+                    syncState.isCompleted -> "SMS Sync Complete"
+                    syncState.isSyncing -> "Syncing Your SMS Inbox..."
+                    else -> "Sync Bank & UPI SMS"
+                },
+                style = MaterialTheme.typography.headlineSmall,
+                fontWeight = FontWeight.ExtraBold,
+                color = MaterialTheme.colorScheme.onBackground
+            )
+
+            Text(
+                text = when {
+                    syncState.isCompleted -> syncState.statusMessage.ifBlank {
+                        "All your bank and UPI SMS messages have been safely processed."
+                    }
+                    syncState.isSyncing -> "Please stay on this screen while we safely process your SMS messages in paced batches so your phone stays smooth and responsive."
+                    else -> "Automatically detect your bank, card, and UPI transactions from your SMS inbox. We process messages in paced batches to keep your phone fast."
+                },
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+
+            if (hasStartedOrFinished) {
+                ReceiptTicketCard(
+                    containerColor = MaterialTheme.colorScheme.surface,
+                    contentColor = MaterialTheme.colorScheme.onSurface
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(dimens.cardPadding),
+                        verticalArrangement = Arrangement.spacedBy(dimens.itemSpacing)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = if (syncState.isSyncing) "Reading SMS Messages" else "Completed",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.Bold
+                            )
+                            val pct = (syncState.progressFraction * 100f).roundToInt().coerceIn(0, 100)
+                            Text(
+                                text = "$pct%",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.ExtraBold,
+                                color = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.testTag("sms_sync_percentage_text")
+                            )
+                        }
+
+                        LinearProgressIndicator(
+                            progress = { syncState.progressFraction },
+                            color = MaterialTheme.colorScheme.primary,
+                            trackColor = MaterialTheme.colorScheme.surfaceVariant,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(dimens.itemSpacing * 0.9f)
+                                .clip(RoundedCornerShape(50))
+                                .testTag("sms_sync_progress_bar")
+                        )
+
+                        ReceiptDashedDividerLine()
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Column(horizontalAlignment = Alignment.Start) {
+                                Text(
+                                    text = "SMS Read",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                Text(
+                                    text = "${syncState.readSmsCount}",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                    modifier = Modifier.testTag("sms_sync_read_count")
+                                )
+                            }
+
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Text(
+                                    text = "Remaining",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                Text(
+                                    text = "${syncState.remainingSmsCount}",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.testTag("sms_sync_remaining_count")
+                                )
+                            }
+
+                            Column(horizontalAlignment = Alignment.End) {
+                                Text(
+                                    text = "Total SMS",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                Text(
+                                    text = "${syncState.totalSmsCount}",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                    modifier = Modifier.testTag("sms_sync_total_count")
+                                )
+                            }
+                        }
+
+                        Surface(
+                            shape = RoundedCornerShape(dimens.smallCornerRadius),
+                            color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.55f),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(
+                                        horizontal = dimens.horizontalPadding * 0.8f,
+                                        vertical = dimens.itemSpacing * 0.7f
+                                    ),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = "Transactions Found / Synced",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer
+                                )
+                                Text(
+                                    text = "${syncState.savedTransactionsCount} / ${syncState.matchedTransactionsCount}",
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                    modifier = Modifier.testTag("sms_sync_saved_tx_count")
+                                )
+                            }
+                        }
+
+                        if (syncState.statusMessage.isNotBlank()) {
+                            Text(
+                                text = syncState.statusMessage,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                }
+            }
+
+            if (!hasStartedOrFinished) {
+                Button(
+                    onClick = onStartSyncClick,
+                    shape = RoundedCornerShape(50),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(dimens.navPillHeight)
+                        .testTag("start_first_time_sms_sync_button")
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Sync,
+                        contentDescription = null,
+                        modifier = Modifier.size(dimens.rowIconSize * 0.85f)
+                    )
+                    Spacer(modifier = Modifier.width(dimens.horizontalPadding * 0.45f))
+                    Text(
+                        text = "Start SMS Sync Now",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+
+                TextButton(
+                    onClick = onSkipClick,
+                    modifier = Modifier.testTag("skip_first_time_sms_sync_button")
+                ) {
+                    Text("Skip for Now")
+                }
+            } else if (syncState.isCompleted && !syncState.isSyncing) {
+                Button(
+                    onClick = onContinueToAppClick,
+                    shape = RoundedCornerShape(50),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(dimens.navPillHeight)
+                        .testTag("finish_sms_sync_continue_button")
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Check,
+                        contentDescription = null,
+                        modifier = Modifier.size(dimens.rowIconSize * 0.85f)
+                    )
+                    Spacer(modifier = Modifier.width(dimens.horizontalPadding * 0.45f))
+                    Text(
+                        text = "Continue to Home",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
+        }
+    }
+}
+

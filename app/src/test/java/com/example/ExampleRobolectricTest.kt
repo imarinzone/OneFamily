@@ -7,14 +7,25 @@ import com.example.data.local.LocalAccountDataStore
 import com.example.data.local.LocalAccountSessionManager
 import com.example.data.repository.AxioRepository
 import com.example.data.sms.SmsInboxReader
+import com.example.data.sms.TransactionNotificationHelper
 import com.example.ui.screens.mergeSelectedDatePreservingTime
 import com.example.ui.screens.mergeSelectedTimePreservingDate
+import com.example.ui.screens.sanitizeDecimalInput
+import com.example.ui.screens.validateCategoryName
+import com.example.ui.screens.validateCurrencySymbol
+import com.example.ui.screens.validateDisplayName
+import com.example.ui.screens.validateEmailAddress
+import com.example.ui.screens.validateHouseholdJoinCode
+import com.example.ui.screens.validateNonNegativeAmount
+import com.example.ui.screens.validatePositiveAmount
 import com.example.ui.theme.AppThemeMode
 import com.example.ui.theme.buildResponsiveTypography
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -238,5 +249,125 @@ class ExampleRobolectricTest {
         assertEquals(AppThemeMode.DARK, LocalAccountSessionManager.themeMode.value)
         LocalAccountSessionManager.setThemeMode(context, AppThemeMode.SYSTEM)
         assertEquals(AppThemeMode.SYSTEM, LocalAccountSessionManager.themeMode.value)
+    }
+
+    @Test
+    fun `test budget and form input validation helpers`() {
+        // Decimal sanitization
+        assertEquals("1250.50", sanitizeDecimalInput("₹1,250.50abc"))
+        assertEquals("45.12", sanitizeDecimalInput("45.12.99"))
+
+        // Positive & non-negative amount validation
+        assertNotNull(validatePositiveAmount(""))
+        assertNotNull(validatePositiveAmount("0"))
+        assertNotNull(validatePositiveAmount("-50"))
+        assertNull(validatePositiveAmount("1500.75"))
+
+        assertNull(validateNonNegativeAmount(""))
+        assertNull(validateNonNegativeAmount("0"))
+        assertNull(validateNonNegativeAmount("25000"))
+
+        // Category, currency, name, email, and join code validation
+        assertNotNull(validateCategoryName("A"))
+        assertNull(validateCategoryName("Groceries"))
+        assertNotNull(validateCurrencySymbol(""))
+        assertNull(validateCurrencySymbol("₹"))
+        assertNotNull(validateDisplayName("X"))
+        assertNull(validateDisplayName("Priya Patel"))
+        assertNotNull(validateEmailAddress("not-an-email"))
+        assertNull(validateEmailAddress("member@family.org"))
+        assertNotNull(validateHouseholdJoinCode("ABC"))
+        assertNull(validateHouseholdJoinCode("FAM123"))
+    }
+
+    @Test
+    fun `test setting and clearing category-based budgets and first-time SMS sync state`() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        LocalAccountSessionManager.signInWithUsernamePassword(context, "test", "pass")
+        val user = LocalAccountSessionManager.getCurrentUser(context)!!
+        val repo = AxioRepository(context)
+        val profile = repo.ensureUserProfile(user.displayName, user.email).getOrNull()!!
+        val household = repo.getHouseholdOnce(profile.activeHouseholdId)!!
+
+        // Verify first-time SMS sync flag persistence
+        LocalAccountSessionManager.setInitialSmsSyncCompleted(context, user.uid, false)
+        assertFalse(LocalAccountSessionManager.hasCompletedInitialSmsSync(context, user.uid))
+        LocalAccountSessionManager.setInitialSmsSyncCompleted(context, user.uid, true)
+        assertTrue(LocalAccountSessionManager.hasCompletedInitialSmsSync(context, user.uid))
+
+        // Set a category budget for Groceries and Food & Dining
+        val saveGroceries = repo.saveCategoryBudget(
+            household = household,
+            category = "Groceries",
+            monthlyLimit = 12000.0,
+            alertThresholdPercent = 80,
+            isShared = true
+        )
+        assertTrue(saveGroceries.isSuccess)
+
+        val saveDining = repo.saveCategoryBudget(
+            household = household,
+            category = "Food & Dining",
+            monthlyLimit = 5000.0,
+            alertThresholdPercent = 75,
+            isShared = true
+        )
+        assertTrue(saveDining.isSuccess)
+
+        val budgets = repo.observeSharedCategoryBudgets(household.id, user.uid).first()
+        val groceriesBudget = budgets.firstOrNull { it.category == "Groceries" }
+        val diningBudget = budgets.firstOrNull { it.category == "Food & Dining" }
+        assertNotNull(groceriesBudget)
+        assertEquals(12000.0, groceriesBudget!!.monthlyLimit, 0.01)
+        assertNotNull(diningBudget)
+        assertEquals(5000.0, diningBudget!!.monthlyLimit, 0.01)
+
+        // Clear limit for Food & Dining by passing 0.0
+        repo.saveCategoryBudget(
+            household = household,
+            category = "Food & Dining",
+            monthlyLimit = 0.0,
+            alertThresholdPercent = 80,
+            isShared = true
+        )
+        val updatedBudgets = repo.observeSharedCategoryBudgets(household.id, user.uid).first()
+        val clearedDining = updatedBudgets.firstOrNull { it.category == "Food & Dining" }
+        assertNull(clearedDining)
+
+        // Also clear Groceries so shared state is clean for other tests
+        repo.saveCategoryBudget(
+            household = household,
+            category = "Groceries",
+            monthlyLimit = 0.0,
+            alertThresholdPercent = 80,
+            isShared = true
+        )
+
+        // Test incoming SMS notification pipeline deduplication & saving
+        val smsReader = SmsInboxReader(context)
+        val incomingCandidate = smsReader.parseRawSms(
+            sender = "AX-ICICIB",
+            body = "Acct XX9012 debited with Rs 420.00 on 15-11-26 at Amazon Pay. UPI:654321987.",
+            timestamp = System.currentTimeMillis()
+        )
+        assertNotNull(incomingCandidate)
+        TransactionNotificationHelper.processIncomingSmsCandidateAndNotify(
+            context = context,
+            candidate = incomingCandidate!!
+        )
+        val afterFirstIncoming = repo.observeSharedExpenses(household.id, user.uid).first()
+            .filter { it.smsSignature == incomingCandidate.id }
+        assertEquals(1, afterFirstIncoming.size)
+
+        // Second time with the exact same SMS should be deduplicated
+        TransactionNotificationHelper.processIncomingSmsCandidateAndNotify(
+            context = context,
+            candidate = incomingCandidate
+        )
+        val afterDuplicateIncoming = repo.observeSharedExpenses(household.id, user.uid).first()
+            .filter { it.smsSignature == incomingCandidate.id }
+        assertEquals(1, afterDuplicateIncoming.size)
+
+        LocalAccountSessionManager.signOut(context)
     }
 }

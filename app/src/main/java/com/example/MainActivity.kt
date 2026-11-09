@@ -5,6 +5,9 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
+import android.provider.Telephony
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -49,6 +52,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -76,6 +80,7 @@ import com.example.data.local.LocalAccountSessionManager
 import com.example.data.model.BudgetScope
 import com.example.data.model.ExpenseTransaction
 import com.example.data.repository.AxioRepository
+import com.example.data.sms.SmsInboxContentObserver
 import com.example.data.sms.SmsInboxReader
 import com.example.data.sms.TransactionNotificationHelper
 import com.example.ui.auth.AuthScreen
@@ -88,6 +93,7 @@ import com.example.ui.screens.AnalyticsTabScreen
 import com.example.ui.screens.BudgetsTabScreen
 import com.example.ui.screens.EditOverallBudgetDialog
 import com.example.ui.screens.EditTransactionDialog
+import com.example.ui.screens.FirstTimeSmsSyncScreen
 import com.example.ui.screens.HomeTabScreen
 import com.example.ui.screens.HouseholdTabScreen
 import com.example.ui.screens.QuickCategoryPickerDialog
@@ -237,9 +243,22 @@ fun AxioMainShell(
     )
 
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val smsSyncProgress by viewModel.smsSyncProgress.collectAsStateWithLifecycle()
     val tabs = AxioNavTab.entries
     val pagerState = rememberPagerState(initialPage = 0, pageCount = { tabs.size })
     val currentTab = tabs[pagerState.currentPage]
+
+    var showSmsSyncScreen by rememberSaveable(currentUserId) {
+        mutableStateOf(!LocalAccountSessionManager.hasCompletedInitialSmsSync(context, currentUserId))
+    }
+    var hasReadSmsPermission by remember {
+        mutableStateOf(
+            ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.READ_SMS
+            ) == PackageManager.PERMISSION_GRANTED
+        )
+    }
 
     var showAddTransactionDialog by rememberSaveable { mutableStateOf(false) }
     var showAddAccountDialog by rememberSaveable { mutableStateOf(false) }
@@ -266,19 +285,45 @@ fun AxioMainShell(
     ) { grantMap ->
         val readSmsGranted = grantMap[Manifest.permission.READ_SMS] == true ||
             ContextCompat.checkSelfPermission(context, Manifest.permission.READ_SMS) == PackageManager.PERMISSION_GRANTED
+        hasReadSmsPermission = readSmsGranted
         if (readSmsGranted) {
+            showSmsSyncScreen = true
             viewModel.scanDeviceSmsInbox(context = context, silentIfEmpty = false, notifyNewest = true)
         }
     }
 
-    // Auto-scan SMS on first launch if permission is already granted, or request permissions
-    LaunchedEffect(currentUserId) {
+    // Register ContentObserver on content://sms so any new incoming SMS is immediately parsed & notified
+    DisposableEffect(context, currentUserId, hasReadSmsPermission) {
+        val observer = if (hasReadSmsPermission) {
+            runCatching {
+                val obs = SmsInboxContentObserver(
+                    context = context.applicationContext
+                )
+                context.contentResolver.registerContentObserver(
+                    Telephony.Sms.CONTENT_URI,
+                    true,
+                    obs
+                )
+                obs
+            }.getOrNull()
+        } else {
+            null
+        }
+        onDispose {
+            if (observer != null) {
+                runCatching { context.contentResolver.unregisterContentObserver(observer) }
+            }
+        }
+    }
+
+    val startOrRequestSmsSync = {
         val hasReadSms = ContextCompat.checkSelfPermission(
             context,
             Manifest.permission.READ_SMS
         ) == PackageManager.PERMISSION_GRANTED
+        hasReadSmsPermission = hasReadSms
         if (hasReadSms) {
-            viewModel.autoScanSmsOnLaunchIfNeeded(context)
+            viewModel.scanDeviceSmsInbox(context = context, silentIfEmpty = false, notifyNewest = true)
         } else {
             val perms = buildList {
                 add(Manifest.permission.READ_SMS)
@@ -292,22 +337,27 @@ fun AxioMainShell(
     }
 
     val triggerSmsSync = {
-        val hasReadSms = ContextCompat.checkSelfPermission(
-            context,
-            Manifest.permission.READ_SMS
-        ) == PackageManager.PERMISSION_GRANTED
-        if (hasReadSms) {
-            viewModel.scanDeviceSmsInbox(context = context, silentIfEmpty = false, notifyNewest = true)
-        } else {
-            val perms = buildList {
-                add(Manifest.permission.READ_SMS)
-                add(Manifest.permission.RECEIVE_SMS)
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                    add(Manifest.permission.POST_NOTIFICATIONS)
-                }
+        viewModel.resetSmsSyncProgress()
+        showSmsSyncScreen = true
+        startOrRequestSmsSync()
+    }
+
+    if (showSmsSyncScreen) {
+        FirstTimeSmsSyncScreen(
+            syncState = smsSyncProgress,
+            onStartSyncClick = startOrRequestSmsSync,
+            onContinueToAppClick = {
+                LocalAccountSessionManager.setInitialSmsSyncCompleted(context, currentUserId, true)
+                viewModel.resetSmsSyncProgress()
+                showSmsSyncScreen = false
+            },
+            onSkipClick = {
+                LocalAccountSessionManager.setInitialSmsSyncCompleted(context, currentUserId, true)
+                viewModel.resetSmsSyncProgress()
+                showSmsSyncScreen = false
             }
-            permissionsLauncher.launch(perms.toTypedArray())
-        }
+        )
+        return
     }
 
     if (currentTab != AxioNavTab.HOME) {
@@ -323,34 +373,37 @@ fun AxioMainShell(
     Scaffold(
         contentWindowInsets = WindowInsets.safeDrawing,
         topBar = {
-            // Top Month & Year Header (Left = Previous Month, Top Middle = Current Month & Year, Right = Next Month)
-            Surface(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .statusBarsPadding()
-                    .padding(vertical = dimens.itemSpacing * 0.45f),
-                color = MaterialTheme.colorScheme.background
-            ) {
-                MonthPeriodSelectorBar(
-                    selectedPeriod = uiState.selectedPeriod,
-                    periodLabel = uiState.periodLabel,
-                    onStepMonth = { viewModel.stepMonth(it) },
-                    onSelectCurrentMonth = { viewModel.selectPeriod(YearMonthPeriod.current()) },
-                    onToggleAllTime = {
-                        if (uiState.selectedDateRangePreset == DateRangePreset.ALL_TIME) {
-                            viewModel.selectDateRangePreset(DateRangePreset.MONTH)
-                        } else {
-                            viewModel.selectDateRangePreset(DateRangePreset.ALL_TIME)
-                        }
-                    },
-                    selectedDateRangePreset = uiState.selectedDateRangePreset,
-                    onSelectDateRangePreset = { viewModel.selectDateRangePreset(it) },
-                    onSelectMonthPeriod = { viewModel.selectPeriod(it) },
-                    customStartDateMillis = uiState.customStartDateMillis,
-                    customEndDateMillis = uiState.customEndDateMillis,
-                    onSelectCustomDateRange = { s, e -> viewModel.selectCustomDateRange(s, e) },
-                    showDateRangeChips = false
-                )
+            val isDateBarApplicable = currentTab == AxioNavTab.HOME || currentTab == AxioNavTab.ANALYSIS
+            AnimatedVisibility(visible = isDateBarApplicable) {
+                // Top Gesture Date Bar (Year on top, Month name below; full-bar swap animation)
+                Surface(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .statusBarsPadding()
+                        .padding(vertical = dimens.itemSpacing * 0.45f),
+                    color = MaterialTheme.colorScheme.background
+                ) {
+                    MonthPeriodSelectorBar(
+                        selectedPeriod = uiState.selectedPeriod,
+                        periodLabel = uiState.periodLabel,
+                        onStepMonth = { viewModel.stepMonth(it) },
+                        onSelectCurrentMonth = { viewModel.selectPeriod(YearMonthPeriod.current()) },
+                        onToggleAllTime = {
+                            if (uiState.selectedDateRangePreset == DateRangePreset.ALL_TIME) {
+                                viewModel.selectDateRangePreset(DateRangePreset.MONTH)
+                            } else {
+                                viewModel.selectDateRangePreset(DateRangePreset.ALL_TIME)
+                            }
+                        },
+                        selectedDateRangePreset = uiState.selectedDateRangePreset,
+                        onSelectDateRangePreset = { viewModel.selectDateRangePreset(it) },
+                        onSelectMonthPeriod = { viewModel.selectPeriod(it) },
+                        customStartDateMillis = uiState.customStartDateMillis,
+                        customEndDateMillis = uiState.customEndDateMillis,
+                        onSelectCustomDateRange = { s, e -> viewModel.selectCustomDateRange(s, e) },
+                        showDateRangeChips = false
+                    )
+                }
             }
         }
     ) { innerPadding ->
