@@ -984,6 +984,73 @@ class AxioRepository(private val dbProvider: () -> FirebaseFirestore) {
         }
     }
 
+    suspend fun linkDuplicateTransaction(
+        primaryTx: ExpenseTransaction,
+        duplicateTx: ExpenseTransaction
+    ): Result<ExpenseTransaction> = runCatching {
+        require(primaryTx.id != duplicateTx.id) { "Cannot link a transaction to itself." }
+        if (isLocalMode(primaryTx.userId) || isLocalMode(duplicateTx.userId)) {
+            return@runCatching LocalAccountDataStore.linkDuplicateTransaction(primaryTx, duplicateTx)
+        }
+        val uid = requireUserId()
+        LocalAccountDataStore.getSmsMessageForTransaction(duplicateTx)?.let { dupSms ->
+            val key = duplicateTx.smsSignature.ifBlank { duplicateTx.id }
+            LocalAccountDataStore.cacheSmsMessage(
+                signature = key,
+                sender = dupSms.sender,
+                body = dupSms.body,
+                timestamp = dupSms.timestamp
+            )
+        }
+        val combinedSignatures = buildList {
+            addAll(primaryTx.linkedSmsSignatures)
+            if (duplicateTx.smsSignature.isNotBlank()) add(duplicateTx.smsSignature)
+            if (duplicateTx.id.isNotBlank()) add(duplicateTx.id)
+            addAll(duplicateTx.linkedSmsSignatures)
+        }.distinct().take(20)
+
+        val combinedTags = (primaryTx.tags + duplicateTx.tags + "linked-duplicate")
+            .map { it.trim().removePrefix("#") }
+            .filter { it.isNotBlank() }
+            .distinct()
+            .take(10)
+
+        val linkNoteSuffix = "[Linked Duplicate: ${duplicateTx.title} • ${duplicateTx.accountName}]"
+        val combinedNotes = if (primaryTx.notes.contains(linkNoteSuffix)) {
+            primaryTx.notes
+        } else if (primaryTx.notes.isBlank()) {
+            linkNoteSuffix
+        } else {
+            "${primaryTx.notes}\n$linkNoteSuffix"
+        }.take(500)
+
+        val primaryDocRef = if (primaryTx.visibility == "SHARED" && primaryTx.householdId.isNotBlank()) {
+            db.collection("households").document(primaryTx.householdId)
+                .collection("shared_expenses").document(primaryTx.id)
+        } else {
+            db.collection("users").document(uid)
+                .collection("personal_expenses").document(primaryTx.id)
+        }
+
+        primaryDocRef.update(
+            mapOf(
+                "linkedSmsSignatures" to combinedSignatures,
+                "tags" to combinedTags,
+                "notes" to combinedNotes,
+                "updatedAt" to FieldValue.serverTimestamp()
+            )
+        ).await()
+
+        deleteExpense(duplicateTx).getOrThrow()
+
+        primaryTx.copy(
+            linkedSmsSignatures = combinedSignatures,
+            tags = combinedTags,
+            notes = combinedNotes,
+            updatedAt = com.google.firebase.Timestamp.now()
+        )
+    }
+
     // --- CATEGORY BUDGETS (PERSONAL & HOUSEHOLD SHARED) ---
 
     fun observePersonalCategoryBudgets(userId: String): Flow<List<CategoryBudget>> {

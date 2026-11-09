@@ -18,11 +18,13 @@ import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
@@ -48,6 +50,7 @@ import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Fastfood
 import androidx.compose.material.icons.filled.Groups
 import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.LocalGroceryStore
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.MedicalServices
@@ -79,13 +82,20 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.rotate
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
@@ -95,10 +105,17 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.example.data.local.LocalAccountSessionManager
 import com.example.data.model.BudgetScope
 import com.example.data.model.ExpenseTransaction
 import com.example.data.model.FinancialAccount
 import com.example.data.model.Household
+import com.example.data.model.WallpaperColorAccent
+import com.example.data.model.WallpaperDensity
+import com.example.data.model.WallpaperPatternStyle
+import com.example.data.model.WallpaperSettings
 import com.example.ui.theme.BudgetDangerCoral
 import com.example.ui.theme.BudgetSafeGreen
 import com.example.ui.theme.BudgetWarnAmber
@@ -995,7 +1012,7 @@ private fun AccountSummaryCard(
  * Single-Line Transaction Row with Relative Screen Sizing & Gesture Controls:
  * - Tap anywhere on Row -> Opens full Receipt Editor (`onEditTransaction`)
  * - Long-Press Row -> Opens Quick Category Picker (`onQuickChangeCategory`)
- * - Swipe Right -> Toggle Household / Personal Sharing (`onTogglePrivacy`)
+ * - Swipe Right -> Prompts user to Link Duplicate SMS / Transaction (`onLinkDuplicate`)
  * - Swipe Left -> Delete Transaction (`onDelete`)
  */
 @Composable
@@ -1004,6 +1021,7 @@ fun ExpenseTransactionItemCard(
     currencySymbol: String,
     canTogglePrivacy: Boolean = false,
     onTogglePrivacy: () -> Unit = {},
+    onLinkDuplicate: () -> Unit = {},
     onDelete: () -> Unit = {},
     onEditTransaction: () -> Unit = {},
     onQuickChangeCategory: () -> Unit = {},
@@ -1029,27 +1047,50 @@ fun ExpenseTransactionItemCard(
         if (kotlin.math.abs(animatedOffsetX) > 6f) {
             val isSwipingRight = animatedOffsetX > 0f
             val bgRevealColor = if (isSwipingRight) {
-                if (expense.visibility == "PERSONAL") HouseholdBadgeIndigo else PersonalBadgeTeal
+                MaterialTheme.colorScheme.primary
             } else {
                 BudgetDangerCoral
             }
             Box(
                 modifier = Modifier
                     .matchParentSize()
-                    .background(bgRevealColor.copy(alpha = 0.25f))
-                    .padding(horizontal = dimens.horizontalPadding * 1.2f),
+                    .background(bgRevealColor.copy(alpha = 0.22f))
+                    .padding(horizontal = dimens.horizontalPadding * 1.1f),
                 contentAlignment = if (isSwipingRight) Alignment.CenterStart else Alignment.CenterEnd
             ) {
-                Icon(
-                    imageVector = if (isSwipingRight) {
-                        if (expense.visibility == "PERSONAL") Icons.Default.Groups else Icons.Default.Lock
-                    } else {
-                        Icons.Default.Delete
-                    },
-                    contentDescription = null,
-                    tint = bgRevealColor,
-                    modifier = Modifier.size(dimens.rowIconSize)
-                )
+                if (isSwipingRight) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            imageVector = Icons.Default.Link,
+                            contentDescription = "Link Duplicate SMS / Transaction",
+                            tint = bgRevealColor,
+                            modifier = Modifier.size(dimens.rowIconSize)
+                        )
+                        Spacer(modifier = Modifier.width(dimens.horizontalPadding * 0.4f))
+                        Text(
+                            text = "Link Duplicate",
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = FontWeight.Bold,
+                            color = bgRevealColor
+                        )
+                    }
+                } else {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            text = "Delete",
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = FontWeight.Bold,
+                            color = bgRevealColor
+                        )
+                        Spacer(modifier = Modifier.width(dimens.horizontalPadding * 0.4f))
+                        Icon(
+                            imageVector = Icons.Default.Delete,
+                            contentDescription = "Delete Transaction",
+                            tint = bgRevealColor,
+                            modifier = Modifier.size(dimens.rowIconSize)
+                        )
+                    }
+                }
             }
         }
 
@@ -1058,30 +1099,26 @@ fun ExpenseTransactionItemCard(
                 .fillMaxWidth()
                 .offset { IntOffset(animatedOffsetX.roundToInt(), 0) }
                 .clip(RoundedCornerShape(dimens.cardCornerRadius))
-                .pointerInput(expense.id, canTogglePrivacy) {
+                .pointerInput(expense.id) {
                     detectTapGestures(
                         onTap = { onEditTransaction() },
                         onLongPress = { onQuickChangeCategory() }
                     )
                 }
-                .pointerInput(expense.id, canTogglePrivacy, cardWidthPx) {
-                    val maxDrag = cardWidthPx * 0.38f
-                    val triggerThreshold = cardWidthPx * 0.22f
+                .pointerInput(expense.id, cardWidthPx) {
+                    val maxDrag = cardWidthPx * 0.42f
+                    val triggerThreshold = cardWidthPx * 0.20f
                     detectHorizontalDragGestures(
                         onHorizontalDrag = { change, dragAmount ->
                             change.consume()
                             val next = dragOffsetX + dragAmount
-                            dragOffsetX = if (canTogglePrivacy) {
-                                next.coerceIn(-maxDrag, maxDrag)
-                            } else {
-                                next.coerceIn(-maxDrag, 0f)
-                            }
+                            dragOffsetX = next.coerceIn(-maxDrag, maxDrag)
                         },
                         onDragEnd = {
                             when {
-                                dragOffsetX > triggerThreshold && canTogglePrivacy -> {
+                                dragOffsetX > triggerThreshold -> {
                                     dragOffsetX = 0f
-                                    onTogglePrivacy()
+                                    onLinkDuplicate()
                                 }
                                 dragOffsetX < -triggerThreshold -> {
                                     dragOffsetX = 0f
@@ -1109,7 +1146,7 @@ fun ExpenseTransactionItemCard(
                     .fillMaxWidth()
                     .padding(
                         horizontal = dimens.horizontalPadding,
-                        vertical = dimens.itemSpacing * 1.1f
+                        vertical = dimens.itemSpacing * 1.05f
                     ),
                 verticalAlignment = Alignment.CenterVertically
             ) {
@@ -1132,16 +1169,47 @@ fun ExpenseTransactionItemCard(
 
                 Spacer(modifier = Modifier.width(dimens.horizontalPadding * 0.85f))
 
-                Text(
-                    text = expense.title,
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.SemiBold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f)
-                )
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = expense.title,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    if (expense.linkedSmsSignatures.isNotEmpty()) {
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Surface(
+                            shape = RoundedCornerShape(50),
+                            color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.75f),
+                            modifier = Modifier.testTag("linked_sms_badge_${expense.id}")
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(
+                                    horizontal = dimens.horizontalPadding * 0.45f,
+                                    vertical = 1.dp
+                                ),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Link,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(dimens.rowIconSize * 0.58f)
+                                )
+                                Spacer(modifier = Modifier.width(3.dp))
+                                Text(
+                                    text = "Linked (${expense.linkedSmsSignatures.size + 1} SMS)",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                            }
+                        }
+                    }
+                }
 
-                Spacer(modifier = Modifier.width(dimens.horizontalPadding * 0.75f))
+                Spacer(modifier = Modifier.width(dimens.horizontalPadding * 0.5f))
 
                 Text(
                     text = "${if (isIncome) "+" else "-"}${formatCurrency(expense.amount, currencySymbol)}",
@@ -1149,6 +1217,26 @@ fun ExpenseTransactionItemCard(
                     fontWeight = FontWeight.Bold,
                     color = if (isIncome) BudgetSafeGreen else MaterialTheme.colorScheme.onSurface
                 )
+
+                Spacer(modifier = Modifier.width(dimens.horizontalPadding * 0.2f))
+
+                IconButton(
+                    onClick = onLinkDuplicate,
+                    modifier = Modifier
+                        .size(dimens.rowIconBoxSize * 0.72f)
+                        .testTag("link_duplicate_button_${expense.id}")
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Link,
+                        contentDescription = "Link Duplicate SMS / Transaction",
+                        tint = if (expense.linkedSmsSignatures.isNotEmpty()) {
+                            MaterialTheme.colorScheme.primary
+                        } else {
+                            MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.65f)
+                        },
+                        modifier = Modifier.size(dimens.rowIconSize * 0.78f)
+                    )
+                }
             }
         }
     }
@@ -1447,3 +1535,644 @@ fun ThemeModeSelectorBar(
         }
     }
 }
+
+private val FINANCE_WALLPAPER_EMOJIS = listOf(
+    "💳", "🧾", "🪙", "📊", "🏡", "💰", "🛍️", "📈", "🏦", "🏷️", "🛒", "💎"
+)
+
+private fun resolveWallpaperPalette(
+    accent: WallpaperColorAccent,
+    isDark: Boolean,
+    primaryThemeColor: Color,
+    secondaryThemeColor: Color,
+    tertiaryThemeColor: Color
+): List<Color> {
+    return when (accent) {
+        WallpaperColorAccent.THEME_ADAPTIVE -> if (isDark) {
+            listOf(
+                primaryThemeColor,
+                secondaryThemeColor,
+                Color(0xFF38BDF8),
+                Color(0xFF34D399)
+            )
+        } else {
+            listOf(
+                Color(0xFF8C6D53),
+                primaryThemeColor,
+                secondaryThemeColor,
+                tertiaryThemeColor
+            )
+        }
+
+        WallpaperColorAccent.EMERALD_MINT -> if (isDark) {
+            listOf(Color(0xFF10B981), Color(0xFF34D399), Color(0xFF059669), Color(0xFF6EE7B7))
+        } else {
+            listOf(Color(0xFF047857), Color(0xFF059669), Color(0xFF0D9488), Color(0xFF10B981))
+        }
+
+        WallpaperColorAccent.ROYAL_GOLD -> if (isDark) {
+            listOf(Color(0xFFF59E0B), Color(0xFFFBBF24), Color(0xFFD97706), Color(0xFFFDE68A))
+        } else {
+            listOf(Color(0xFFB45309), Color(0xFFD97706), Color(0xFF92400E), Color(0xFFF59E0B))
+        }
+
+        WallpaperColorAccent.OCEAN_SLATE -> if (isDark) {
+            listOf(Color(0xFF38BDF8), Color(0xFF60A5FA), Color(0xFF818CF8), Color(0xFF2DD4BF))
+        } else {
+            listOf(Color(0xFF0369A1), Color(0xFF1D4ED8), Color(0xFF4338CA), Color(0xFF0F766E))
+        }
+
+        WallpaperColorAccent.WARM_CORAL -> if (isDark) {
+            listOf(Color(0xFFFF6B6B), Color(0xFFFF9F43), Color(0xFFF472B6), Color(0xFFFBBF24))
+        } else {
+            listOf(Color(0xFFE11D48), Color(0xFFEA580C), Color(0xFFDB2777), Color(0xFFD97706))
+        }
+    }
+}
+
+/**
+ * Draws a single WhatsApp-style vector finance line-art doodle inside a square tile of radius [r]
+ * centered at [center].
+ */
+private fun DrawScope.drawFinanceDoodleMotif(
+    motifIndex: Int,
+    center: Offset,
+    r: Float,
+    color: Color,
+    strokeWidth: Float
+) {
+    val stroke = Stroke(width = strokeWidth, cap = StrokeCap.Round)
+    when (motifIndex % 10) {
+        // 0: Credit / Debit Card with EMV Chip & Stripe
+        0 -> {
+            val w = r * 1.65f
+            val h = r * 1.12f
+            val topLeft = Offset(center.x - w / 2f, center.y - h / 2f)
+            drawRoundRect(
+                color = color,
+                topLeft = topLeft,
+                size = Size(w, h),
+                cornerRadius = CornerRadius(r * 0.22f, r * 0.22f),
+                style = stroke
+            )
+            drawLine(
+                color = color,
+                start = Offset(topLeft.x, topLeft.y + h * 0.34f),
+                end = Offset(topLeft.x + w, topLeft.y + h * 0.34f),
+                strokeWidth = strokeWidth
+            )
+            drawRoundRect(
+                color = color,
+                topLeft = Offset(topLeft.x + w * 0.16f, topLeft.y + h * 0.54f),
+                size = Size(w * 0.24f, h * 0.24f),
+                cornerRadius = CornerRadius(r * 0.06f, r * 0.06f),
+                style = stroke
+            )
+        }
+
+        // 1: Paper Receipt Ticket with Zigzag Top & Item Lines
+        1 -> {
+            val w = r * 1.25f
+            val h = r * 1.65f
+            val left = center.x - w / 2f
+            val top = center.y - h / 2f
+            val right = center.x + w / 2f
+            val bottom = center.y + h / 2f
+            val path = Path().apply {
+                moveTo(left, top + h * 0.1f)
+                lineTo(left + w * 0.25f, top)
+                lineTo(left + w * 0.5f, top + h * 0.1f)
+                lineTo(left + w * 0.75f, top)
+                lineTo(right, top + h * 0.1f)
+                lineTo(right, bottom - h * 0.1f)
+                lineTo(left + w * 0.75f, bottom)
+                lineTo(left + w * 0.5f, bottom - h * 0.1f)
+                lineTo(left + w * 0.25f, bottom)
+                lineTo(left, bottom - h * 0.1f)
+                close()
+            }
+            drawPath(path = path, color = color, style = stroke)
+            drawLine(
+                color = color,
+                start = Offset(left + w * 0.22f, center.y - h * 0.14f),
+                end = Offset(right - w * 0.22f, center.y - h * 0.14f),
+                strokeWidth = strokeWidth,
+                cap = StrokeCap.Round
+            )
+            drawLine(
+                color = color,
+                start = Offset(left + w * 0.22f, center.y + h * 0.04f),
+                end = Offset(right - w * 0.34f, center.y + h * 0.04f),
+                strokeWidth = strokeWidth,
+                cap = StrokeCap.Round
+            )
+            drawLine(
+                color = color,
+                start = Offset(left + w * 0.22f, center.y + h * 0.22f),
+                end = Offset(right - w * 0.22f, center.y + h * 0.22f),
+                strokeWidth = strokeWidth,
+                cap = StrokeCap.Round
+            )
+        }
+
+        // 2: Currency Coin with Inner Ring & Rupee / Bar Motif
+        2 -> {
+            drawCircle(
+                color = color,
+                radius = r * 0.78f,
+                center = center,
+                style = stroke
+            )
+            drawCircle(
+                color = color,
+                radius = r * 0.56f,
+                center = center,
+                style = Stroke(width = strokeWidth * 0.75f)
+            )
+            val s = r * 0.26f
+            drawLine(
+                color = color,
+                start = Offset(center.x - s, center.y - s),
+                end = Offset(center.x + s, center.y - s),
+                strokeWidth = strokeWidth,
+                cap = StrokeCap.Round
+            )
+            drawLine(
+                color = color,
+                start = Offset(center.x - s, center.y - s * 0.25f),
+                end = Offset(center.x + s * 0.8f, center.y - s * 0.25f),
+                strokeWidth = strokeWidth,
+                cap = StrokeCap.Round
+            )
+            drawLine(
+                color = color,
+                start = Offset(center.x - s * 0.4f, center.y - s * 0.25f),
+                end = Offset(center.x + s * 0.7f, center.y + s * 1.05f),
+                strokeWidth = strokeWidth,
+                cap = StrokeCap.Round
+            )
+        }
+
+        // 3: Bar Chart & Upward Growth Trend Line
+        3 -> {
+            val base = center.y + r * 0.65f
+            val left = center.x - r * 0.68f
+            val right = center.x + r * 0.68f
+            drawLine(
+                color = color,
+                start = Offset(left, base),
+                end = Offset(right, base),
+                strokeWidth = strokeWidth,
+                cap = StrokeCap.Round
+            )
+            val bw = r * 0.24f
+            drawRoundRect(
+                color = color,
+                topLeft = Offset(left + r * 0.1f, base - r * 0.48f),
+                size = Size(bw, r * 0.48f),
+                cornerRadius = CornerRadius(4f, 4f),
+                style = stroke
+            )
+            drawRoundRect(
+                color = color,
+                topLeft = Offset(center.x - bw / 2f, base - r * 0.82f),
+                size = Size(bw, r * 0.82f),
+                cornerRadius = CornerRadius(4f, 4f),
+                style = stroke
+            )
+            drawRoundRect(
+                color = color,
+                topLeft = Offset(right - r * 0.1f - bw, base - r * 1.18f),
+                size = Size(bw, r * 1.18f),
+                cornerRadius = CornerRadius(4f, 4f),
+                style = stroke
+            )
+        }
+
+        // 4: Shopping Bag with Curved Handle
+        4 -> {
+            val w = r * 1.26f
+            val h = r * 1.24f
+            val top = center.y - h * 0.35f
+            drawRoundRect(
+                color = color,
+                topLeft = Offset(center.x - w / 2f, top),
+                size = Size(w, h),
+                cornerRadius = CornerRadius(r * 0.18f, r * 0.18f),
+                style = stroke
+            )
+            drawArc(
+                color = color,
+                startAngle = 180f,
+                sweepAngle = 180f,
+                useCenter = false,
+                topLeft = Offset(center.x - w * 0.26f, top - r * 0.42f),
+                size = Size(w * 0.52f, r * 0.84f),
+                style = stroke
+            )
+        }
+
+        // 5: Wallet with Clasp Flap
+        5 -> {
+            val w = r * 1.56f
+            val h = r * 1.14f
+            val topLeft = Offset(center.x - w / 2f, center.y - h / 2f)
+            drawRoundRect(
+                color = color,
+                topLeft = topLeft,
+                size = Size(w, h),
+                cornerRadius = CornerRadius(r * 0.2f, r * 0.2f),
+                style = stroke
+            )
+            val flapW = w * 0.42f
+            val flapH = h * 0.44f
+            drawRoundRect(
+                color = color,
+                topLeft = Offset(topLeft.x + w - flapW, center.y - flapH / 2f),
+                size = Size(flapW, flapH),
+                cornerRadius = CornerRadius(r * 0.14f, r * 0.14f),
+                style = stroke
+            )
+            drawCircle(
+                color = color,
+                radius = strokeWidth * 1.1f,
+                center = Offset(topLeft.x + w - flapW * 0.62f, center.y)
+            )
+        }
+
+        // 6: Family Home / Household Roof & Pillars
+        6 -> {
+            val roofW = r * 1.56f
+            val roofTop = center.y - r * 0.76f
+            val roofBase = center.y - r * 0.08f
+            val roofPath = Path().apply {
+                moveTo(center.x - roofW / 2f, roofBase)
+                lineTo(center.x, roofTop)
+                lineTo(center.x + roofW / 2f, roofBase)
+            }
+            drawPath(path = roofPath, color = color, style = stroke)
+            val bodyW = r * 1.12f
+            val bodyH = r * 0.78f
+            drawRoundRect(
+                color = color,
+                topLeft = Offset(center.x - bodyW / 2f, roofBase),
+                size = Size(bodyW, bodyH),
+                cornerRadius = CornerRadius(r * 0.1f, r * 0.1f),
+                style = stroke
+            )
+        }
+
+        // 7: Price Tag / Category Badge
+        7 -> {
+            val w = r * 1.44f
+            val h = r * 0.94f
+            val left = center.x - w / 2f
+            val right = center.x + w / 2f
+            val top = center.y - h / 2f
+            val bottom = center.y + h / 2f
+            val path = Path().apply {
+                moveTo(left + w * 0.28f, top)
+                lineTo(right, top)
+                lineTo(right, bottom)
+                lineTo(left + w * 0.28f, bottom)
+                lineTo(left, center.y)
+                close()
+            }
+            drawPath(path = path, color = color, style = stroke)
+            drawCircle(
+                color = color,
+                radius = strokeWidth * 1.15f,
+                center = Offset(left + w * 0.34f, center.y)
+            )
+        }
+
+        // 8: Pie / Donut Budget Chart
+        8 -> {
+            drawCircle(
+                color = color,
+                radius = r * 0.76f,
+                center = center,
+                style = stroke
+            )
+            drawLine(
+                color = color,
+                start = center,
+                end = Offset(center.x, center.y - r * 0.76f),
+                strokeWidth = strokeWidth
+            )
+            drawLine(
+                color = color,
+                start = center,
+                end = Offset(center.x + r * 0.64f, center.y + r * 0.38f),
+                strokeWidth = strokeWidth
+            )
+        }
+
+        // 9: Upward Trend Spark Arrow
+        else -> {
+            val path = Path().apply {
+                moveTo(center.x - r * 0.68f, center.y + r * 0.44f)
+                lineTo(center.x - r * 0.16f, center.y - r * 0.08f)
+                lineTo(center.x + r * 0.14f, center.y + r * 0.20f)
+                lineTo(center.x + r * 0.68f, center.y - r * 0.44f)
+            }
+            drawPath(path = path, color = color, style = stroke)
+            drawLine(
+                color = color,
+                start = Offset(center.x + r * 0.32f, center.y - r * 0.44f),
+                end = Offset(center.x + r * 0.68f, center.y - r * 0.44f),
+                strokeWidth = strokeWidth,
+                cap = StrokeCap.Round
+            )
+            drawLine(
+                color = color,
+                start = Offset(center.x + r * 0.68f, center.y - r * 0.44f),
+                end = Offset(center.x + r * 0.68f, center.y - r * 0.08f),
+                strokeWidth = strokeWidth,
+                cap = StrokeCap.Round
+            )
+        }
+    }
+}
+
+/**
+ * Draws the Minimal Ledger Geometric pattern inside a tile.
+ */
+private fun DrawScope.drawMinimalLedgerMotif(
+    motifIndex: Int,
+    center: Offset,
+    r: Float,
+    color: Color,
+    strokeWidth: Float
+) {
+    val stroke = Stroke(width = strokeWidth, cap = StrokeCap.Round)
+    when (motifIndex % 4) {
+        0 -> {
+            drawCircle(color = color, radius = r * 0.6f, center = center, style = stroke)
+            drawCircle(color = color, radius = r * 0.22f, center = center, style = stroke)
+        }
+        1 -> {
+            val d = r * 0.62f
+            val path = Path().apply {
+                moveTo(center.x, center.y - d)
+                lineTo(center.x + d, center.y)
+                lineTo(center.x, center.y + d)
+                lineTo(center.x - d, center.y)
+                close()
+            }
+            drawPath(path = path, color = color, style = stroke)
+        }
+        2 -> {
+            val s = r * 0.48f
+            drawLine(color = color, start = Offset(center.x - s, center.y), end = Offset(center.x + s, center.y), strokeWidth = strokeWidth, cap = StrokeCap.Round)
+            drawLine(color = color, start = Offset(center.x, center.y - s), end = Offset(center.x, center.y + s), strokeWidth = strokeWidth, cap = StrokeCap.Round)
+        }
+        else -> {
+            val w = r * 0.9f
+            drawRoundRect(
+                color = color,
+                topLeft = Offset(center.x - w / 2f, center.y - w / 2f),
+                size = Size(w, w),
+                cornerRadius = CornerRadius(r * 0.2f, r * 0.2f),
+                style = stroke
+            )
+        }
+    }
+}
+
+/**
+ * WhatsApp-Style Finance Emoji & Icon Tiled Wallpaper (`AppDecoratedBackground`):
+ * - Renders a repeating staggered grid of crisp vector finance doodles and/or finance emojis across the app.
+ * - Automatically changes colors and contrast based on the active App Theme (Light vs. AMOLED Dark `#000000`).
+ * - Fully customizable in Settings: Turn On/Off, Pattern Style, Color Accent, Density, and Intensity/Opacity.
+ */
+@Composable
+fun AppDecoratedBackground(
+    modifier: Modifier = Modifier,
+    overrideSettings: WallpaperSettings? = null,
+    content: @Composable BoxScope.() -> Unit
+) {
+    val observedSettings by LocalAccountSessionManager.wallpaperSettings.collectAsStateWithLifecycle()
+    val settings = overrideSettings ?: observedSettings
+    val bgColor = MaterialTheme.colorScheme.background
+    val isDark = bgColor.luminance() < 0.2f
+    val primaryColor = MaterialTheme.colorScheme.primary
+    val secondaryColor = MaterialTheme.colorScheme.secondary
+    val tertiaryColor = MaterialTheme.colorScheme.tertiary
+
+    val palette = remember(settings.colorAccent, isDark, primaryColor, secondaryColor, tertiaryColor) {
+        resolveWallpaperPalette(
+            accent = settings.colorAccent,
+            isDark = isDark,
+            primaryThemeColor = primaryColor,
+            secondaryThemeColor = secondaryColor,
+            tertiaryThemeColor = tertiaryColor
+        )
+    }
+
+    val effectiveAlpha = (settings.opacityPercent.coerceIn(4, 28) / 100f) * if (isDark) 0.92f else 1.0f
+    val cellSpacingDp = when (settings.density) {
+        WallpaperDensity.COMPACT -> 66.dp
+        WallpaperDensity.BALANCED -> 86.dp
+        WallpaperDensity.AIRY -> 110.dp
+    }
+
+    // Subtle WhatsApp-inspired ambient radial tint over the theme background
+    val wallpaperTintColor = palette.firstOrNull()?.copy(alpha = if (isDark) effectiveAlpha * 0.16f else effectiveAlpha * 0.12f)
+        ?: Color.Transparent
+
+    Box(
+        modifier = modifier
+            .fillMaxSize()
+            .background(bgColor)
+    ) {
+        if (settings.enabled) {
+            // 1. Subtle Ambient Theme-Adaptive Gradient Wash
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(
+                        Brush.verticalGradient(
+                            colors = listOf(
+                                wallpaperTintColor,
+                                Color.Transparent,
+                                wallpaperTintColor.copy(alpha = wallpaperTintColor.alpha * 0.65f)
+                            )
+                        )
+                    )
+            )
+
+            // 2. Vector Doodle & Micro-Sparkle Tiled Canvas Layer
+            Canvas(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .testTag("whatsapp_finance_wallpaper_canvas")
+            ) {
+                val stepPx = cellSpacingDp.toPx().coerceAtLeast(48f)
+                val cols = (size.width / stepPx).toInt() + 2
+                val rows = (size.height / stepPx).toInt() + 2
+                val iconRadius = stepPx * 0.22f
+                val strokeWidth = (stepPx * 0.024f).coerceIn(1.6f, 3.4f)
+
+                for (row in 0 until rows) {
+                    val staggerX = if (row % 2 == 1) stepPx * 0.5f else 0f
+                    for (col in 0 until cols) {
+                        val hash = (row * 31 + col * 17).let { if (it < 0) -it else it }
+                        val cx = col * stepPx + staggerX + (stepPx * 0.25f)
+                        val cy = row * stepPx + (stepPx * 0.25f)
+                        if (cx > size.width + stepPx || cy > size.height + stepPx) continue
+
+                        val tileColor = palette[hash % palette.size].copy(alpha = effectiveAlpha)
+                        val angle = ((hash % 5) - 2) * 11f
+
+                        // In FINANCE_ICONS_AND_EMOJIS mode, odd cells are drawn as emojis in the overlay below
+                        val skipVectorForEmoji = settings.style == WallpaperPatternStyle.FINANCE_ICONS_AND_EMOJIS &&
+                            ((row + col) % 2 == 1)
+
+                        if (!skipVectorForEmoji) {
+                            rotate(degrees = angle, pivot = Offset(cx, cy)) {
+                                if (settings.style == WallpaperPatternStyle.MINIMAL_GEOMETRIC) {
+                                    drawMinimalLedgerMotif(
+                                        motifIndex = hash,
+                                        center = Offset(cx, cy),
+                                        r = iconRadius,
+                                        color = tileColor,
+                                        strokeWidth = strokeWidth
+                                    )
+                                } else {
+                                    drawFinanceDoodleMotif(
+                                        motifIndex = hash,
+                                        center = Offset(cx, cy),
+                                        r = iconRadius,
+                                        color = tileColor,
+                                        strokeWidth = strokeWidth
+                                    )
+                                }
+                            }
+                        }
+
+                        // WhatsApp-style micro-dots & tiny stars between primary tiles
+                        val dotCenter = Offset(cx + stepPx * 0.48f, cy + stepPx * 0.46f)
+                        if (dotCenter.x < size.width && dotCenter.y < size.height) {
+                            val dotColor = palette[(hash + 1) % palette.size].copy(alpha = effectiveAlpha * 0.55f)
+                            if (hash % 3 == 0) {
+                                val arm = iconRadius * 0.22f
+                                drawLine(
+                                    color = dotColor,
+                                    start = Offset(dotCenter.x - arm, dotCenter.y),
+                                    end = Offset(dotCenter.x + arm, dotCenter.y),
+                                    strokeWidth = strokeWidth * 0.7f,
+                                    cap = StrokeCap.Round
+                                )
+                                drawLine(
+                                    color = dotColor,
+                                    start = Offset(dotCenter.x, dotCenter.y - arm),
+                                    end = Offset(dotCenter.x, dotCenter.y + arm),
+                                    strokeWidth = strokeWidth * 0.7f,
+                                    cap = StrokeCap.Round
+                                )
+                            } else {
+                                drawCircle(
+                                    color = dotColor,
+                                    radius = strokeWidth * 0.9f,
+                                    center = dotCenter
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            // 3. Tiled Finance Emojis Layer (when FINANCE_ICONS_AND_EMOJIS is selected)
+            if (settings.style == WallpaperPatternStyle.FINANCE_ICONS_AND_EMOJIS) {
+                BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+                    val cols = (maxWidth / cellSpacingDp).toInt().coerceIn(2, 10) + 1
+                    val rows = (maxHeight / cellSpacingDp).toInt().coerceIn(3, 18) + 1
+                    val emojiFontSize = when (settings.density) {
+                        WallpaperDensity.COMPACT -> 16.sp
+                        WallpaperDensity.BALANCED -> 19.sp
+                        WallpaperDensity.AIRY -> 22.sp
+                    }
+                    for (r in 0 until rows) {
+                        val staggerDp = if (r % 2 == 1) cellSpacingDp * 0.5f else 0.dp
+                        for (c in 0 until cols) {
+                            if ((r + c) % 2 == 1) {
+                                val idx = (r * 7 + c * 13) % FINANCE_WALLPAPER_EMOJIS.size
+                                val rot = (((r * 11 + c * 5) % 5) - 2) * 10f
+                                Text(
+                                    text = FINANCE_WALLPAPER_EMOJIS[idx],
+                                    fontSize = emojiFontSize,
+                                    modifier = Modifier
+                                        .offset(
+                                            x = cellSpacingDp * c + staggerDp + cellSpacingDp * 0.14f,
+                                            y = cellSpacingDp * r + cellSpacingDp * 0.14f
+                                        )
+                                        .rotate(rot)
+                                        .alpha((effectiveAlpha * 1.15f).coerceIn(0.04f, 0.34f))
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        content()
+    }
+}
+
+/**
+ * Compact live preview banner used inside Settings -> Appearance so the user can immediately
+ * see how their WhatsApp-style Finance Wallpaper looks as they customize it.
+ */
+@Composable
+fun FinanceWallpaperPreviewBanner(
+    settings: WallpaperSettings,
+    modifier: Modifier = Modifier
+) {
+    val dimens = LocalAppDimens.current
+    Surface(
+        modifier = modifier
+            .fillMaxWidth()
+            .height(dimens.barChartHeight * 0.64f)
+            .clip(RoundedCornerShape(dimens.smallCornerRadius))
+            .testTag("wallpaper_live_preview_banner"),
+        shape = RoundedCornerShape(dimens.smallCornerRadius),
+        color = MaterialTheme.colorScheme.background
+    ) {
+        AppDecoratedBackground(
+            modifier = Modifier.fillMaxSize(),
+            overrideSettings = settings
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(dimens.horizontalPadding * 0.75f),
+                contentAlignment = Alignment.Center
+            ) {
+                Surface(
+                    shape = RoundedCornerShape(50),
+                    color = MaterialTheme.colorScheme.surface.copy(alpha = 0.88f),
+                    tonalElevation = 2.dp
+                ) {
+                    Text(
+                        text = if (settings.enabled) {
+                            "${settings.style.label} • ${settings.colorAccent.label} (${settings.opacityPercent}%)"
+                        } else {
+                            "Finance Background Off (Solid Theme Surface)"
+                        },
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier.padding(
+                            horizontal = dimens.horizontalPadding * 0.85f,
+                            vertical = dimens.itemSpacing * 0.45f
+                        )
+                    )
+                }
+            }
+        }
+    }
+}
+
+

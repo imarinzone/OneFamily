@@ -5,6 +5,12 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.test.core.app.ApplicationProvider
 import com.example.data.local.LocalAccountDataStore
 import com.example.data.local.LocalAccountSessionManager
+import com.example.data.model.CrashlyticsSettings
+import com.example.data.model.FcmPushSettings
+import com.example.data.model.WallpaperColorAccent
+import com.example.data.model.WallpaperDensity
+import com.example.data.model.WallpaperPatternStyle
+import com.example.data.model.WallpaperSettings
 import com.example.data.repository.AxioRepository
 import com.example.data.sms.SmsInboxReader
 import com.example.data.sms.TransactionNotificationHelper
@@ -230,6 +236,9 @@ class ExampleRobolectricTest {
         val updatedHousehold = repo.getHouseholdOnce(household.id)
         assertEquals("Aarav Sharma", updatedHousehold?.memberNames?.get(initialSession.uid))
 
+        // Restore default display name for subsequent tests
+        LocalAccountSessionManager.updateDisplayName(context, "Mock User")
+        repo.updateUserDisplayName("Mock User", household)
         LocalAccountSessionManager.signOut(context)
     }
 
@@ -369,5 +378,205 @@ class ExampleRobolectricTest {
         assertEquals(1, afterDuplicateIncoming.size)
 
         LocalAccountSessionManager.signOut(context)
+    }
+
+    @Test
+    fun `test mock user login seeds mock data across last 3 months, financial accounts, and raw SMS cache`() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val loginResult = LocalAccountSessionManager.signInWithUsernamePassword(
+            context = context,
+            rawUsername = "test",
+            rawPassword = "pass"
+        )
+        assertTrue(loginResult.isSuccess)
+        val user = loginResult.getOrNull()
+        assertNotNull(user)
+        assertEquals("Mock User", user?.displayName)
+
+        val repo = AxioRepository(context)
+        val profile = repo.ensureUserProfile(user!!.displayName, user.email).getOrNull()
+        assertNotNull(profile)
+        val household = repo.getHouseholdOnce(profile!!.activeHouseholdId)
+        assertNotNull(household)
+
+        // Verify shared mock transactions are populated across multiple distinct months
+        val sharedExpenses = repo.observeSharedExpenses(household!!.id, user.uid).first()
+        val mockTxs = sharedExpenses.filter { it.id.startsWith("mock_tx_") }
+        assertTrue(mockTxs.size >= 15)
+
+        // Verify distinct months represented in mock transactions
+        val distinctMonths = mockTxs.map { tx ->
+            Calendar.getInstance().apply { timeInMillis = tx.transactionDateMillis }.get(Calendar.MONTH)
+        }.distinct()
+        assertTrue("Expected at least 3 distinct months in mock data, found ${distinctMonths.size}", distinctMonths.size >= 3)
+
+        // Verify categories span Groceries, Rent & Housing, Food & Dining, Utilities & Bills, Transport & Fuel
+        val categories = mockTxs.map { it.category }.distinct()
+        assertTrue(categories.contains("Groceries"))
+        assertTrue(categories.contains("Rent & Housing"))
+        assertTrue(categories.contains("Food & Dining"))
+
+        // Verify raw SMS bodies are retrievable for mock transactions
+        val groceryTx = mockTxs.first { it.category == "Groceries" }
+        val rawSms = LocalAccountDataStore.getSmsMessageForTransaction(groceryTx)
+        assertNotNull(rawSms)
+        assertTrue(rawSms!!.body.contains("Nature's Basket") || rawSms.body.contains("HDFC Bank"))
+
+        // Verify financial accounts were seeded
+        val accounts = repo.observeAccounts(user.uid).first()
+        assertTrue(accounts.size >= 3)
+        assertTrue(accounts.any { it.name.contains("HDFC") })
+        assertTrue(accounts.any { it.name.contains("Axis") })
+
+        LocalAccountSessionManager.signOut(context)
+    }
+
+    @Test
+    fun `test linking duplicate SMS transactions merges signatures, deletes duplicate, and prevents re-import`() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        LocalAccountSessionManager.signInWithUsernamePassword(context, "test", "pass")
+        val user = LocalAccountSessionManager.getCurrentUser(context)!!
+        val repo = AxioRepository(context)
+        val profile = repo.ensureUserProfile(user.displayName, user.email).getOrNull()!!
+        val household = repo.getHouseholdOnce(profile.activeHouseholdId)!!
+
+        val smsReader = SmsInboxReader(context)
+        val ts = System.currentTimeMillis()
+
+        // Primary bank SMS alert
+        val bankSms = smsReader.parseRawSms(
+            sender = "VM-HDFCBK",
+            body = "Rs. 1,850.00 debited from A/c XX4821 on 18-11-26 to VPA bluebottle@okaxis (UPI Ref 8811223344).",
+            timestamp = ts
+        )!!
+        // Duplicate UPI app SMS alert for the exact same purchase
+        val upiDuplicateSms = smsReader.parseRawSms(
+            sender = "AX-GPAY",
+            body = "You paid Rs. 1,850.00 to Blue Bottle Cafe via UPI Ref 8811223344 from HDFC Bank XX4821.",
+            timestamp = ts + 25_000L
+        )!!
+
+        repo.batchImportSmsCandidates(
+            candidates = listOf(bankSms, upiDuplicateSms),
+            userName = user.displayName,
+            household = household,
+            shareByDefault = true
+        )
+
+        val beforeLink = repo.observeSharedExpenses(household.id, user.uid).first()
+        val primaryTx = beforeLink.firstOrNull { it.smsSignature == bankSms.id }
+        val duplicateTx = beforeLink.firstOrNull { it.smsSignature == upiDuplicateSms.id }
+        assertNotNull(primaryTx)
+        assertNotNull(duplicateTx)
+
+        // Link duplicateTx into primaryTx
+        val linkResult = repo.linkDuplicateTransaction(primaryTx!!, duplicateTx!!)
+        assertTrue(linkResult.isSuccess)
+        val mergedTx = linkResult.getOrNull()!!
+        assertTrue(mergedTx.linkedSmsSignatures.contains(upiDuplicateSms.id))
+
+        // Verify duplicate transaction row was removed from the ledger while primary remains
+        val afterLink = repo.observeSharedExpenses(household.id, user.uid).first()
+        assertNull(afterLink.firstOrNull { it.id == duplicateTx.id })
+        val persistedPrimary = afterLink.firstOrNull { it.id == primaryTx.id }
+        assertNotNull(persistedPrimary)
+        assertTrue(persistedPrimary!!.linkedSmsSignatures.contains(upiDuplicateSms.id))
+
+        // Verify both raw SMS alerts are returned when viewing/editing the linked transaction
+        val allLinkedSms = LocalAccountDataStore.getLinkedSmsMessagesForTransaction(persistedPrimary)
+        assertEquals(2, allLinkedSms.size)
+        assertTrue(allLinkedSms.any { it.sender == "VM-HDFCBK" })
+        assertTrue(allLinkedSms.any { it.sender == "AX-GPAY" })
+
+        // Verify re-importing the duplicate SMS candidate is skipped because its signature is linked
+        val reimportCount = repo.batchImportSmsCandidates(
+            candidates = listOf(upiDuplicateSms),
+            userName = user.displayName,
+            household = household,
+            shareByDefault = true
+        ).getOrNull()
+        assertEquals(0, reimportCount)
+
+        LocalAccountSessionManager.signOut(context)
+    }
+
+    @Test
+    fun `test WhatsApp-style finance wallpaper settings, FCM push settings, and Crashlytics stability guardrails`() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        LocalAccountSessionManager.ensureInitialized(context)
+
+        // 1. Verify WhatsApp-style finance wallpaper customization & persistence
+        val customWallpaper = WallpaperSettings(
+            enabled = true,
+            style = WallpaperPatternStyle.WHATSAPP_DOODLES,
+            colorAccent = WallpaperColorAccent.EMERALD_MINT,
+            density = WallpaperDensity.COMPACT,
+            opacityPercent = 16
+        )
+        LocalAccountSessionManager.updateWallpaperSettings(context, customWallpaper)
+        val loadedWallpaper = LocalAccountSessionManager.wallpaperSettings.value
+        assertTrue(loadedWallpaper.enabled)
+        assertEquals(WallpaperPatternStyle.WHATSAPP_DOODLES, loadedWallpaper.style)
+        assertEquals(WallpaperColorAccent.EMERALD_MINT, loadedWallpaper.colorAccent)
+        assertEquals(WallpaperDensity.COMPACT, loadedWallpaper.density)
+        assertEquals(16, loadedWallpaper.opacityPercent)
+
+        // Toggle wallpaper off and back on
+        LocalAccountSessionManager.updateWallpaperSettings(context, customWallpaper.copy(enabled = false))
+        assertFalse(LocalAccountSessionManager.wallpaperSettings.value.enabled)
+        LocalAccountSessionManager.updateWallpaperSettings(context, WallpaperSettings())
+        assertTrue(LocalAccountSessionManager.wallpaperSettings.value.enabled)
+
+        // 2. Verify Firebase Cloud Messaging (FCM) push alert settings & dispatch
+        val customFcm = FcmPushSettings(
+            familyTransactionAlertsEnabled = true,
+            budgetThresholdAlertsEnabled = true,
+            subscribedTopic = "household_test_family"
+        )
+        LocalAccountSessionManager.updateFcmPushSettings(context, customFcm)
+        assertEquals("household_test_family", LocalAccountSessionManager.fcmPushSettings.value.subscribedTopic)
+
+        // Trigger FCM family transaction & budget threshold push notifications safely
+        TransactionNotificationHelper.showFamilyTransactionPushNotification(
+            context = context,
+            expenseId = "test_fcm_tx_1",
+            householdId = "local_household_test",
+            householdName = "Family Household",
+            memberName = "Priya Sharma",
+            title = "Nature's Basket Groceries",
+            amount = 2450.0,
+            category = "Groceries",
+            currencySymbol = "₹"
+        )
+        TransactionNotificationHelper.showBudgetThresholdPushNotification(
+            context = context,
+            categoryOrScopeName = "Groceries",
+            spentAmount = 9200.0,
+            limitAmount = 10000.0,
+            thresholdPercent = 80,
+            currencySymbol = "₹"
+        )
+
+        // 3. Verify Firebase Crashlytics stability guardrails & diagnostic breadcrumbs
+        val customCrashlytics = CrashlyticsSettings(
+            crashReportingEnabled = true,
+            smsSyncGuardEnabled = true,
+            typographyGuardEnabled = true
+        )
+        LocalAccountSessionManager.updateCrashlyticsSettings(context, customCrashlytics)
+        assertTrue(LocalAccountSessionManager.crashlyticsSettings.value.crashReportingEnabled)
+
+        LocalAccountSessionManager.clearStabilityDiagnostics(context)
+        assertTrue(LocalAccountSessionManager.stabilityDiagnostics.value.isEmpty())
+
+        LocalAccountSessionManager.recordDiagnostic(
+            context = context,
+            subsystem = "SMS_AUTO_SYNC",
+            severity = "INFO",
+            message = "Verified SMS batch guardrails"
+        )
+        val diagnostics = LocalAccountSessionManager.stabilityDiagnostics.value
+        assertEquals(1, diagnostics.size)
+        assertEquals("SMS_AUTO_SYNC", diagnostics.first().subsystem)
     }
 }

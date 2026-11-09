@@ -35,6 +35,7 @@ data class ExpenseTransaction(
     val notes: String = "",
     val visibility: String = "SHARED", // SHARED | PERSONAL
     val smsSignature: String = "",
+    val linkedSmsSignatures: List<String> = emptyList(),
     val referenceNumber: String = "",
     val transactionDateMillis: Long = System.currentTimeMillis(),
     val memberUids: List<String> = emptyList(),
@@ -101,6 +102,55 @@ enum class BudgetScope(val label: String) {
     HOUSEHOLD_SHARED("Household"),
     PERSONAL_ONLY("Personal")
 }
+
+enum class WallpaperPatternStyle(val label: String) {
+    WHATSAPP_DOODLES("Finance Doodles"),
+    FINANCE_ICONS_AND_EMOJIS("Icons & Emojis"),
+    MINIMAL_GEOMETRIC("Minimal Ledger")
+}
+
+enum class WallpaperColorAccent(val label: String) {
+    THEME_ADAPTIVE("Theme Adaptive"),
+    EMERALD_MINT("Emerald Mint"),
+    ROYAL_GOLD("Royal Gold"),
+    OCEAN_SLATE("Ocean Cyan"),
+    WARM_CORAL("Warm Coral")
+}
+
+enum class WallpaperDensity(val label: String, val stepMultiplier: Float) {
+    COMPACT("Dense", 0.78f),
+    BALANCED("Balanced", 1.0f),
+    AIRY("Spacious", 1.32f)
+}
+
+data class WallpaperSettings(
+    val enabled: Boolean = true,
+    val style: WallpaperPatternStyle = WallpaperPatternStyle.WHATSAPP_DOODLES,
+    val colorAccent: WallpaperColorAccent = WallpaperColorAccent.THEME_ADAPTIVE,
+    val density: WallpaperDensity = WallpaperDensity.BALANCED,
+    val opacityPercent: Int = 11
+)
+
+data class FcmPushSettings(
+    val familyTransactionAlertsEnabled: Boolean = true,
+    val budgetThresholdAlertsEnabled: Boolean = true,
+    val subscribedTopic: String = "household_shared"
+)
+
+data class CrashlyticsSettings(
+    val crashReportingEnabled: Boolean = true,
+    val smsSyncGuardEnabled: Boolean = true,
+    val typographyGuardEnabled: Boolean = true
+)
+
+data class StabilityDiagnosticEntry(
+    val id: String,
+    val timestampMillis: Long,
+    val subsystem: String, // "SMS_AUTO_SYNC" | "RESPONSIVE_TYPOGRAPHY" | "RUNTIME_GUARD" | "DUPLICATE_LINKER"
+    val severity: String,  // "INFO" | "WARN" | "NON_FATAL" | "CRASH_PREVENTED"
+    val message: String,
+    val deviceModel: String
+)
 
 object ExpenseCategories {
     val ALL = listOf(

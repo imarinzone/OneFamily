@@ -34,6 +34,8 @@ import kotlinx.coroutines.launch
 
 object TransactionNotificationHelper {
     const val CHANNEL_ID = "axio_realtime_transactions"
+    const val CHANNEL_ID_FCM_FAMILY = "axio_fcm_family_push"
+    const val CHANNEL_ID_FCM_BUDGET = "axio_fcm_budget_push"
     const val EXTRA_EDIT_EXPENSE_ID = "extra_edit_expense_id"
     const val EXTRA_EDIT_HOUSEHOLD_ID = "extra_edit_household_id"
     const val EXTRA_EDIT_VISIBILITY = "extra_edit_visibility"
@@ -44,10 +46,13 @@ object TransactionNotificationHelper {
 
     private val notifiedSignatures: MutableSet<String> =
         Collections.synchronizedSet(mutableSetOf<String>())
+    private val notifiedBudgetKeys: MutableSet<String> =
+        Collections.synchronizedSet(mutableSetOf<String>())
 
     fun ensureChannel(context: Context) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channel = NotificationChannel(
+            val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
+            val smsChannel = NotificationChannel(
                 CHANNEL_ID,
                 "Real-Time Expense & Category Alerts",
                 NotificationManager.IMPORTANCE_HIGH
@@ -55,8 +60,25 @@ object TransactionNotificationHelper {
                 description = "Instant alerts for new SMS transactions with quick category editing"
                 enableVibration(true)
             }
-            val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
-            manager?.createNotificationChannel(channel)
+            val fcmFamilyChannel = NotificationChannel(
+                CHANNEL_ID_FCM_FAMILY,
+                "FCM Family Transaction Push Alerts",
+                NotificationManager.IMPORTANCE_HIGH
+            ).apply {
+                description = "Instant FCM push alerts when a family member logs a shared transaction"
+                enableVibration(true)
+            }
+            val fcmBudgetChannel = NotificationChannel(
+                CHANNEL_ID_FCM_BUDGET,
+                "FCM Budget Threshold Push Alerts",
+                NotificationManager.IMPORTANCE_HIGH
+            ).apply {
+                description = "Instant FCM push alerts when a category or household budget nears or exceeds its threshold"
+                enableVibration(true)
+            }
+            manager?.createNotificationChannel(smsChannel)
+            manager?.createNotificationChannel(fcmFamilyChannel)
+            manager?.createNotificationChannel(fcmBudgetChannel)
         }
     }
 
@@ -147,6 +169,149 @@ object TransactionNotificationHelper {
     }
 
     /**
+     * Firebase Cloud Messaging (FCM) Push Alert when a family member logs a new shared transaction.
+     */
+    fun showFamilyTransactionPushNotification(
+        context: Context,
+        expenseId: String,
+        householdId: String,
+        householdName: String,
+        memberName: String,
+        title: String,
+        amount: Double,
+        category: String,
+        currencySymbol: String = "₹"
+    ) {
+        LocalAccountSessionManager.ensureInitialized(context.applicationContext)
+        val fcmSettings = LocalAccountSessionManager.fcmPushSettings.value
+        if (!fcmSettings.familyTransactionAlertsEnabled) return
+
+        ensureChannel(context)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            val granted = ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.POST_NOTIFICATIONS
+            ) == PackageManager.PERMISSION_GRANTED
+            if (!granted) return
+        }
+
+        val formattedAmt = NumberFormat.getNumberInstance(Locale.forLanguageTag("en-IN")).apply {
+            maximumFractionDigits = if (amount % 1.0 == 0.0) 0 else 2
+        }.format(amount)
+
+        val openEditIntent = Intent(context, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
+            putExtra(EXTRA_EDIT_EXPENSE_ID, expenseId)
+            putExtra(EXTRA_EDIT_HOUSEHOLD_ID, householdId)
+            putExtra(EXTRA_EDIT_VISIBILITY, "SHARED")
+        }
+        val notificationId = ("fcm_family_$expenseId").hashCode()
+        val contentPendingIntent = PendingIntent.getActivity(
+            context,
+            notificationId,
+            openEditIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        val cleanHousehold = householdName.ifBlank { "Family Home" }
+        val cleanMember = memberName.ifBlank { "Family Member" }
+
+        val builder = NotificationCompat.Builder(context, CHANNEL_ID_FCM_FAMILY)
+            .setSmallIcon(R.drawable.ic_notification_receipt)
+            .setContentTitle("FCM • $cleanMember logged $currencySymbol$formattedAmt")
+            .setContentText("$title • $category ($cleanHousehold)")
+            .setStyle(
+                NotificationCompat.BigTextStyle().bigText(
+                    "$cleanMember added a shared transaction in $cleanHousehold:\n$title — $currencySymbol$formattedAmt ($category)\nTap to inspect or edit receipt."
+                )
+            )
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setCategory(NotificationCompat.CATEGORY_SOCIAL)
+            .setAutoCancel(true)
+            .setContentIntent(contentPendingIntent)
+
+        runCatching {
+            NotificationManagerCompat.from(context).notify(notificationId, builder.build())
+        }
+    }
+
+    /**
+     * Firebase Cloud Messaging (FCM) Push Alert when a shared category budget or household monthly
+     * budget nears or exceeds its configured alert threshold percentage.
+     */
+    fun showBudgetThresholdPushNotification(
+        context: Context,
+        categoryOrScopeName: String,
+        spentAmount: Double,
+        limitAmount: Double,
+        thresholdPercent: Int,
+        currencySymbol: String = "₹",
+        forceNotify: Boolean = false
+    ) {
+        LocalAccountSessionManager.ensureInitialized(context.applicationContext)
+        val fcmSettings = LocalAccountSessionManager.fcmPushSettings.value
+        if (!fcmSettings.budgetThresholdAlertsEnabled && !forceNotify) return
+        if (limitAmount <= 0.0) return
+
+        val usedPercent = ((spentAmount / limitAmount) * 100.0).toInt()
+        if (usedPercent < thresholdPercent && !forceNotify) return
+
+        val bucket = if (usedPercent >= 100) "100" else thresholdPercent.toString()
+        val dedupeKey = "${categoryOrScopeName.lowercase()}_$bucket"
+        if (!forceNotify && !notifiedBudgetKeys.add(dedupeKey)) return
+
+        ensureChannel(context)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            val granted = ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.POST_NOTIFICATIONS
+            ) == PackageManager.PERMISSION_GRANTED
+            if (!granted) return
+        }
+
+        val numFmt = NumberFormat.getNumberInstance(Locale.forLanguageTag("en-IN")).apply {
+            maximumFractionDigits = 0
+        }
+        val spentStr = "$currencySymbol${numFmt.format(spentAmount)}"
+        val limitStr = "$currencySymbol${numFmt.format(limitAmount)}"
+        val headline = if (usedPercent >= 100) {
+            "FCM Budget Exceeded • $categoryOrScopeName ($usedPercent%)"
+        } else {
+            "FCM Budget Alert • $categoryOrScopeName at $usedPercent%"
+        }
+        val bodyText = if (usedPercent >= 100) {
+            "Spent $spentStr of $limitStr monthly limit in $categoryOrScopeName. Consider reviewing recent family expenses."
+        } else {
+            "Spent $spentStr of $limitStr ($usedPercent% used, alert threshold $thresholdPercent%)."
+        }
+
+        val openAppIntent = Intent(context, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
+        }
+        val notificationId = ("fcm_budget_$dedupeKey").hashCode()
+        val contentPendingIntent = PendingIntent.getActivity(
+            context,
+            notificationId,
+            openAppIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        val builder = NotificationCompat.Builder(context, CHANNEL_ID_FCM_BUDGET)
+            .setSmallIcon(R.drawable.ic_notification_receipt)
+            .setContentTitle(headline)
+            .setContentText(bodyText)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(bodyText))
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setCategory(NotificationCompat.CATEGORY_ALARM)
+            .setAutoCancel(true)
+            .setContentIntent(contentPendingIntent)
+
+        runCatching {
+            NotificationManagerCompat.from(context).notify(notificationId, builder.build())
+        }
+    }
+
+    /**
      * Shared processor used by both `IncomingSmsBroadcastReceiver` (`SMS_RECEIVED`) and
      * `SmsInboxContentObserver` (`content://sms`) to deduplicate, save, and notify when a new
      * bank/UPI SMS arrives.
@@ -162,48 +327,73 @@ object TransactionNotificationHelper {
         val localUser = LocalAccountSessionManager.getCurrentUser(appContext)
         if (firebaseUser == null && localUser == null) return
 
-        val repo = AxioRepository(appContext)
-        val profile = repo.getUserProfileOnce()
-        val household = profile?.activeHouseholdId?.takeIf { it.isNotBlank() }?.let {
-            repo.getHouseholdOnce(it)
+        try {
+            val repo = AxioRepository(appContext)
+            val profile = repo.getUserProfileOnce()
+            val household = profile?.activeHouseholdId?.takeIf { it.isNotBlank() }?.let {
+                repo.getHouseholdOnce(it)
+            }
+
+            val parsed = candidate.parsed
+            val isIncome = parsed.type == TransactionType.INCOME
+            val merchantTitle = parsed.merchant?.takeIf { it.isNotBlank() }
+                ?: "${parsed.bankName} ${parsed.type.name.lowercase().replaceFirstChar { it.uppercase() }}"
+            val effectiveShared = household != null
+            val docId = "sms_${candidate.id}"
+            val memberDisplayName = firebaseUser?.displayName ?: localUser?.displayName ?: profile?.displayName ?: "Member"
+            val currencySymbol = profile?.currencySymbol ?: "₹"
+
+            val savedResult = repo.addExpense(
+                userName = memberDisplayName,
+                household = household,
+                title = merchantTitle,
+                amount = parsed.amount.toDouble(),
+                type = if (isIncome) "INCOME" else "EXPENSE",
+                category = candidate.suggestedCategory,
+                accountName = candidate.suggestedAccountName,
+                paymentMode = candidate.suggestedPaymentMode,
+                tags = listOf("sms-auto", parsed.bankName.lowercase().replace(" ", "-")),
+                notes = "[${parsed.sender}] ${parsed.smsBody}".take(500),
+                isShared = effectiveShared,
+                smsSignature = candidate.id,
+                referenceNumber = parsed.reference.orEmpty(),
+                transactionDateMillis = parsed.timestamp,
+                customDocId = docId
+            )
+
+            val expenseIdToNotify = savedResult.getOrDefault(docId)
+            showNewTransactionNotification(
+                context = appContext,
+                expenseId = expenseIdToNotify,
+                householdId = household?.id.orEmpty(),
+                visibility = if (effectiveShared) "SHARED" else "PERSONAL",
+                title = merchantTitle,
+                amount = parsed.amount.toDouble(),
+                currentCategory = candidate.suggestedCategory,
+                currencySymbol = currencySymbol
+            )
+
+            if (effectiveShared && household != null) {
+                showFamilyTransactionPushNotification(
+                    context = appContext,
+                    expenseId = expenseIdToNotify,
+                    householdId = household.id,
+                    householdName = household.name,
+                    memberName = memberDisplayName,
+                    title = merchantTitle,
+                    amount = parsed.amount.toDouble(),
+                    category = candidate.suggestedCategory,
+                    currencySymbol = currencySymbol
+                )
+            }
+        } catch (e: Exception) {
+            LocalAccountSessionManager.recordDiagnostic(
+                context = appContext,
+                subsystem = "SMS_REALTIME_SYNC",
+                severity = "NON_FATAL",
+                message = "Guarded incoming SMS processing: ${e.javaClass.simpleName}: ${e.localizedMessage.orEmpty()}"
+            )
         }
-
-        val parsed = candidate.parsed
-        val isIncome = parsed.type == TransactionType.INCOME
-        val merchantTitle = parsed.merchant?.takeIf { it.isNotBlank() }
-            ?: "${parsed.bankName} ${parsed.type.name.lowercase().replaceFirstChar { it.uppercase() }}"
-        val effectiveShared = household != null
-        val docId = "sms_${candidate.id}"
-
-        val savedResult = repo.addExpense(
-            userName = firebaseUser?.displayName ?: localUser?.displayName ?: profile?.displayName ?: "Member",
-            household = household,
-            title = merchantTitle,
-            amount = parsed.amount.toDouble(),
-            type = if (isIncome) "INCOME" else "EXPENSE",
-            category = candidate.suggestedCategory,
-            accountName = candidate.suggestedAccountName,
-            paymentMode = candidate.suggestedPaymentMode,
-            tags = listOf("sms-auto", parsed.bankName.lowercase().replace(" ", "-")),
-            notes = "[${parsed.sender}] ${parsed.smsBody}".take(500),
-            isShared = effectiveShared,
-            smsSignature = candidate.id,
-            referenceNumber = parsed.reference.orEmpty(),
-            transactionDateMillis = parsed.timestamp,
-            customDocId = docId
-        )
-
-        val expenseIdToNotify = savedResult.getOrDefault(docId)
-        showNewTransactionNotification(
-            context = appContext,
-            expenseId = expenseIdToNotify,
-            householdId = household?.id.orEmpty(),
-            visibility = if (effectiveShared) "SHARED" else "PERSONAL",
-            title = merchantTitle,
-            amount = parsed.amount.toDouble(),
-            currentCategory = candidate.suggestedCategory,
-            currencySymbol = profile?.currencySymbol ?: "₹"
-        )
     }
 }
 

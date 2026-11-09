@@ -85,40 +85,49 @@ class SmsInboxReader(private val context: Context) {
                         }
 
                         if (isInboxMsg) {
-                            val sender = cursor.getString(addressIdx).orEmpty()
-                            val body = cursor.getString(bodyIdx).orEmpty()
-                            val timestamp = cursor.getLong(dateIdx)
+                            runCatching {
+                                val sender = cursor.getString(addressIdx).orEmpty()
+                                val body = cursor.getString(bodyIdx).orEmpty()
+                                val timestamp = cursor.getLong(dateIdx)
 
-                            if (sender.isNotBlank() && body.isNotBlank()) {
-                                val parsed = BankParserFactory.parseSms(
-                                    smsBody = body,
-                                    sender = sender,
-                                    timestamp = timestamp
-                                )
-                                if (parsed != null) {
-                                    val signature = parsed.generateTransactionId()
-                                    LocalAccountDataStore.cacheSmsMessage(
-                                        signature = signature,
+                                if (sender.isNotBlank() && body.isNotBlank()) {
+                                    val parsed = BankParserFactory.parseSms(
+                                        smsBody = body,
                                         sender = sender,
-                                        body = body,
-                                        timestamp = timestamp,
-                                        persistImmediately = false
+                                        timestamp = timestamp
                                     )
-                                    if (signature !in seenSignatures) {
-                                        seenSignatures.add(signature)
-                                        val category = BankParserFactory.inferCategory(parsed)
-                                        candidates.add(
-                                            SmsCandidate(
-                                                id = signature,
-                                                parsed = parsed,
-                                                suggestedCategory = category,
-                                                suggestedAccountName = BankParserFactory.formatAccountDisplayName(parsed),
-                                                suggestedPaymentMode = BankParserFactory.inferPaymentMode(parsed),
-                                                isSharedByDefault = true
-                                            )
+                                    if (parsed != null) {
+                                        val signature = parsed.generateTransactionId()
+                                        LocalAccountDataStore.cacheSmsMessage(
+                                            signature = signature,
+                                            sender = sender,
+                                            body = body,
+                                            timestamp = timestamp,
+                                            persistImmediately = false
                                         )
+                                        if (signature !in seenSignatures) {
+                                            seenSignatures.add(signature)
+                                            val category = BankParserFactory.inferCategory(parsed)
+                                            candidates.add(
+                                                SmsCandidate(
+                                                    id = signature,
+                                                    parsed = parsed,
+                                                    suggestedCategory = category,
+                                                    suggestedAccountName = BankParserFactory.formatAccountDisplayName(parsed),
+                                                    suggestedPaymentMode = BankParserFactory.inferPaymentMode(parsed),
+                                                    isSharedByDefault = true
+                                                )
+                                            )
+                                        }
                                     }
                                 }
+                            }.onFailure { rowErr ->
+                                com.example.data.local.LocalAccountSessionManager.recordDiagnostic(
+                                    context = context,
+                                    subsystem = "SMS_AUTO_SYNC",
+                                    severity = "NON_FATAL",
+                                    message = "Guarded SMS cursor row #$readCount: ${rowErr.javaClass.simpleName}"
+                                )
                             }
                         }
 
@@ -133,8 +142,13 @@ class SmsInboxReader(private val context: Context) {
                 }
             } catch (_: SecurityException) {
                 // Handled by caller when READ_SMS is not granted
-            } catch (_: Exception) {
-                // Safe fallback if Telephony provider is unavailable
+            } catch (e: Exception) {
+                com.example.data.local.LocalAccountSessionManager.recordDiagnostic(
+                    context = context,
+                    subsystem = "SMS_AUTO_SYNC",
+                    severity = "NON_FATAL",
+                    message = "Guarded SMS provider query on $uri: ${e.javaClass.simpleName}"
+                )
             }
         }
 

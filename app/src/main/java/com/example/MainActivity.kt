@@ -85,6 +85,7 @@ import com.example.data.sms.SmsInboxReader
 import com.example.data.sms.TransactionNotificationHelper
 import com.example.ui.auth.AuthScreen
 import com.example.ui.auth.signOut
+import com.example.ui.components.AppDecoratedBackground
 import com.example.ui.components.MonthPeriodSelectorBar
 import com.example.ui.screens.AddAccountDialog
 import com.example.ui.screens.AddCategoryBudgetDialog
@@ -96,6 +97,7 @@ import com.example.ui.screens.EditTransactionDialog
 import com.example.ui.screens.FirstTimeSmsSyncScreen
 import com.example.ui.screens.HomeTabScreen
 import com.example.ui.screens.HouseholdTabScreen
+import com.example.ui.screens.LinkDuplicateTransactionDialog
 import com.example.ui.screens.QuickCategoryPickerDialog
 import com.example.ui.theme.AxioFamilyTheme
 import com.example.ui.theme.LocalAppDimens
@@ -130,10 +132,12 @@ class MainActivity : ComponentActivity() {
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
                 ) {
-                    AppNavigation(
-                        deepLinkExpenseId = deepLinkExpenseId,
-                        onConsumeDeepLinkExpenseId = { pendingNotificationExpenseId.value = null }
-                    )
+                    AppDecoratedBackground(modifier = Modifier.fillMaxSize()) {
+                        AppNavigation(
+                            deepLinkExpenseId = deepLinkExpenseId,
+                            onConsumeDeepLinkExpenseId = { pendingNotificationExpenseId.value = null }
+                        )
+                    }
                 }
             }
         }
@@ -266,6 +270,7 @@ fun AxioMainShell(
     var editingCategoryBudget by remember { mutableStateOf<Pair<Boolean, CategorySpendProgress?>>(false to null) }
     var editingTransaction by remember { mutableStateOf<ExpenseTransaction?>(null) }
     var quickCategoryTransaction by remember { mutableStateOf<ExpenseTransaction?>(null) }
+    var linkingDuplicateTransaction by remember { mutableStateOf<ExpenseTransaction?>(null) }
 
     // Open EditTransactionDialog automatically when user taps a real-time SMS notification
     LaunchedEffect(deepLinkExpenseId, uiState.personalExpenses, uiState.sharedExpenses) {
@@ -372,6 +377,7 @@ fun AxioMainShell(
 
     Scaffold(
         contentWindowInsets = WindowInsets.safeDrawing,
+        containerColor = Color.Transparent,
         topBar = {
             val isDateBarApplicable = currentTab == AxioNavTab.HOME || currentTab == AxioNavTab.ANALYSIS
             AnimatedVisibility(visible = isDateBarApplicable) {
@@ -487,7 +493,8 @@ fun AxioMainShell(
                             onEditTransaction = { editingTransaction = it },
                             onQuickChangeCategory = { quickCategoryTransaction = it },
                             onToggleTransactionPrivacy = { viewModel.toggleTransactionPrivacy(it) },
-                            onDeleteTransaction = { viewModel.deleteTransaction(it) }
+                            onDeleteTransaction = { viewModel.deleteTransaction(it) },
+                            onLinkDuplicateTransaction = { linkingDuplicateTransaction = it }
                         )
 
                         AxioNavTab.ANALYSIS -> AnalyticsTabScreen(
@@ -498,7 +505,8 @@ fun AxioMainShell(
                             onEditTransaction = { editingTransaction = it },
                             onQuickChangeCategory = { quickCategoryTransaction = it },
                             onToggleTransactionPrivacy = { viewModel.toggleTransactionPrivacy(it) },
-                            onDeleteTransaction = { viewModel.deleteTransaction(it) }
+                            onDeleteTransaction = { viewModel.deleteTransaction(it) },
+                            onLinkDuplicateTransaction = { linkingDuplicateTransaction = it }
                         )
 
                         AxioNavTab.BUDGETS -> BudgetsTabScreen(
@@ -518,6 +526,12 @@ fun AxioMainShell(
                             },
                             onAddAccountClick = { showAddAccountDialog = true },
                             onScanSmsClick = triggerSmsSync,
+                            onSendTestFcmAlertClick = {
+                                viewModel.sendTestFcmPushAlert(context)
+                            },
+                            onRunStabilityCheckClick = {
+                                viewModel.runCrashlyticsStabilityCheck(context)
+                            },
                             onSignOutClick = {
                                 signOut(
                                     context = context,
@@ -602,6 +616,10 @@ fun AxioMainShell(
                 viewModel.deleteTransaction(txToEdit)
                 editingTransaction = null
             },
+            onLinkDuplicate = {
+                editingTransaction = null
+                linkingDuplicateTransaction = txToEdit
+            },
             onSave = { title, amount, type, category, accountName, paymentMode, tagsInput, notes, txDateMillis, targetShared ->
                 viewModel.updateTransaction(
                     original = txToEdit,
@@ -617,6 +635,20 @@ fun AxioMainShell(
                     targetShared = targetShared
                 )
                 editingTransaction = null
+            }
+        )
+    }
+
+    if (linkingDuplicateTransaction != null) {
+        val sourceTx = linkingDuplicateTransaction!!
+        LinkDuplicateTransactionDialog(
+            sourceTransaction = sourceTx,
+            allTransactions = uiState.allScopedExpenses,
+            currencySymbol = currency,
+            onDismiss = { linkingDuplicateTransaction = null },
+            onConfirmLink = { primaryTx, duplicateTx ->
+                viewModel.linkDuplicateTransactions(primaryTx, duplicateTx)
+                linkingDuplicateTransaction = null
             }
         )
     }

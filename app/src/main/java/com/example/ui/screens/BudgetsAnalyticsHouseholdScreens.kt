@@ -30,6 +30,7 @@ import androidx.compose.material.icons.automirrored.filled.Logout
 import androidx.compose.material.icons.automirrored.filled.ReceiptLong
 import androidx.compose.material.icons.filled.AccountBalance
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.BugReport
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Close
@@ -39,11 +40,14 @@ import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.FilterList
 import androidx.compose.material.icons.filled.Groups
+import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.MarkEmailUnread
+import androidx.compose.material.icons.filled.NotificationsActive
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.PersonAdd
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material.icons.filled.Verified
 import androidx.compose.material3.Button
@@ -57,7 +61,9 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -83,10 +89,14 @@ import com.example.data.local.LocalAccountSessionManager
 import com.example.data.model.BudgetScope
 import com.example.data.model.ExpenseTransaction
 import com.example.data.model.Household
+import com.example.data.model.WallpaperColorAccent
+import com.example.data.model.WallpaperDensity
+import com.example.data.model.WallpaperPatternStyle
 import com.example.ui.components.AccountsCarouselStrip
 import com.example.ui.components.CategoryDonutChart
 import com.example.ui.components.CustomDateRangePickerModal
 import com.example.ui.components.ExpenseTransactionItemCard
+import com.example.ui.components.FinanceWallpaperPreviewBanner
 import com.example.ui.components.MonthlyBarGraph
 import com.example.ui.components.MonthlyBudgetPulseCard
 import com.example.ui.components.ReceiptDashedDividerLine
@@ -106,6 +116,7 @@ import com.example.ui.viewmodel.AxioDashboardUiState
 import com.example.ui.viewmodel.CategorySpendProgress
 import com.example.ui.viewmodel.DateRangePreset
 import com.example.ui.viewmodel.YearMonthPeriod
+import kotlin.math.roundToInt
 
 /**
  * Home Screen (`HomeTabScreen`):
@@ -134,6 +145,7 @@ fun HomeTabScreen(
     onEditTransaction: (ExpenseTransaction) -> Unit = {},
     onQuickChangeCategory: (ExpenseTransaction) -> Unit = {},
     onToggleTransactionPrivacy: (ExpenseTransaction) -> Unit = {},
+    onLinkDuplicateTransaction: (ExpenseTransaction) -> Unit = {},
     onDeleteTransaction: (ExpenseTransaction) -> Unit = {}
 ) {
     val dimens = LocalAppDimens.current
@@ -508,6 +520,7 @@ fun HomeTabScreen(
                         currencySymbol = currency,
                         canTogglePrivacy = uiState.household != null,
                         onTogglePrivacy = { onToggleTransactionPrivacy(expense) },
+                        onLinkDuplicate = { onLinkDuplicateTransaction(expense) },
                         onDelete = { onDeleteTransaction(expense) },
                         onEditTransaction = { onEditTransaction(expense) },
                         onQuickChangeCategory = { onQuickChangeCategory(expense) },
@@ -547,6 +560,7 @@ fun AnalyticsTabScreen(
     onEditTransaction: (ExpenseTransaction) -> Unit = {},
     onQuickChangeCategory: (ExpenseTransaction) -> Unit = {},
     onToggleTransactionPrivacy: (ExpenseTransaction) -> Unit = {},
+    onLinkDuplicateTransaction: (ExpenseTransaction) -> Unit = {},
     onDeleteTransaction: (ExpenseTransaction) -> Unit = {}
 ) {
     val dimens = LocalAppDimens.current
@@ -765,7 +779,20 @@ fun AnalyticsTabScreen(
                                                     style = MaterialTheme.typography.titleMedium,
                                                     fontWeight = FontWeight.Bold
                                                 )
-                                                Spacer(modifier = Modifier.width(dimens.horizontalPadding * 0.35f))
+                                                Spacer(modifier = Modifier.width(dimens.horizontalPadding * 0.25f))
+                                                IconButton(
+                                                    onClick = { onLinkDuplicateTransaction(tx) },
+                                                    modifier = Modifier
+                                                        .size(dimens.rowIconBoxSize * 0.72f)
+                                                        .testTag("analysis_link_tx_button_${tx.id}")
+                                                ) {
+                                                    Icon(
+                                                        imageVector = Icons.Default.Link,
+                                                        contentDescription = "Link Duplicate Transaction",
+                                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                        modifier = Modifier.size(dimens.rowIconSize * 0.75f)
+                                                    )
+                                                }
                                                 IconButton(
                                                     onClick = { onEditTransaction(tx) },
                                                     modifier = Modifier
@@ -1214,6 +1241,8 @@ fun HouseholdTabScreen(
     onUpdateUserName: (String) -> Unit = {},
     onAddAccountClick: () -> Unit = {},
     onScanSmsClick: () -> Unit = {},
+    onSendTestFcmAlertClick: () -> Unit = {},
+    onRunStabilityCheckClick: () -> Unit = {},
     onSignOutClick: () -> Unit = {},
     onCreateHousehold: (String, Double) -> Unit,
     onJoinByCode: (String) -> Unit,
@@ -1224,6 +1253,10 @@ fun HouseholdTabScreen(
     val context = LocalContext.current
     val clipboardManager = LocalClipboardManager.current
     val currentThemeMode by LocalAccountSessionManager.themeMode.collectAsStateWithLifecycle()
+    val wallpaperSettings by LocalAccountSessionManager.wallpaperSettings.collectAsStateWithLifecycle()
+    val fcmPushSettings by LocalAccountSessionManager.fcmPushSettings.collectAsStateWithLifecycle()
+    val crashlyticsSettings by LocalAccountSessionManager.crashlyticsSettings.collectAsStateWithLifecycle()
+    val stabilityDiagnostics by LocalAccountSessionManager.stabilityDiagnostics.collectAsStateWithLifecycle()
     val currency = uiState.userProfile?.currencySymbol ?: "₹"
 
     val displayName = uiState.userProfile?.displayName?.takeIf { it.isNotBlank() }
@@ -1402,10 +1435,12 @@ fun HouseholdTabScreen(
             }
         }
 
-        // 3. Material 3 Theme & Appearance Card (System / Light / Dark AMOLED)
+        // 3. Material 3 Theme & WhatsApp-Style Finance Wallpaper Customization Card
         item {
             Card(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("theme_and_wallpaper_card"),
                 shape = RoundedCornerShape(dimens.cardCornerRadius),
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
                 elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
@@ -1430,17 +1465,508 @@ fun HouseholdTabScreen(
                             )
                         }
                         Spacer(modifier = Modifier.width(dimens.horizontalPadding * 0.75f))
-                        Text(
-                            text = "Theme",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold
-                        )
+                        Column {
+                            Text(
+                                text = "Theme & Finance Wallpaper",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                text = "Adapts automatically to Light & AMOLED Dark modes",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
                     }
 
                     ThemeModeSelectorBar(
                         currentMode = currentThemeMode,
                         onSelectMode = { LocalAccountSessionManager.setThemeMode(context, it) }
                     )
+
+                    ReceiptDashedDividerLine()
+
+                    // Live Preview Banner
+                    FinanceWallpaperPreviewBanner(settings = wallpaperSettings)
+
+                    // On / Off Toggle for WhatsApp-Style Finance Background
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Finance Doodle & Emoji Background",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            Text(
+                                text = "WhatsApp-style tiled finance icons & emojis",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Switch(
+                            checked = wallpaperSettings.enabled,
+                            onCheckedChange = { enabled ->
+                                LocalAccountSessionManager.updateWallpaperSettings(
+                                    context = context,
+                                    newSettings = wallpaperSettings.copy(enabled = enabled)
+                                )
+                            },
+                            modifier = Modifier.testTag("wallpaper_enable_switch")
+                        )
+                    }
+
+                    AnimatedVisibility(visible = wallpaperSettings.enabled) {
+                        Column(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalArrangement = Arrangement.spacedBy(dimens.itemSpacing * 0.7f)
+                        ) {
+                            // Pattern Style Selector
+                            Text(
+                                text = "Pattern Style",
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .horizontalScroll(rememberScrollState()),
+                                horizontalArrangement = Arrangement.spacedBy(dimens.horizontalPadding * 0.45f)
+                            ) {
+                                WallpaperPatternStyle.entries.forEach { style ->
+                                    FilterChip(
+                                        selected = wallpaperSettings.style == style,
+                                        onClick = {
+                                            LocalAccountSessionManager.updateWallpaperSettings(
+                                                context = context,
+                                                newSettings = wallpaperSettings.copy(style = style)
+                                            )
+                                        },
+                                        label = { Text(style.label) },
+                                        modifier = Modifier.testTag("wallpaper_style_chip_${style.name.lowercase()}")
+                                    )
+                                }
+                            }
+
+                            // Color Accent Selector
+                            Text(
+                                text = "Color Accent",
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .horizontalScroll(rememberScrollState()),
+                                horizontalArrangement = Arrangement.spacedBy(dimens.horizontalPadding * 0.45f)
+                            ) {
+                                WallpaperColorAccent.entries.forEach { accent ->
+                                    FilterChip(
+                                        selected = wallpaperSettings.colorAccent == accent,
+                                        onClick = {
+                                            LocalAccountSessionManager.updateWallpaperSettings(
+                                                context = context,
+                                                newSettings = wallpaperSettings.copy(colorAccent = accent)
+                                            )
+                                        },
+                                        label = { Text(accent.label) },
+                                        modifier = Modifier.testTag("wallpaper_accent_chip_${accent.name.lowercase()}")
+                                    )
+                                }
+                            }
+
+                            // Pattern Density Selector
+                            Text(
+                                text = "Pattern Density",
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .horizontalScroll(rememberScrollState()),
+                                horizontalArrangement = Arrangement.spacedBy(dimens.horizontalPadding * 0.45f)
+                            ) {
+                                WallpaperDensity.entries.forEach { density ->
+                                    FilterChip(
+                                        selected = wallpaperSettings.density == density,
+                                        onClick = {
+                                            LocalAccountSessionManager.updateWallpaperSettings(
+                                                context = context,
+                                                newSettings = wallpaperSettings.copy(density = density)
+                                            )
+                                        },
+                                        label = { Text(density.label) },
+                                        modifier = Modifier.testTag("wallpaper_density_chip_${density.name.lowercase()}")
+                                    )
+                                }
+                            }
+
+                            // Pattern Intensity / Opacity Slider
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = "Pattern Intensity",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                Text(
+                                    text = "${wallpaperSettings.opacityPercent}%",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                            }
+                            Slider(
+                                value = wallpaperSettings.opacityPercent.toFloat(),
+                                onValueChange = { newVal ->
+                                    LocalAccountSessionManager.updateWallpaperSettings(
+                                        context = context,
+                                        newSettings = wallpaperSettings.copy(opacityPercent = newVal.roundToInt().coerceIn(4, 28))
+                                    )
+                                },
+                                valueRange = 4f..28f,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .testTag("wallpaper_opacity_slider")
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        // 3B. Firebase Cloud Messaging (FCM) Family & Budget Push Alerts Card
+        item {
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("fcm_push_settings_card"),
+                shape = RoundedCornerShape(dimens.cardCornerRadius),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+            ) {
+                Column(
+                    modifier = Modifier.padding(dimens.cardPadding),
+                    verticalArrangement = Arrangement.spacedBy(dimens.itemSpacing * 0.75f)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(dimens.rowIconBoxSize * 0.85f)
+                                    .clip(CircleShape)
+                                    .background(MaterialTheme.colorScheme.primaryContainer),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.NotificationsActive,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(dimens.rowIconSize * 0.85f)
+                                )
+                            }
+                            Spacer(modifier = Modifier.width(dimens.horizontalPadding * 0.75f))
+                            Column {
+                                Text(
+                                    text = "Firebase Cloud Messaging (FCM)",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                val topicId = uiState.household?.id?.ifBlank { "default" } ?: "personal"
+                                Text(
+                                    text = "Topic: household_$topicId",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                            }
+                        }
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Family Member Transaction Alerts",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            Text(
+                                text = "Instant push notification when a family member logs a shared expense",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Switch(
+                            checked = fcmPushSettings.familyTransactionAlertsEnabled,
+                            onCheckedChange = { enabled ->
+                                LocalAccountSessionManager.updateFcmPushSettings(
+                                    context = context,
+                                    newSettings = fcmPushSettings.copy(familyTransactionAlertsEnabled = enabled)
+                                )
+                            },
+                            modifier = Modifier.testTag("fcm_family_tx_alerts_switch")
+                        )
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Category Budget Threshold Alerts",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            Text(
+                                text = "Instant push notification when a shared category budget nears its threshold",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Switch(
+                            checked = fcmPushSettings.budgetThresholdAlertsEnabled,
+                            onCheckedChange = { enabled ->
+                                LocalAccountSessionManager.updateFcmPushSettings(
+                                    context = context,
+                                    newSettings = fcmPushSettings.copy(budgetThresholdAlertsEnabled = enabled)
+                                )
+                            },
+                            modifier = Modifier.testTag("fcm_budget_threshold_alerts_switch")
+                        )
+                    }
+
+                    OutlinedButton(
+                        onClick = onSendTestFcmAlertClick,
+                        shape = RoundedCornerShape(50),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("fcm_test_push_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.NotificationsActive,
+                            contentDescription = null,
+                            modifier = Modifier.size(dimens.rowIconSize * 0.75f)
+                        )
+                        Spacer(modifier = Modifier.width(dimens.horizontalPadding * 0.35f))
+                        Text("Send Test FCM Budget Push Alert")
+                    }
+                }
+            }
+        }
+
+        // 3C. Firebase Crashlytics & Real-Time Stability Guard Card
+        item {
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("crashlytics_settings_card"),
+                shape = RoundedCornerShape(dimens.cardCornerRadius),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+            ) {
+                Column(
+                    modifier = Modifier.padding(dimens.cardPadding),
+                    verticalArrangement = Arrangement.spacedBy(dimens.itemSpacing * 0.75f)
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(
+                            modifier = Modifier
+                                .size(dimens.rowIconBoxSize * 0.85f)
+                                .clip(CircleShape)
+                                .background(MaterialTheme.colorScheme.tertiaryContainer),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Shield,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.tertiary,
+                                modifier = Modifier.size(dimens.rowIconSize * 0.85f)
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(dimens.horizontalPadding * 0.75f))
+                        Column {
+                            Text(
+                                text = "Firebase Crashlytics & Stability Guard",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                text = "Real-time crash protection for SMS auto-sync & responsive typography",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Real-Time Crashlytics Reporting",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            Text(
+                                text = "Track, prioritize, and capture uncaught & non-fatal exceptions",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Switch(
+                            checked = crashlyticsSettings.crashReportingEnabled,
+                            onCheckedChange = { enabled ->
+                                LocalAccountSessionManager.updateCrashlyticsSettings(
+                                    context = context,
+                                    newSettings = crashlyticsSettings.copy(crashReportingEnabled = enabled)
+                                )
+                            },
+                            modifier = Modifier.testTag("crashlytics_enabled_switch")
+                        )
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "SMS Auto-Sync Stability Guardrails",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            Text(
+                                text = "Paced IO batching & cursor isolation on OEM messaging providers",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Switch(
+                            checked = crashlyticsSettings.smsSyncGuardEnabled,
+                            onCheckedChange = { enabled ->
+                                LocalAccountSessionManager.updateCrashlyticsSettings(
+                                    context = context,
+                                    newSettings = crashlyticsSettings.copy(smsSyncGuardEnabled = enabled)
+                                )
+                            },
+                            modifier = Modifier.testTag("crashlytics_sms_guard_switch")
+                        )
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Responsive Typography Guardrails",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            Text(
+                                text = "Clamps extreme font/screen scales across foldables & small devices",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Switch(
+                            checked = crashlyticsSettings.typographyGuardEnabled,
+                            onCheckedChange = { enabled ->
+                                LocalAccountSessionManager.updateCrashlyticsSettings(
+                                    context = context,
+                                    newSettings = crashlyticsSettings.copy(typographyGuardEnabled = enabled)
+                                )
+                            },
+                            modifier = Modifier.testTag("crashlytics_typography_guard_switch")
+                        )
+                    }
+
+                    if (stabilityDiagnostics.isNotEmpty()) {
+                        Surface(
+                            shape = RoundedCornerShape(dimens.smallCornerRadius),
+                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("crashlytics_diagnostics_list")
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(dimens.cardPadding * 0.75f),
+                                verticalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                Text(
+                                    text = "Recent Stability Breadcrumbs (${stabilityDiagnostics.size})",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                                stabilityDiagnostics.take(4).forEach { entry ->
+                                    Text(
+                                        text = "• [${entry.subsystem}] ${entry.message}",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        maxLines = 2,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(dimens.horizontalPadding * 0.5f)
+                    ) {
+                        OutlinedButton(
+                            onClick = onRunStabilityCheckClick,
+                            shape = RoundedCornerShape(50),
+                            modifier = Modifier
+                                .weight(1f)
+                                .testTag("crashlytics_run_check_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.BugReport,
+                                contentDescription = null,
+                                modifier = Modifier.size(dimens.rowIconSize * 0.72f)
+                            )
+                            Spacer(modifier = Modifier.width(dimens.horizontalPadding * 0.3f))
+                            Text("Verify Stability")
+                        }
+                        if (stabilityDiagnostics.isNotEmpty()) {
+                            TextButton(
+                                onClick = { LocalAccountSessionManager.clearStabilityDiagnostics(context) },
+                                modifier = Modifier.testTag("crashlytics_clear_logs_button")
+                            ) {
+                                Text("Clear")
+                            }
+                        }
+                    }
                 }
             }
         }

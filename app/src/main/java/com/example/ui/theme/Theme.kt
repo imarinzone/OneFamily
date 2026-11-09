@@ -134,8 +134,17 @@ fun AxioFamilyTheme(
     val screenWidthDp = configuration.screenWidthDp.coerceAtLeast(320)
     val screenHeightDp = configuration.screenHeightDp.coerceAtLeast(480)
 
-    val widthScale = (screenWidthDp / 390f).coerceIn(0.82f, 1.30f)
-    val heightScale = (screenHeightDp / 844f).coerceIn(0.82f, 1.30f)
+    val rawWidthScale = screenWidthDp / 390f
+    val rawHeightScale = screenHeightDp / 844f
+    val fontScale = configuration.fontScale.let { if (it.isFinite() && it > 0f) it else 1f }
+    val widthScale = if (rawWidthScale.isFinite()) rawWidthScale.coerceIn(0.82f, 1.30f) else 1f
+    val heightScale = if (rawHeightScale.isFinite()) rawHeightScale.coerceIn(0.82f, 1.30f) else 1f
+    // Guard against extreme OS font scale + screen scale combinations causing text clipping or OOM
+    val guardedTypographyScale = if (widthScale * fontScale > 1.55f) {
+        (1.55f / fontScale).coerceIn(0.82f, 1.22f)
+    } else {
+        widthScale
+    }
 
     val appDimens = remember(screenWidthDp, screenHeightDp) {
         val sw = screenWidthDp.dp
@@ -161,8 +170,9 @@ fun AxioFamilyTheme(
         )
     }
 
-    val responsiveTypography = remember(widthScale) {
-        buildResponsiveTypography(widthScale)
+    val responsiveTypography = remember(guardedTypographyScale) {
+        runCatching { buildResponsiveTypography(guardedTypographyScale) }
+            .getOrElse { Typography }
     }
 
     val colorScheme = if (darkTheme) DarkColorScheme else LightColorScheme
