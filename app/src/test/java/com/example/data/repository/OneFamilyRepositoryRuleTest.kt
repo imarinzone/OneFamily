@@ -14,12 +14,12 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-class AxioRepositoryRuleTest : FirestoreEmulatorTestBase() {
+class OneFamilyRepositoryRuleTest : FirestoreEmulatorTestBase() {
 
     @Test
     fun createHousehold_and_joinByCode_syncsSharedExpensesAcrossFamilyMembers() = runBlocking {
         val aliceUid = signInTestUser("alice_family@test.com")
-        val repo = AxioRepository(firestore)
+        val repo = OneFamilyRepository(firestore)
 
         withTimeout(DEFAULT_TIMEOUT_MS) {
             repo.ensureUserProfile("Alice", "alice_family@test.com").getOrThrow()
@@ -87,7 +87,7 @@ class AxioRepositoryRuleTest : FirestoreEmulatorTestBase() {
     @Test
     fun personalExpenses_crossUserAccess_failsWithPermissionDenied() = runBlocking {
         val aliceUid = signInTestUser("alice_priv@test.com")
-        val repo = AxioRepository(firestore)
+        val repo = OneFamilyRepository(firestore)
 
         withTimeout(DEFAULT_TIMEOUT_MS) {
             repo.ensureUserProfile("Alice", "alice_priv@test.com").getOrThrow()
@@ -126,7 +126,7 @@ class AxioRepositoryRuleTest : FirestoreEmulatorTestBase() {
     @Test
     fun unauthenticatedUser_cannotObservePersonalExpenses() = runBlocking {
         auth.signOut()
-        val repo = AxioRepository(firestore)
+        val repo = OneFamilyRepository(firestore)
         var caught: FirebaseFirestoreException? = null
         try {
             withTimeout(FLOW_TIMEOUT_MS) {

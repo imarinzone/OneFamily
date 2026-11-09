@@ -11,7 +11,7 @@ import com.example.data.model.WallpaperColorAccent
 import com.example.data.model.WallpaperDensity
 import com.example.data.model.WallpaperPatternStyle
 import com.example.data.model.WallpaperSettings
-import com.example.data.repository.AxioRepository
+import com.example.data.repository.OneFamilyRepository
 import com.example.data.sms.SmsInboxReader
 import com.example.data.sms.TransactionNotificationHelper
 import com.example.ui.screens.mergeSelectedDatePreservingTime
@@ -64,7 +64,7 @@ class ExampleRobolectricTest {
         assertNotNull(user)
         assertEquals("test", user?.username)
 
-        val repo = AxioRepository(context)
+        val repo = OneFamilyRepository(context)
         val profile = repo.ensureUserProfile(user!!.displayName, user.email).getOrNull()
         assertNotNull(profile)
         val household = repo.getHouseholdOnce(profile!!.activeHouseholdId)
@@ -173,7 +173,7 @@ class ExampleRobolectricTest {
     fun `test SMS parsing stores actual timestamp and caches raw SMS for viewing during edit`() = runBlocking {
         val context = ApplicationProvider.getApplicationContext<Context>()
         LocalAccountSessionManager.signInWithUsernamePassword(context, "test", "pass")
-        val repo = AxioRepository(context)
+        val repo = OneFamilyRepository(context)
         val user = LocalAccountSessionManager.getCurrentUser(context)!!
         val profile = repo.ensureUserProfile(user.displayName, user.email).getOrNull()!!
         val household = repo.getHouseholdOnce(profile.activeHouseholdId)
@@ -217,7 +217,7 @@ class ExampleRobolectricTest {
     fun `test editing user display name updates session, user profile, and household members`() = runBlocking {
         val context = ApplicationProvider.getApplicationContext<Context>()
         LocalAccountSessionManager.signInWithUsernamePassword(context, "test", "pass")
-        val repo = AxioRepository(context)
+        val repo = OneFamilyRepository(context)
         val initialSession = LocalAccountSessionManager.getCurrentUser(context)!!
         val profile = repo.ensureUserProfile(initialSession.displayName, initialSession.email).getOrNull()!!
         val household = repo.getHouseholdOnce(profile.activeHouseholdId)!!
@@ -294,7 +294,7 @@ class ExampleRobolectricTest {
         val context = ApplicationProvider.getApplicationContext<Context>()
         LocalAccountSessionManager.signInWithUsernamePassword(context, "test", "pass")
         val user = LocalAccountSessionManager.getCurrentUser(context)!!
-        val repo = AxioRepository(context)
+        val repo = OneFamilyRepository(context)
         val profile = repo.ensureUserProfile(user.displayName, user.email).getOrNull()!!
         val household = repo.getHouseholdOnce(profile.activeHouseholdId)!!
 
@@ -393,7 +393,7 @@ class ExampleRobolectricTest {
         assertNotNull(user)
         assertEquals("Mock User", user?.displayName)
 
-        val repo = AxioRepository(context)
+        val repo = OneFamilyRepository(context)
         val profile = repo.ensureUserProfile(user!!.displayName, user.email).getOrNull()
         assertNotNull(profile)
         val household = repo.getHouseholdOnce(profile!!.activeHouseholdId)
@@ -436,7 +436,7 @@ class ExampleRobolectricTest {
         val context = ApplicationProvider.getApplicationContext<Context>()
         LocalAccountSessionManager.signInWithUsernamePassword(context, "test", "pass")
         val user = LocalAccountSessionManager.getCurrentUser(context)!!
-        val repo = AxioRepository(context)
+        val repo = OneFamilyRepository(context)
         val profile = repo.ensureUserProfile(user.displayName, user.email).getOrNull()!!
         val household = repo.getHouseholdOnce(profile.activeHouseholdId)!!
 

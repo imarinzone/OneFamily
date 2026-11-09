@@ -79,7 +79,7 @@ import androidx.lifecycle.viewmodel.viewModelFactory
 import com.example.data.local.LocalAccountSessionManager
 import com.example.data.model.BudgetScope
 import com.example.data.model.ExpenseTransaction
-import com.example.data.repository.AxioRepository
+import com.example.data.repository.OneFamilyRepository
 import com.example.data.sms.SmsInboxContentObserver
 import com.example.data.sms.SmsInboxReader
 import com.example.data.sms.TransactionNotificationHelper
@@ -99,9 +99,9 @@ import com.example.ui.screens.HomeTabScreen
 import com.example.ui.screens.HouseholdTabScreen
 import com.example.ui.screens.LinkDuplicateTransactionDialog
 import com.example.ui.screens.QuickCategoryPickerDialog
-import com.example.ui.theme.AxioFamilyTheme
+import com.example.ui.theme.OneFamilyTheme
 import com.example.ui.theme.LocalAppDimens
-import com.example.ui.viewmodel.AxioViewModel
+import com.example.ui.viewmodel.OneFamilyViewModel
 import com.example.ui.viewmodel.CategorySpendProgress
 import com.example.ui.viewmodel.DateRangePreset
 import com.example.ui.viewmodel.YearMonthPeriod
@@ -127,7 +127,7 @@ class MainActivity : ComponentActivity() {
         setContent {
             val deepLinkExpenseId by pendingNotificationExpenseId.collectAsStateWithLifecycle()
             val themeMode by LocalAccountSessionManager.themeMode.collectAsStateWithLifecycle()
-            AxioFamilyTheme(themeMode = themeMode) {
+            OneFamilyTheme(themeMode = themeMode) {
                 Surface(
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
@@ -193,7 +193,7 @@ fun AppNavigation(
     if (activeUid == null) {
         AuthScreen(onAuthSuccess = { directUser = auth.currentUser })
     } else {
-        AxioMainShell(
+        OneFamilyMainShell(
             currentUserId = activeUid,
             currentUserName = activeName,
             currentUserEmail = activeEmail,
@@ -207,7 +207,7 @@ fun AppNavigation(
     }
 }
 
-enum class AxioNavTab(val label: String, val icon: ImageVector) {
+enum class OneFamilyNavTab(val label: String, val icon: ImageVector) {
     HOME("Home", Icons.Default.Home),
     ANALYSIS("Analysis", Icons.Default.PieChart),
     BUDGETS("Budgets", Icons.Default.AccountBalanceWallet),
@@ -215,7 +215,7 @@ enum class AxioNavTab(val label: String, val icon: ImageVector) {
 }
 
 @Composable
-fun AxioMainShell(
+fun OneFamilyMainShell(
     currentUserId: String,
     currentUserName: String,
     currentUserEmail: String,
@@ -228,15 +228,15 @@ fun AxioMainShell(
     val coroutineScope = rememberCoroutineScope()
     val credentialManager = remember { CredentialManager.create(context) }
 
-    val viewModel: AxioViewModel = viewModel(
+    val viewModel: OneFamilyViewModel = viewModel(
         key = currentUserId,
         factory = viewModelFactory {
             initializer {
                 val app = checkNotNull(this[APPLICATION_KEY]) {
                     "APPLICATION_KEY missing from CreationExtras"
                 }
-                AxioViewModel(
-                    repository = AxioRepository(app),
+                OneFamilyViewModel(
+                    repository = OneFamilyRepository(app),
                     smsInboxReader = SmsInboxReader(app),
                     currentUserId = currentUserId,
                     currentUserName = currentUserName,
@@ -248,7 +248,7 @@ fun AxioMainShell(
 
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val smsSyncProgress by viewModel.smsSyncProgress.collectAsStateWithLifecycle()
-    val tabs = AxioNavTab.entries
+    val tabs = OneFamilyNavTab.entries
     val pagerState = rememberPagerState(initialPage = 0, pageCount = { tabs.size })
     val currentTab = tabs[pagerState.currentPage]
 
@@ -365,10 +365,10 @@ fun AxioMainShell(
         return
     }
 
-    if (currentTab != AxioNavTab.HOME) {
+    if (currentTab != OneFamilyNavTab.HOME) {
         BackHandler {
             coroutineScope.launch {
-                pagerState.animateScrollToPage(AxioNavTab.HOME.ordinal)
+                pagerState.animateScrollToPage(OneFamilyNavTab.HOME.ordinal)
             }
         }
     }
@@ -379,7 +379,7 @@ fun AxioMainShell(
         contentWindowInsets = WindowInsets.safeDrawing,
         containerColor = Color.Transparent,
         topBar = {
-            val isDateBarApplicable = currentTab == AxioNavTab.HOME || currentTab == AxioNavTab.ANALYSIS
+            val isDateBarApplicable = currentTab == OneFamilyNavTab.HOME || currentTab == OneFamilyNavTab.ANALYSIS
             AnimatedVisibility(visible = isDateBarApplicable) {
                 // Top Gesture Date Bar (Year on top, Month name below; full-bar swap animation)
                 Surface(
@@ -472,7 +472,7 @@ fun AxioMainShell(
                         .fillMaxWidth()
                 ) { pageIndex ->
                     when (tabs[pageIndex]) {
-                        AxioNavTab.HOME -> HomeTabScreen(
+                        OneFamilyNavTab.HOME -> HomeTabScreen(
                             uiState = uiState,
                             onScopeSelected = { viewModel.selectScope(it) },
                             onSelectDateRangePreset = { viewModel.selectDateRangePreset(it) },
@@ -497,7 +497,7 @@ fun AxioMainShell(
                             onLinkDuplicateTransaction = { linkingDuplicateTransaction = it }
                         )
 
-                        AxioNavTab.ANALYSIS -> AnalyticsTabScreen(
+                        OneFamilyNavTab.ANALYSIS -> AnalyticsTabScreen(
                             uiState = uiState,
                             onStepMonth = { viewModel.stepMonth(it) },
                             onSelectPeriod = { viewModel.selectPeriod(it) },
@@ -509,7 +509,7 @@ fun AxioMainShell(
                             onLinkDuplicateTransaction = { linkingDuplicateTransaction = it }
                         )
 
-                        AxioNavTab.BUDGETS -> BudgetsTabScreen(
+                        OneFamilyNavTab.BUDGETS -> BudgetsTabScreen(
                             uiState = uiState,
                             onEditOverallBudgetClick = { showEditOverallBudgetDialog = true },
                             onAddOrEditCategoryBudgetClick = { catProg ->
@@ -517,7 +517,7 @@ fun AxioMainShell(
                             }
                         )
 
-                        AxioNavTab.ACCOUNT -> HouseholdTabScreen(
+                        OneFamilyNavTab.ACCOUNT -> HouseholdTabScreen(
                             uiState = uiState,
                             currentUserName = currentUserName,
                             currentUserEmail = currentUserEmail,
@@ -561,7 +561,7 @@ fun AxioMainShell(
             FloatingBottomNavBar(
                 tabs = tabs,
                 selectedTab = currentTab,
-                showAddButton = currentTab == AxioNavTab.HOME,
+                showAddButton = currentTab == OneFamilyNavTab.HOME,
                 onSelectTab = { tab ->
                     coroutineScope.launch {
                         pagerState.animateScrollToPage(tab.ordinal)
@@ -719,10 +719,10 @@ fun AxioMainShell(
 
 @Composable
 private fun FloatingBottomNavBar(
-    tabs: List<AxioNavTab>,
-    selectedTab: AxioNavTab,
+    tabs: List<OneFamilyNavTab>,
+    selectedTab: OneFamilyNavTab,
     showAddButton: Boolean,
-    onSelectTab: (AxioNavTab) -> Unit,
+    onSelectTab: (OneFamilyNavTab) -> Unit,
     onAddClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {

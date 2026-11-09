@@ -28,10 +28,12 @@ data class ParsedTransaction(
 ) {
     fun generateTransactionId(): String {
         val normalizedAmount = amount.setScale(2, java.math.RoundingMode.HALF_UP).toPlainString()
-        // Use exact second-level timestamp + reference/body hash so distinct SMS transactions are never falsely merged
-        val timeBucket = timestamp / 1000L
-        val bodySnippet = smsBody.trim().lowercase().take(80)
-        val rawKey = "$bankName|$normalizedAmount|${type.name}|${accountNumber.orEmpty()}|${reference.orEmpty()}|$timeBucket|$bodySnippet"
+        // Use a 5-minute bucket (300_000ms) + normalized SMS body & reference so the same SMS
+        // produces the exact same ID whether read from SMS_RECEIVED (SMSC timestamp) or
+        // content://sms/inbox (device insert timestamp a few seconds later).
+        val timeBucket = timestamp / 300_000L
+        val normalizedBody = smsBody.trim().replace(Regex("\\s+"), " ").lowercase().take(140)
+        val rawKey = "$bankName|$normalizedAmount|${type.name}|${accountNumber.orEmpty()}|${reference.orEmpty().trim().uppercase()}|$timeBucket|$normalizedBody"
         val digest = MessageDigest.getInstance("MD5").digest(rawKey.toByteArray())
         return digest.joinToString("") { "%02x".format(it) }.take(24)
     }

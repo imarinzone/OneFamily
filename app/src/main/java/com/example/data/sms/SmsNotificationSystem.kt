@@ -20,7 +20,7 @@ import androidx.core.content.ContextCompat
 import com.example.MainActivity
 import com.example.R
 import com.example.data.local.LocalAccountSessionManager
-import com.example.data.repository.AxioRepository
+import com.example.data.repository.OneFamilyRepository
 import com.google.firebase.Firebase
 import com.google.firebase.auth.auth
 import com.ritesh.parser.core.TransactionType
@@ -31,11 +31,13 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 object TransactionNotificationHelper {
-    const val CHANNEL_ID = "axio_realtime_transactions"
-    const val CHANNEL_ID_FCM_FAMILY = "axio_fcm_family_push"
-    const val CHANNEL_ID_FCM_BUDGET = "axio_fcm_budget_push"
+    const val CHANNEL_ID = "onefamily_realtime_transactions"
+    const val CHANNEL_ID_FCM_FAMILY = "onefamily_fcm_family_push"
+    const val CHANNEL_ID_FCM_BUDGET = "onefamily_fcm_budget_push"
     const val EXTRA_EDIT_EXPENSE_ID = "extra_edit_expense_id"
     const val EXTRA_EDIT_HOUSEHOLD_ID = "extra_edit_household_id"
     const val EXTRA_EDIT_VISIBILITY = "extra_edit_visibility"
@@ -44,6 +46,7 @@ object TransactionNotificationHelper {
     const val extraTitle = "extra_tx_title"
     const val extraAmount = "extra_tx_amount"
 
+    private val incomingSmsMutex = Mutex()
     private val notifiedSignatures: MutableSet<String> =
         Collections.synchronizedSet(mutableSetOf<String>())
     private val notifiedBudgetKeys: MutableSet<String> =
@@ -319,19 +322,32 @@ object TransactionNotificationHelper {
     suspend fun processIncomingSmsCandidateAndNotify(
         context: Context,
         candidate: SmsCandidate
-    ) {
-        if (!notifiedSignatures.add(candidate.id)) return
+    ) = incomingSmsMutex.withLock {
+        val contentKey = SmsInboxReader.buildSmsContentKey(
+            body = candidate.parsed.smsBody,
+            timestamp = candidate.parsed.timestamp
+        )
+        if (candidate.id in notifiedSignatures || contentKey in notifiedSignatures) return@withLock
+        notifiedSignatures.add(candidate.id)
+        notifiedSignatures.add(contentKey)
+
         val appContext = context.applicationContext
         LocalAccountSessionManager.ensureInitialized(appContext)
         val firebaseUser = runCatching { Firebase.auth.currentUser }.getOrNull()
         val localUser = LocalAccountSessionManager.getCurrentUser(appContext)
-        if (firebaseUser == null && localUser == null) return
+        if (firebaseUser == null && localUser == null) return@withLock
 
         try {
-            val repo = AxioRepository(appContext)
+            val repo = OneFamilyRepository(appContext)
             val profile = repo.getUserProfileOnce()
             val household = profile?.activeHouseholdId?.takeIf { it.isNotBlank() }?.let {
                 repo.getHouseholdOnce(it)
+            }
+
+            // Check if this SMS (or its content key / linked signature) already exists in the ledger
+            val existingSignatures = repo.getAllExistingSmsSignatures(household?.id)
+            if (candidate.id in existingSignatures || contentKey in existingSignatures) {
+                return@withLock
             }
 
             val parsed = candidate.parsed
@@ -373,7 +389,7 @@ object TransactionNotificationHelper {
                 currencySymbol = currencySymbol
             )
 
-            if (effectiveShared && household != null) {
+            if (household != null) {
                 showFamilyTransactionPushNotification(
                     context = appContext,
                     expenseId = expenseIdToNotify,
@@ -420,7 +436,7 @@ class NotificationCategoryActionReceiver : BroadcastReceiver() {
         val pendingResult = goAsync()
         CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
             try {
-                val repo = AxioRepository(context.applicationContext)
+                val repo = OneFamilyRepository(context.applicationContext)
                 repo.updateExpenseCategoryById(
                     expenseId = expenseId,
                     householdId = householdId,
@@ -503,6 +519,7 @@ class SmsInboxContentObserver(
 ) : ContentObserver(Handler(Looper.getMainLooper())) {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val observerMutex = Mutex()
     private var lastProcessedSmsDateMillis: Long = System.currentTimeMillis() - 5_000L
 
     override fun onChange(selfChange: Boolean, uri: Uri?) {
@@ -514,50 +531,52 @@ class SmsInboxContentObserver(
         if (!hasReadSms) return
 
         scope.launch {
-            runCatching {
-                val projection = arrayOf(
-                    Telephony.Sms.ADDRESS,
-                    Telephony.Sms.BODY,
-                    Telephony.Sms.DATE,
-                    Telephony.Sms.TYPE
-                )
-                context.contentResolver.query(
-                    Telephony.Sms.Inbox.CONTENT_URI,
-                    projection,
-                    "${Telephony.Sms.DATE} > ?",
-                    arrayOf(lastProcessedSmsDateMillis.toString()),
-                    "${Telephony.Sms.DATE} DESC LIMIT 3"
-                )?.use { cursor ->
-                    val addrIdx = cursor.getColumnIndex(Telephony.Sms.ADDRESS)
-                    val bodyIdx = cursor.getColumnIndex(Telephony.Sms.BODY)
-                    val dateIdx = cursor.getColumnIndex(Telephony.Sms.DATE)
-                    if (addrIdx < 0 || bodyIdx < 0 || dateIdx < 0) return@use
+            observerMutex.withLock {
+                runCatching {
+                    val projection = arrayOf(
+                        Telephony.Sms.ADDRESS,
+                        Telephony.Sms.BODY,
+                        Telephony.Sms.DATE,
+                        Telephony.Sms.TYPE
+                    )
+                    context.contentResolver.query(
+                        Telephony.Sms.Inbox.CONTENT_URI,
+                        projection,
+                        "${Telephony.Sms.DATE} > ?",
+                        arrayOf(lastProcessedSmsDateMillis.toString()),
+                        "${Telephony.Sms.DATE} DESC LIMIT 3"
+                    )?.use { cursor ->
+                        val addrIdx = cursor.getColumnIndex(Telephony.Sms.ADDRESS)
+                        val bodyIdx = cursor.getColumnIndex(Telephony.Sms.BODY)
+                        val dateIdx = cursor.getColumnIndex(Telephony.Sms.DATE)
+                        if (addrIdx < 0 || bodyIdx < 0 || dateIdx < 0) return@use
 
-                    val reader = SmsInboxReader(context.applicationContext)
-                    var newestSeen = lastProcessedSmsDateMillis
-                    while (cursor.moveToNext()) {
-                        val sender = cursor.getString(addrIdx).orEmpty()
-                        val body = cursor.getString(bodyIdx).orEmpty()
-                        val dateMillis = cursor.getLong(dateIdx)
-                        if (dateMillis > newestSeen) {
-                            newestSeen = dateMillis
-                        }
-                        if (sender.isNotBlank() && body.isNotBlank()) {
-                            val candidate = reader.parseRawSms(
-                                sender = sender,
-                                body = body,
-                                timestamp = dateMillis,
-                                defaultShared = true
-                            )
-                            if (candidate != null) {
-                                TransactionNotificationHelper.processIncomingSmsCandidateAndNotify(
-                                    context = context.applicationContext,
-                                    candidate = candidate
+                        val reader = SmsInboxReader(context.applicationContext)
+                        var newestSeen = lastProcessedSmsDateMillis
+                        while (cursor.moveToNext()) {
+                            val sender = cursor.getString(addrIdx).orEmpty()
+                            val body = cursor.getString(bodyIdx).orEmpty()
+                            val dateMillis = cursor.getLong(dateIdx)
+                            if (dateMillis > newestSeen) {
+                                newestSeen = dateMillis
+                            }
+                            if (sender.isNotBlank() && body.isNotBlank()) {
+                                val candidate = reader.parseRawSms(
+                                    sender = sender,
+                                    body = body,
+                                    timestamp = dateMillis,
+                                    defaultShared = true
                                 )
+                                if (candidate != null) {
+                                    TransactionNotificationHelper.processIncomingSmsCandidateAndNotify(
+                                        context = context.applicationContext,
+                                        candidate = candidate
+                                    )
+                                }
                             }
                         }
+                        lastProcessedSmsDateMillis = newestSeen
                     }
-                    lastProcessedSmsDateMillis = newestSeen
                 }
             }
         }

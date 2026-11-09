@@ -112,7 +112,7 @@ import com.example.ui.theme.BudgetWarnAmber
 import com.example.ui.theme.HouseholdBadgeIndigo
 import com.example.ui.theme.LocalAppDimens
 import com.example.ui.theme.categoryAccentColor
-import com.example.ui.viewmodel.AxioDashboardUiState
+import com.example.ui.viewmodel.OneFamilyDashboardUiState
 import com.example.ui.viewmodel.CategorySpendProgress
 import com.example.ui.viewmodel.DateRangePreset
 import com.example.ui.viewmodel.YearMonthPeriod
@@ -125,7 +125,7 @@ import kotlin.math.roundToInt
  */
 @Composable
 fun HomeTabScreen(
-    uiState: AxioDashboardUiState,
+    uiState: OneFamilyDashboardUiState,
     onScopeSelected: (BudgetScope) -> Unit,
     onSelectDateRangePreset: (DateRangePreset) -> Unit = {},
     onSelectCustomDateRange: (Long, Long) -> Unit = { _, _ -> },
@@ -553,7 +553,7 @@ fun HomeTabScreen(
  */
 @Composable
 fun AnalyticsTabScreen(
-    uiState: AxioDashboardUiState,
+    uiState: OneFamilyDashboardUiState,
     onStepMonth: (Int) -> Unit,
     onSelectPeriod: (YearMonthPeriod?) -> Unit,
     onSelectCategory: (String) -> Unit = {},
@@ -929,7 +929,7 @@ fun AnalyticsTabScreen(
 
 @Composable
 fun BudgetsTabScreen(
-    uiState: AxioDashboardUiState,
+    uiState: OneFamilyDashboardUiState,
     onEditOverallBudgetClick: () -> Unit,
     onAddOrEditCategoryBudgetClick: (CategorySpendProgress?) -> Unit
 ) {
@@ -1235,7 +1235,7 @@ fun BudgetsTabScreen(
  */
 @Composable
 fun HouseholdTabScreen(
-    uiState: AxioDashboardUiState,
+    uiState: OneFamilyDashboardUiState,
     currentUserName: String = "",
     currentUserEmail: String = "",
     onUpdateUserName: (String) -> Unit = {},

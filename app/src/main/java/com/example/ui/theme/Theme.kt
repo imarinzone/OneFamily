@@ -121,7 +121,7 @@ private val LightColorScheme = lightColorScheme(
 )
 
 @Composable
-fun AxioFamilyTheme(
+fun OneFamilyTheme(
     themeMode: AppThemeMode = AppThemeMode.SYSTEM,
     darkTheme: Boolean = when (themeMode) {
         AppThemeMode.SYSTEM -> isSystemInDarkTheme()

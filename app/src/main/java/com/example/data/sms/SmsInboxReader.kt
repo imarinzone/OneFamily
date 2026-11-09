@@ -98,6 +98,7 @@ class SmsInboxReader(private val context: Context) {
                                     )
                                     if (parsed != null) {
                                         val signature = parsed.generateTransactionId()
+                                        val contentKey = buildSmsContentKey(body, timestamp)
                                         LocalAccountDataStore.cacheSmsMessage(
                                             signature = signature,
                                             sender = sender,
@@ -105,8 +106,9 @@ class SmsInboxReader(private val context: Context) {
                                             timestamp = timestamp,
                                             persistImmediately = false
                                         )
-                                        if (signature !in seenSignatures) {
+                                        if (signature !in seenSignatures && contentKey !in seenSignatures) {
                                             seenSignatures.add(signature)
+                                            seenSignatures.add(contentKey)
                                             val category = BankParserFactory.inferCategory(parsed)
                                             candidates.add(
                                                 SmsCandidate(
@@ -214,6 +216,7 @@ class SmsInboxReader(private val context: Context) {
                         ) ?: continue
 
                         val signature = parsed.generateTransactionId()
+                        val contentKey = buildSmsContentKey(body, timestamp)
                         LocalAccountDataStore.cacheSmsMessage(
                             signature = signature,
                             sender = sender,
@@ -221,8 +224,9 @@ class SmsInboxReader(private val context: Context) {
                             timestamp = timestamp,
                             persistImmediately = false
                         )
-                        if (signature in seenSignatures) continue
+                        if (signature in seenSignatures || contentKey in seenSignatures) continue
                         seenSignatures.add(signature)
+                        seenSignatures.add(contentKey)
 
                         val category = BankParserFactory.inferCategory(parsed)
 
@@ -281,5 +285,13 @@ class SmsInboxReader(private val context: Context) {
             suggestedPaymentMode = BankParserFactory.inferPaymentMode(parsed),
             isSharedByDefault = isShared
         )
+    }
+
+    companion object {
+        fun buildSmsContentKey(body: String, timestamp: Long): String {
+            val cleanBody = body.trim().replace(Regex("\\s+"), " ").lowercase()
+            val window = timestamp / 300_000L
+            return "sms_content_${window}_${cleanBody.hashCode()}"
+        }
     }
 }

@@ -10,7 +10,7 @@ import com.example.data.model.ExpenseTransaction
 import com.example.data.model.FinancialAccount
 import com.example.data.model.Household
 import com.example.data.model.UserProfile
-import com.example.data.repository.AxioRepository
+import com.example.data.repository.OneFamilyRepository
 import com.example.data.sms.SmsCandidate
 import com.example.data.sms.SmsInboxReader
 import com.example.data.sms.TransactionNotificationHelper
@@ -173,7 +173,7 @@ data class SmsSyncProgressState(
         }
 }
 
-data class AxioDashboardUiState(
+data class OneFamilyDashboardUiState(
     val isLoading: Boolean = true,
     val userProfile: UserProfile? = null,
     val household: Household? = null,
@@ -215,8 +215,8 @@ data class AxioDashboardUiState(
 )
 
 @OptIn(ExperimentalCoroutinesApi::class)
-class AxioViewModel(
-    private val repository: AxioRepository,
+class OneFamilyViewModel(
+    private val repository: OneFamilyRepository,
     private val smsInboxReader: SmsInboxReader,
     private val currentUserId: String,
     private val currentUserName: String,
@@ -391,7 +391,7 @@ class AxioViewModel(
         )
     }
 
-    val uiState: StateFlow<AxioDashboardUiState> = combine(coreDataFlow, filterStateFlow) { core, filter ->
+    val uiState: StateFlow<OneFamilyDashboardUiState> = combine(coreDataFlow, filterStateFlow) { core, filter ->
         val effectiveScope = filter.scope
 
         val allScopedTransactions = when (effectiveScope) {
@@ -620,7 +620,7 @@ class AxioViewModel(
             else -> filteredUnsorted.sortedByDescending { it.transactionDateMillis }
         }
 
-        AxioDashboardUiState(
+        OneFamilyDashboardUiState(
             isLoading = false,
             userProfile = core.profile,
             household = core.household,
@@ -663,7 +663,7 @@ class AxioViewModel(
     }.stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(5000L),
-        initialValue = AxioDashboardUiState()
+        initialValue = OneFamilyDashboardUiState()
     )
 
     // --- PERIOD, DATE RANGE & FILTER CONTROLS ---
@@ -813,11 +813,30 @@ class AxioViewModel(
                 }
 
                 val state = uiState.value
-                val existingSignatures = (state.personalExpenses + state.sharedExpenses)
-                    .flatMap { tx -> tx.linkedSmsSignatures + listOf(tx.smsSignature) }
+                val household = state.household ?: repository.getUserProfileOnce()
+                    ?.activeHouseholdId
+                    ?.takeIf { it.isNotBlank() }
+                    ?.let { repository.getHouseholdOnce(it) }
+
+                val stateSignatures = (state.personalExpenses + state.sharedExpenses)
+                    .flatMap { tx ->
+                        val rawBody = tx.notes.substringAfter("] ", tx.notes).trim()
+                        val contentKey = if (rawBody.isNotBlank() && tx.smsSignature.isNotBlank()) {
+                            SmsInboxReader.buildSmsContentKey(rawBody, tx.transactionDateMillis)
+                        } else {
+                            ""
+                        }
+                        tx.linkedSmsSignatures + listOf(tx.smsSignature, tx.id, contentKey)
+                    }
                     .filter { sig -> sig.isNotBlank() }
                     .flatMap { listOf(it, it.removePrefix("sms_")) }
                     .toSet()
+
+                val repoSignatures = runCatching {
+                    repository.getAllExistingSmsSignatures(household?.id)
+                }.getOrDefault(emptySet())
+
+                val existingSignatures = stateSignatures + repoSignatures
 
                 val discovered = smsInboxReader.scanDeviceSmsInboxWithProgress(
                     existingSignatures = existingSignatures,
@@ -837,10 +856,6 @@ class AxioViewModel(
 
                 var totalImported = 0
                 val userName = currentUserName.ifBlank { state.userProfile?.displayName ?: "Me" }
-                val household = state.household ?: repository.getUserProfileOnce()
-                    ?.activeHouseholdId
-                    ?.takeIf { it.isNotBlank() }
-                    ?.let { repository.getHouseholdOnce(it) }
 
                 if (discovered.isNotEmpty()) {
                     val chunks = discovered.chunked(12)

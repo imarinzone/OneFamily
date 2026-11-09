@@ -26,7 +26,7 @@ import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.tasks.await
 
-class AxioRepository(private val dbProvider: () -> FirebaseFirestore) {
+class OneFamilyRepository(private val dbProvider: () -> FirebaseFirestore) {
 
     constructor(db: FirebaseFirestore) : this({ db })
 
@@ -632,6 +632,62 @@ class AxioRepository(private val dbProvider: () -> FirebaseFirestore) {
     }
 
     /**
+     * Returns all existing SMS signatures, linked duplicate signatures, and SMS content keys
+     * across both Personal and Shared Household collections so no SMS is ever imported twice.
+     */
+    suspend fun getAllExistingSmsSignatures(householdId: String? = null): Set<String> {
+        if (isLocalMode()) {
+            val uid = runCatching { requireLocalUserId() }.getOrDefault("")
+            return if (uid.isNotBlank()) LocalAccountDataStore.getAllExistingSmsSignatures(uid) else emptySet()
+        }
+        val uid = runCatching { requireUserId() }.getOrDefault("")
+        if (uid.isBlank()) return emptySet()
+
+        val signatures = mutableSetOf<String>()
+        fun extractDocSignatures(doc: DocumentSnapshot) {
+            doc.getString("smsSignature")?.takeIf { it.isNotBlank() }?.let { sig ->
+                signatures.add(sig)
+                signatures.add(sig.removePrefix("sms_"))
+            }
+            signatures.add(doc.id)
+            signatures.add(doc.id.removePrefix("sms_"))
+            @Suppress("UNCHECKED_CAST")
+            val linked = doc.get("linkedSmsSignatures") as? List<String>
+            linked?.forEach { lSig ->
+                if (lSig.isNotBlank()) {
+                    signatures.add(lSig)
+                    signatures.add(lSig.removePrefix("sms_"))
+                }
+            }
+            val notes = doc.getString("notes").orEmpty()
+            val txMillis = doc.getLong("transactionDateMillis") ?: 0L
+            val rawBody = notes.substringAfter("] ", notes).trim()
+            if (rawBody.isNotBlank() && txMillis > 0L) {
+                signatures.add(com.example.data.sms.SmsInboxReader.buildSmsContentKey(rawBody, txMillis))
+            }
+        }
+
+        runCatching {
+            val pSnap = db.collection("users").document(uid).collection("personal_expenses").get().await()
+            pSnap.documents.forEach(::extractDocSignatures)
+        }
+
+        val effectiveHhId = householdId?.takeIf { it.isNotBlank() }
+            ?: runCatching { getUserProfileOnce()?.activeHouseholdId }.getOrNull().orEmpty()
+
+        if (effectiveHhId.isNotBlank()) {
+            runCatching {
+                val sSnap = db.collection("households").document(effectiveHhId).collection("shared_expenses")
+                    .whereArrayContains("memberUids", uid)
+                    .get()
+                    .await()
+                sSnap.documents.forEach(::extractDocSignatures)
+            }
+        }
+        return signatures
+    }
+
+    /**
      * Batch-imports all newly discovered SMS transactions in chronological order (`timestamp`).
      * Defaults to Shared Household when a household is linked, as configured by the user.
      */
@@ -668,32 +724,23 @@ class AxioRepository(private val dbProvider: () -> FirebaseFirestore) {
             db.collection("users").document(uid).collection("personal_expenses")
         }
 
-        // Query existing SMS signatures from personal & shared collections so we never overwrite existing/edited SMS receipts
-        val existingServerSignatures = mutableSetOf<String>()
-        runCatching {
-            val pSnap = db.collection("users").document(uid).collection("personal_expenses").get().await()
-            pSnap.documents.forEach { doc ->
-                doc.getString("smsSignature")?.takeIf { it.isNotBlank() }?.let { existingServerSignatures.add(it) }
-                existingServerSignatures.add(doc.id.removePrefix("sms_"))
-            }
-        }
-        if (effectiveShared) {
-            runCatching {
-                val sSnap = db.collection("households").document(targetHouseholdId).collection("shared_expenses")
-                    .whereArrayContains("memberUids", uid)
-                    .get()
-                    .await()
-                sSnap.documents.forEach { doc ->
-                    doc.getString("smsSignature")?.takeIf { it.isNotBlank() }?.let { existingServerSignatures.add(it) }
-                    existingServerSignatures.add(doc.id.removePrefix("sms_"))
+        // Query existing SMS signatures from personal & shared collections so we never overwrite or duplicate existing/edited SMS receipts
+        val existingServerSignatures = getAllExistingSmsSignatures(household?.id).toMutableSet()
+
+        // Sort oldest to newest and deduplicate by signature and SMS content key
+        val sortedCandidates = buildList {
+            for (cand in candidates.sortedBy { it.parsed.timestamp }) {
+                val contentKey = com.example.data.sms.SmsInboxReader.buildSmsContentKey(
+                    body = cand.parsed.smsBody,
+                    timestamp = cand.parsed.timestamp
+                )
+                if (cand.id !in existingServerSignatures && contentKey !in existingServerSignatures) {
+                    existingServerSignatures.add(cand.id)
+                    existingServerSignatures.add(contentKey)
+                    add(cand)
                 }
             }
         }
-
-        // Sort oldest to newest so transactions are added chronologically by SMS timestamp
-        val sortedCandidates = candidates
-            .filterNot { it.id in existingServerSignatures }
-            .sortedBy { it.parsed.timestamp }
         if (sortedCandidates.isEmpty()) return@runCatching 0
 
         var importedCount = 0

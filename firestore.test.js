@@ -99,7 +99,7 @@ test("Household shared expenses: Alice and Bob in same household can query share
     await db.collection("households").doc(householdId).set({
       name: "Sharma Family",
       ownerUid: ALICE_UID,
-      joinCode: "AXIO99",
+      joinCode: "ONEF99",
       memberUids: [ALICE_UID, BOB_UID],
       monthlyBudgetLimit: 75000,
       currencySymbol: "₹",

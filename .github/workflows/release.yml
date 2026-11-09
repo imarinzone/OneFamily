@@ -1,4 +1,4 @@
-name: Release Axio Family APK
+name: Release One Family APK
 
 on:
   push:
@@ -29,8 +29,8 @@ permissions:
   contents: write
 
 env:
-  APP_NAME: AxioFamily
-  APPLICATION_ID: com.aistudio.axiofamily.xpqrmk
+  APP_NAME: OneFamily
+  APPLICATION_ID: com.aistudio.onefamily.xpqrmk
   GRADLE_VERSION: '9.3.1'
   JAVA_VERSION: '21'
 
@@ -100,7 +100,7 @@ jobs:
         shell: bash
         env:
           # Embedded base64 of the provisioned project keystore (SHA-1: 5B:A3:94:C0:62:42:F0:7B:31:01:91:EF:EF:AA:66:E1:05:9C:B3:FE)
-          # which is registered in Firebase Auth / Google Cloud OAuth for com.aistudio.axiofamily.xpqrmk
+          # which is registered in Firebase Auth / Google Cloud OAuth for com.aistudio.onefamily.xpqrmk
           PROVISIONED_KEYSTORE_B64: "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"
         run: |
           # Restore debug.keystore from embedded provisioned certificate
@@ -131,7 +131,6 @@ jobs:
         shell: bash
         env:
           GOOGLE_SERVICES_JSON_SECRET: ${{ secrets.GOOGLE_SERVICES_JSON }}
-          DEFAULT_GOOGLE_SERVICES_B64: "ewogICJwcm9qZWN0X2luZm8iOiB7CiAgICAicHJvamVjdF9udW1iZXIiOiAiNDg5MjMwNjcyNTM5IiwKICAgICJwcm9qZWN0X2lkIjogImdlbi1sYW5nLWNsaWVudC0wODU5MDcxNTQzIiwKICAgICJzdG9yYWdlX2J1Y2tldCI6ICJnZW4tbGFuZy1jbGllbnQtMDg1OTA3MTU0My5maXJlYmFzZXN0b3JhZ2UuYXBwIgogIH0sCiAgImNsaWVudCI6IFsKICAgIHsKICAgICAgImNsaWVudF9pbmZvIjogewogICAgICAgICJtb2JpbGVzZGtfYXBwX2lkIjogIjE6NDg5MjMwNjcyNTM5OmFuZHJvaWQ6N2E4NWY0NTViMDYzNzU2OGM0OWMzZSIsCiAgICAgICAgImFuZHJvaWRfY2xpZW50X2luZm8iOiB7CiAgICAgICAgICAicGFja2FnZV9uYW1lIjogImNvbS5haXN0dWRpby5heGlvZmFtaWx5LnhwcXJtayIKICAgICAgICB9CiAgICAgIH0sCiAgICAgICJvYXV0aF9jbGllbnQiOiBbCiAgICAgICAgewogICAgICAgICAgImNsaWVudF9pZCI6ICI0ODkyMzA2NzI1MzktMHNvY3FnOHBkcGh2amxmODJjYzFmc2IwMmM4aHZjNzIuYXBwcy5nb29nbGV1c2VyY29udGVudC5jb20iLAogICAgICAgICAgImNsaWVudF90eXBlIjogMSwKICAgICAgICAgICJhbmRyb2lkX2luZm8iOiB7CiAgICAgICAgICAgICJwYWNrYWdlX25hbWUiOiAiY29tLmFpc3R1ZGlvLmF4aW9mYW1pbHkueHBxcm1rIiwKICAgICAgICAgICAgImNlcnRpZmljYXRlX2hhc2giOiAiNWJhMzk0YzA2MjQyZjA3YjMxMDE5MWVmZWZhYTY2ZTEwNTljYjNmZSIKICAgICAgICAgIH0KICAgICAgICB9LAogICAgICAgIHsKICAgICAgICAgICJjbGllbnRfaWQiOiAiNDg5MjMwNjcyNTM5LThyMmU0aGFhbDdsNHRiaG1wZmZsNnIzajMwYm1nN21zLmFwcHMuZ29vZ2xldXNlcmNvbnRlbnQuY29tIiwKICAgICAgICAgICJjbGllbnRfdHlwZSI6IDMKICAgICAgICB9CiAgICAgIF0sCiAgICAgICJhcGlfa2V5IjogWwogICAgICAgIHsKICAgICAgICAgICJjdXJyZW50X2tleSI6ICJBSXphU3lBRGVjRjItWTVHUko0YW1RNXRDWl9KSDhsbi05LVNMZ1UiCiAgICAgICAgfQogICAgICBdLAogICAgICAic2VydmljZXMiOiB7CiAgICAgICAgImFwcGludml0ZV9zZXJ2aWNlIjogewogICAgICAgICAgIm90aGVyX3BsYXRmb3JtX29hdXRoX2NsaWVudCI6IFsKICAgICAgICAgICAgewogICAgICAgICAgICAgICJjbGllbnRfaWQiOiAiNDg5MjMwNjcyNTM5LThyMmU0aGFhbDdsNHRiaG1wZmZsNnIzajMwYm1nN21zLmFwcHMuZ29vZ2xldXNlcmNvbnRlbnQuY29tIiwKICAgICAgICAgICAgICAiY2xpZW50X3R5cGUiOiAzCiAgICAgICAgICAgIH0KICAgICAgICAgIF0KICAgICAgICB9CiAgICAgIH0KICAgIH0KICBdLAogICJjb25maWd1cmF0aW9uX3ZlcnNpb24iOiAiMSIKfQ=="
         run: |
           if [[ ! -f ".env" && -f ".env.example" ]]; then
             cp .env.example .env
@@ -142,7 +141,55 @@ jobs:
             echo "${GOOGLE_SERVICES_JSON_SECRET}" > app/google-services.json
           elif [[ ! -f "app/google-services.json" ]]; then
             echo "Restoring provisioned app/google-services.json for release build..."
-            echo "${DEFAULT_GOOGLE_SERVICES_B64}" | base64 --decode > app/google-services.json
+            cat << 'EOF' > app/google-services.json
+          {
+            "project_info": {
+              "project_number": "489230672539",
+              "project_id": "gen-lang-client-0859071543",
+              "storage_bucket": "gen-lang-client-0859071543.firebasestorage.app"
+            },
+            "client": [
+              {
+                "client_info": {
+                  "mobilesdk_app_id": "1:489230672539:android:7a85f455b0637568c49c3e",
+                  "android_client_info": {
+                    "package_name": "com.aistudio.onefamily.xpqrmk"
+                  }
+                },
+                "oauth_client": [
+                  {
+                    "client_id": "489230672539-0socqg8pdphvjlf82cc1fsb02c8hvc72.apps.googleusercontent.com",
+                    "client_type": 1,
+                    "android_info": {
+                      "package_name": "com.aistudio.onefamily.xpqrmk",
+                      "certificate_hash": "5ba394c06242f07b310191efefaa66e1059cb3fe"
+                    }
+                  },
+                  {
+                    "client_id": "489230672539-8r2e4haal7l4tbhmpffl6r3j30bmg7ms.apps.googleusercontent.com",
+                    "client_type": 3
+                  }
+                ],
+                "api_key": [
+                  {
+                    "current_key": "AIzaSyADecF2-Y5GRJ4amQ5tCZ_JH8ln-9-SLgU"
+                  }
+                ],
+                "services": {
+                  "appinvite_service": {
+                    "other_platform_oauth_client": [
+                      {
+                        "client_id": "489230672539-8r2e4haal7l4tbhmpffl6r3j30bmg7ms.apps.googleusercontent.com",
+                        "client_type": 3
+                      }
+                    ]
+                  }
+                }
+              }
+            ],
+            "configuration_version": "1"
+          }
+          EOF
           fi
 
           if [[ ! -f "app/src/main/res/values/firebase_applet_config.xml" ]]; then

@@ -38,7 +38,7 @@ data class LocalAuthUser(
 )
 
 object LocalAccountSessionManager {
-    private const val PREFS_NAME = "axio_local_auth_prefs"
+    private const val PREFS_NAME = "onefamily_local_auth_prefs"
     private const val KEY_ACTIVE_USER = "active_local_user_json"
     private const val KEY_CREDENTIALS_MAP = "registered_credentials_json"
     private const val KEY_THEME_MODE = "app_theme_mode"
@@ -363,7 +363,7 @@ object LocalAccountSessionManager {
             uid = record.optString("uid", "local_user_$username"),
             username = username,
             displayName = finalDisplayName,
-            email = record.optString("email", "$username@axiofamily.local")
+            email = record.optString("email", "$username@onefamily.local")
         )
         setActiveUser(prefs, user)
         LocalAccountDataStore.ensureDefaultDataForUser(context, user)
@@ -393,7 +393,7 @@ object LocalAccountSessionManager {
         val displayName = rawDisplayName.trim().ifBlank {
             if (username == DEFAULT_TEST_USERNAME) "Mock User" else username.replaceFirstChar { it.uppercase() }
         }
-        val email = "$username@axiofamily.local"
+        val email = "$username@onefamily.local"
 
         val record = JSONObject().apply {
             put("uid", uid)
@@ -449,7 +449,7 @@ object LocalAccountSessionManager {
                 put("username", DEFAULT_TEST_USERNAME)
                 put("password", DEFAULT_TEST_PASSWORD)
                 put("displayName", "Mock User")
-                put("email", "test@axiofamily.local")
+                put("email", "test@onefamily.local")
             }
             accountsObj.put(DEFAULT_TEST_USERNAME, testRecord)
             prefs.edit().putString(KEY_CREDENTIALS_MAP, accountsObj.toString()).apply()
@@ -482,7 +482,7 @@ object LocalAccountSessionManager {
             uid = uid,
             username = obj.optString("username", "test"),
             displayName = finalName,
-            email = obj.optString("email", "test@axiofamily.local")
+            email = obj.optString("email", "test@onefamily.local")
         )
     }.getOrNull()
 
@@ -503,7 +503,7 @@ data class SmsRawRecord(
 )
 
 object LocalAccountDataStore {
-    private const val STORE_PREFS = "axio_local_data_store_prefs"
+    private const val STORE_PREFS = "onefamily_local_data_store_prefs"
     private const val KEY_PROFILES = "profiles_json"
     private const val KEY_HOUSEHOLDS = "households_json"
     private const val KEY_EXPENSES = "expenses_json"
@@ -529,12 +529,69 @@ object LocalAccountDataStore {
             val p = prefs() ?: return
             profilesFlow.value = decodeProfiles(p.getString(KEY_PROFILES, null))
             householdsFlow.value = decodeHouseholds(p.getString(KEY_HOUSEHOLDS, null))
-            expensesFlow.value = decodeExpenses(p.getString(KEY_EXPENSES, null))
+            val rawExpenses = decodeExpenses(p.getString(KEY_EXPENSES, null))
+            val dedupedExpenses = deduplicateSmsExpenses(rawExpenses)
+            expensesFlow.value = dedupedExpenses
+            if (dedupedExpenses.size != rawExpenses.size) {
+                saveExpenses(dedupedExpenses)
+            }
             budgetsFlow.value = decodeBudgets(p.getString(KEY_BUDGETS, null))
             accountsFlow.value = decodeAccounts(p.getString(KEY_ACCOUNTS, null))
             smsRawMapFlow.value = decodeSmsRawMap(p.getString(KEY_SMS_RAW_MAP, null))
             loaded = true
         }
+    }
+
+    fun getAllExistingSmsSignatures(uid: String): Set<String> {
+        return expensesFlow.value
+            .filter { it.userId == uid || it.memberUids.contains(uid) }
+            .flatMap { tx ->
+                val rawBody = tx.notes.substringAfter("] ", tx.notes).trim()
+                val contentKey = if (rawBody.isNotBlank() && tx.smsSignature.isNotBlank()) {
+                    com.example.data.sms.SmsInboxReader.buildSmsContentKey(rawBody, tx.transactionDateMillis)
+                } else {
+                    ""
+                }
+                tx.linkedSmsSignatures + listOf(tx.smsSignature, tx.id, contentKey)
+            }
+            .filter { it.isNotBlank() }
+            .flatMap { listOf(it, it.removePrefix("sms_")) }
+            .toSet()
+    }
+
+    /**
+     * Ensures the exact same SMS message (same smsSignature, or identical normalized SMS body +
+     * amount + type within a 10-minute window) never produces duplicate transactions in the ledger.
+     */
+    fun deduplicateSmsExpenses(list: List<ExpenseTransaction>): List<ExpenseTransaction> {
+        if (list.size <= 1) return list
+        val result = mutableListOf<ExpenseTransaction>()
+        val seenSignatures = mutableSetOf<String>()
+        val seenContentFingerprints = mutableSetOf<String>()
+
+        // Remove any legacy synthetic duplicate mock_tx_groc_dup_* entries
+        val cleaned = list.filterNot { it.id.startsWith("mock_tx_groc_dup_") }
+
+        for (tx in cleaned) {
+            val sig = tx.smsSignature.trim().removePrefix("sms_")
+            if (sig.isNotBlank()) {
+                if (!seenSignatures.add(sig)) continue
+                tx.linkedSmsSignatures.forEach { linked ->
+                    seenSignatures.add(linked.trim().removePrefix("sms_"))
+                }
+                val rawSmsText = tx.notes.substringAfter("] ", tx.notes)
+                    .trim()
+                    .replace(Regex("\\s+"), " ")
+                    .lowercase()
+                if (rawSmsText.length >= 15) {
+                    val bucket = tx.transactionDateMillis / 600_000L
+                    val fp = "${tx.userId}|${tx.type}|${"%.2f".format(tx.amount)}|$bucket|$rawSmsText"
+                    if (!seenContentFingerprints.add(fp)) continue
+                }
+            }
+            result.add(tx)
+        }
+        return result
     }
 
     fun cacheSmsMessage(
@@ -804,41 +861,6 @@ object LocalAccountDataStore {
                 body = "Rs ${3420.0 + (monthIndex * 210.0)} debited from HDFC Bank A/c XX4321 on $grocDay-${m+1}-$y to Nature's Basket via UPI Ref 9823145612.",
                 timestamp = grocTime
             )
-
-            // Seed a duplicate UPI app SMS alert for the same Nature's Basket transaction in the current month so user can test Swipe-Right Duplicate Linking
-            if (isCurrentMonth) {
-                val dupTime = grocTime + 15_000L
-                val dupSig = "sms_mock_groc_dup_${y}_$m"
-                mockTxList.add(
-                    ExpenseTransaction(
-                        id = "mock_tx_groc_dup_${y}_$m",
-                        userId = user.uid,
-                        userName = user.displayName,
-                        householdId = householdId,
-                        title = "UPI Alert: Nature's Basket Store",
-                        amount = 3420.0,
-                        type = "EXPENSE",
-                        category = "Groceries",
-                        accountName = "BHIM UPI (XX4321)",
-                        paymentMode = "UPI",
-                        tags = listOf("upi-alert", "possible-duplicate"),
-                        notes = "[NPCI-BHIM] Paid Rs 3420.00 to Natures Basket via UPI Ref 9823145612",
-                        visibility = "SHARED",
-                        smsSignature = dupSig,
-                        referenceNumber = "UPI-GROC-98230",
-                        transactionDateMillis = dupTime,
-                        memberUids = memberUids,
-                        createdAt = Timestamp(Date(dupTime)),
-                        updatedAt = Timestamp.now()
-                    )
-                )
-                mockSmsMap[dupSig] = SmsRawRecord(
-                    signature = dupSig,
-                    sender = "AD-BHIMUP",
-                    body = "BHIM UPI: You have paid Rs 3,420.00 to Nature's Basket Store from HDFC Bank A/c XX4321 on $grocDay-${m+1}-$y. UPI Ref: 9823145612.",
-                    timestamp = dupTime
-                )
-            }
 
             // 4. Restaurant Dinner
             val dinDay = 4.coerceAtMost(effectiveMaxDay)
@@ -1482,7 +1504,14 @@ object LocalAccountDataStore {
             updatedAt = Timestamp.now()
         )
 
-        val updated = expensesFlow.value.filterNot { it.id == docId } + tx
+        val withoutSameDocOrSig = expensesFlow.value.filterNot { existing ->
+            existing.id == docId ||
+                (smsSignature.isNotBlank() && (
+                    existing.smsSignature.removePrefix("sms_") == smsSignature.removePrefix("sms_") ||
+                        existing.linkedSmsSignatures.any { it.removePrefix("sms_") == smsSignature.removePrefix("sms_") }
+                    ))
+        }
+        val updated = deduplicateSmsExpenses(withoutSameDocOrSig + tx)
         expensesFlow.value = updated
         saveExpenses(updated)
         return docId
@@ -1502,16 +1531,18 @@ object LocalAccountDataStore {
 
         val sortedCandidates = candidates.sortedBy { it.parsed.timestamp }
         val currentMap = expensesFlow.value.associateBy { it.id }.toMutableMap()
-        val alreadyLinkedSignatures = expensesFlow.value
-            .flatMap { tx -> tx.linkedSmsSignatures + listOf(tx.smsSignature, tx.id) }
-            .filter { it.isNotBlank() }
-            .flatMap { listOf(it, it.removePrefix("sms_")) }
-            .toSet()
+        val alreadyLinkedSignatures = getAllExistingSmsSignatures(uid).toMutableSet()
         val accountsToUpsert = mutableMapOf<String, SmsCandidate>()
         var importedCount = 0
 
         for (candidate in sortedCandidates) {
-            if (candidate.id in alreadyLinkedSignatures) continue
+            val contentKey = com.example.data.sms.SmsInboxReader.buildSmsContentKey(
+                body = candidate.parsed.smsBody,
+                timestamp = candidate.parsed.timestamp
+            )
+            if (candidate.id in alreadyLinkedSignatures || contentKey in alreadyLinkedSignatures) continue
+            alreadyLinkedSignatures.add(candidate.id)
+            alreadyLinkedSignatures.add(contentKey)
             val parsed = candidate.parsed
             val isIncome = parsed.type == TransactionType.INCOME
             val category = candidate.suggestedCategory.ifBlank { "General" }.take(60)
@@ -1562,7 +1593,7 @@ object LocalAccountDataStore {
             }
         }
 
-        val updatedList = currentMap.values.toList()
+        val updatedList = deduplicateSmsExpenses(currentMap.values.toList())
         expensesFlow.value = updatedList
         saveExpenses(updatedList)
 
