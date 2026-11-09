@@ -2,106 +2,101 @@ package com.example.ui.theme
 
 import androidx.compose.material3.Typography
 import androidx.compose.ui.text.TextStyle
-import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
-import com.example.R
 
-val PlusJakartaDisplayFamily = FontFamily(
-    Font(R.font.plus_jakarta_sans, FontWeight.Normal),
-    Font(R.font.plus_jakarta_sans, FontWeight.Medium),
-    Font(R.font.plus_jakarta_sans, FontWeight.SemiBold),
-    Font(R.font.plus_jakarta_sans, FontWeight.Bold)
-)
+val GoogleDefaultFontFamily = FontFamily.Default
 
-val InterBodyFamily = FontFamily(
-    Font(R.font.inter, FontWeight.Normal),
-    Font(R.font.inter, FontWeight.Medium),
-    Font(R.font.inter, FontWeight.SemiBold),
-    Font(R.font.inter, FontWeight.Bold)
-)
-
-val Typography = Typography(
-    displayLarge = TextStyle(
-        fontFamily = PlusJakartaDisplayFamily,
-        fontWeight = FontWeight.Bold,
-        fontSize = 40.sp,
-        lineHeight = 46.sp,
-        letterSpacing = (-0.5).sp
-    ),
-    displayMedium = TextStyle(
-        fontFamily = PlusJakartaDisplayFamily,
-        fontWeight = FontWeight.Bold,
-        fontSize = 32.sp,
-        lineHeight = 38.sp,
-        letterSpacing = (-0.25).sp
-    ),
-    headlineLarge = TextStyle(
-        fontFamily = PlusJakartaDisplayFamily,
-        fontWeight = FontWeight.Bold,
-        fontSize = 26.sp,
-        lineHeight = 32.sp
-    ),
-    headlineMedium = TextStyle(
-        fontFamily = PlusJakartaDisplayFamily,
-        fontWeight = FontWeight.SemiBold,
-        fontSize = 22.sp,
-        lineHeight = 28.sp
-    ),
-    titleLarge = TextStyle(
-        fontFamily = PlusJakartaDisplayFamily,
-        fontWeight = FontWeight.SemiBold,
-        fontSize = 19.sp,
-        lineHeight = 25.sp
-    ),
-    titleMedium = TextStyle(
-        fontFamily = PlusJakartaDisplayFamily,
-        fontWeight = FontWeight.SemiBold,
-        fontSize = 16.sp,
-        lineHeight = 22.sp,
-        letterSpacing = 0.1.sp
-    ),
-    titleSmall = TextStyle(
-        fontFamily = PlusJakartaDisplayFamily,
-        fontWeight = FontWeight.Medium,
-        fontSize = 14.sp,
-        lineHeight = 20.sp
-    ),
-    bodyLarge = TextStyle(
-        fontFamily = InterBodyFamily,
-        fontWeight = FontWeight.Normal,
-        fontSize = 16.sp,
-        lineHeight = 24.sp
-    ),
-    bodyMedium = TextStyle(
-        fontFamily = InterBodyFamily,
-        fontWeight = FontWeight.Normal,
-        fontSize = 14.sp,
-        lineHeight = 20.sp
-    ),
-    bodySmall = TextStyle(
-        fontFamily = InterBodyFamily,
-        fontWeight = FontWeight.Normal,
-        fontSize = 12.sp,
-        lineHeight = 16.sp
-    ),
-    labelLarge = TextStyle(
-        fontFamily = InterBodyFamily,
-        fontWeight = FontWeight.SemiBold,
-        fontSize = 14.sp,
-        lineHeight = 20.sp
-    ),
-    labelMedium = TextStyle(
-        fontFamily = InterBodyFamily,
-        fontWeight = FontWeight.Medium,
-        fontSize = 12.sp,
-        lineHeight = 16.sp
-    ),
-    labelSmall = TextStyle(
-        fontFamily = InterBodyFamily,
-        fontWeight = FontWeight.Medium,
-        fontSize = 11.sp,
-        lineHeight = 15.sp
+/**
+ * Dynamically scales all typography sizes relative to the phone's screen dimensions (`scale`)
+ * using Google default system fonts (`FontFamily.Default`).
+ */
+fun buildResponsiveTypography(scale: Float = 1f): Typography {
+    val s = scale.coerceIn(0.82f, 1.30f)
+    return Typography(
+        displayLarge = TextStyle(
+            fontFamily = GoogleDefaultFontFamily,
+            fontWeight = FontWeight.Bold,
+            fontSize = (38f * s).sp,
+            lineHeight = (44f * s).sp,
+            letterSpacing = (-0.5f * s).sp
+        ),
+        displayMedium = TextStyle(
+            fontFamily = GoogleDefaultFontFamily,
+            fontWeight = FontWeight.Bold,
+            fontSize = (30f * s).sp,
+            lineHeight = (36f * s).sp,
+            letterSpacing = (-0.25f * s).sp
+        ),
+        headlineLarge = TextStyle(
+            fontFamily = GoogleDefaultFontFamily,
+            fontWeight = FontWeight.Bold,
+            fontSize = (24f * s).sp,
+            lineHeight = (30f * s).sp
+        ),
+        headlineMedium = TextStyle(
+            fontFamily = GoogleDefaultFontFamily,
+            fontWeight = FontWeight.SemiBold,
+            fontSize = (20f * s).sp,
+            lineHeight = (26f * s).sp
+        ),
+        titleLarge = TextStyle(
+            fontFamily = GoogleDefaultFontFamily,
+            fontWeight = FontWeight.SemiBold,
+            fontSize = (18f * s).sp,
+            lineHeight = (24f * s).sp
+        ),
+        titleMedium = TextStyle(
+            fontFamily = GoogleDefaultFontFamily,
+            fontWeight = FontWeight.SemiBold,
+            fontSize = (15.5f * s).sp,
+            lineHeight = (21f * s).sp,
+            letterSpacing = (0.1f * s).sp
+        ),
+        titleSmall = TextStyle(
+            fontFamily = GoogleDefaultFontFamily,
+            fontWeight = FontWeight.Medium,
+            fontSize = (13.5f * s).sp,
+            lineHeight = (19f * s).sp
+        ),
+        bodyLarge = TextStyle(
+            fontFamily = GoogleDefaultFontFamily,
+            fontWeight = FontWeight.Normal,
+            fontSize = (15.5f * s).sp,
+            lineHeight = (22f * s).sp
+        ),
+        bodyMedium = TextStyle(
+            fontFamily = GoogleDefaultFontFamily,
+            fontWeight = FontWeight.Normal,
+            fontSize = (13.5f * s).sp,
+            lineHeight = (19f * s).sp
+        ),
+        bodySmall = TextStyle(
+            fontFamily = GoogleDefaultFontFamily,
+            fontWeight = FontWeight.Normal,
+            fontSize = (12f * s).sp,
+            lineHeight = (16f * s).sp
+        ),
+        labelLarge = TextStyle(
+            fontFamily = GoogleDefaultFontFamily,
+            fontWeight = FontWeight.SemiBold,
+            fontSize = (13.5f * s).sp,
+            lineHeight = (19f * s).sp
+        ),
+        labelMedium = TextStyle(
+            fontFamily = GoogleDefaultFontFamily,
+            fontWeight = FontWeight.Medium,
+            fontSize = (12f * s).sp,
+            lineHeight = (16f * s).sp
+        ),
+        labelSmall = TextStyle(
+            fontFamily = GoogleDefaultFontFamily,
+            fontWeight = FontWeight.Medium,
+            fontSize = (10.8f * s).sp,
+            lineHeight = (14.5f * s).sp
+        )
     )
-)
+}
+
+val Typography = buildResponsiveTypography(1f)

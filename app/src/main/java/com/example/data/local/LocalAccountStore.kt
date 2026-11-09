@@ -48,11 +48,12 @@ object LocalAccountSessionManager {
     private var initialized = false
 
     fun ensureInitialized(context: Context) {
+        val prefs = prefs(context)
+        seedBuiltInTestAccount(prefs)
+        LocalAccountDataStore.ensureInitialized(context)
         if (initialized) return
         synchronized(this) {
             if (initialized) return
-            val prefs = prefs(context)
-            seedBuiltInTestAccount(prefs)
             val savedJson = prefs.getString(KEY_ACTIVE_USER, null)
             if (!savedJson.isNullOrBlank()) {
                 _activeUser.value = parseUserJson(savedJson)
@@ -60,7 +61,6 @@ object LocalAccountSessionManager {
             val savedTheme = prefs.getString(KEY_THEME_MODE, AppThemeMode.SYSTEM.name)
             _themeMode.value = runCatching { AppThemeMode.valueOf(savedTheme ?: "SYSTEM") }
                 .getOrDefault(AppThemeMode.SYSTEM)
-            LocalAccountDataStore.ensureInitialized(context)
             initialized = true
         }
     }
@@ -171,6 +171,23 @@ object LocalAccountSessionManager {
         return Result.success(user)
     }
 
+    fun updateDisplayName(context: Context, newDisplayName: String) {
+        ensureInitialized(context)
+        val cleanName = newDisplayName.trim().ifBlank { return }
+        val current = _activeUser.value ?: return
+        val prefs = prefs(context)
+        val updatedUser = current.copy(displayName = cleanName)
+        setActiveUser(prefs, updatedUser)
+
+        val accountsObj = getCredentialsMap(prefs)
+        val record = accountsObj.optJSONObject(current.username)
+        if (record != null) {
+            record.put("displayName", cleanName)
+            accountsObj.put(current.username, record)
+            prefs.edit().putString(KEY_CREDENTIALS_MAP, accountsObj.toString()).apply()
+        }
+    }
+
     fun signOut(context: Context? = null) {
         _activeUser.value = null
         if (context != null) {
@@ -230,6 +247,13 @@ object LocalAccountSessionManager {
  * Household & Personal expenses, SMS imports, Receipt edits, Budgets, and Accounts persist
  * locally without requiring Google Sign-In or Firebase Auth credentials.
  */
+data class SmsRawRecord(
+    val signature: String,
+    val sender: String,
+    val body: String,
+    val timestamp: Long
+)
+
 object LocalAccountDataStore {
     private const val STORE_PREFS = "axio_local_data_store_prefs"
     private const val KEY_PROFILES = "profiles_json"
@@ -237,12 +261,14 @@ object LocalAccountDataStore {
     private const val KEY_EXPENSES = "expenses_json"
     private const val KEY_BUDGETS = "budgets_json"
     private const val KEY_ACCOUNTS = "accounts_json"
+    private const val KEY_SMS_RAW_MAP = "sms_raw_map_json"
 
     private val profilesFlow = MutableStateFlow<Map<String, UserProfile>>(emptyMap())
     private val householdsFlow = MutableStateFlow<Map<String, Household>>(emptyMap())
     private val expensesFlow = MutableStateFlow<List<ExpenseTransaction>>(emptyList())
     private val budgetsFlow = MutableStateFlow<List<CategoryBudget>>(emptyList())
     private val accountsFlow = MutableStateFlow<List<FinancialAccount>>(emptyList())
+    private val smsRawMapFlow = MutableStateFlow<Map<String, SmsRawRecord>>(emptyMap())
 
     private var appContext: Context? = null
     private var loaded = false
@@ -258,8 +284,51 @@ object LocalAccountDataStore {
             expensesFlow.value = decodeExpenses(p.getString(KEY_EXPENSES, null))
             budgetsFlow.value = decodeBudgets(p.getString(KEY_BUDGETS, null))
             accountsFlow.value = decodeAccounts(p.getString(KEY_ACCOUNTS, null))
+            smsRawMapFlow.value = decodeSmsRawMap(p.getString(KEY_SMS_RAW_MAP, null))
             loaded = true
         }
+    }
+
+    fun cacheSmsMessage(signature: String, sender: String, body: String, timestamp: Long) {
+        if (signature.isBlank() || body.isBlank()) return
+        val current = smsRawMapFlow.value.toMutableMap()
+        current[signature] = SmsRawRecord(
+            signature = signature,
+            sender = sender,
+            body = body,
+            timestamp = timestamp
+        )
+        smsRawMapFlow.value = current
+        saveSmsRawMap(current)
+    }
+
+    fun getSmsMessageForTransaction(tx: ExpenseTransaction): SmsRawRecord? {
+        val sig = tx.smsSignature.ifBlank { tx.id.removePrefix("sms_") }
+        if (sig.isNotBlank()) {
+            smsRawMapFlow.value[sig]?.let { return it }
+        }
+        // Fallback if the raw SMS was stored in notes
+        val notes = tx.notes.trim()
+        if (notes.startsWith("[") && notes.contains("] ")) {
+            val sender = notes.substringAfter("[").substringBefore("]")
+            val body = notes.substringAfter("] ").trim()
+            if (body.isNotBlank()) {
+                return SmsRawRecord(
+                    signature = sig,
+                    sender = sender,
+                    body = body,
+                    timestamp = tx.transactionDateMillis
+                )
+            }
+        } else if (tx.smsSignature.isNotBlank() && notes.isNotBlank()) {
+            return SmsRawRecord(
+                signature = tx.smsSignature,
+                sender = tx.accountName,
+                body = notes,
+                timestamp = tx.transactionDateMillis
+            )
+        }
+        return null
     }
 
     fun ensureDefaultDataForUser(context: Context, user: LocalAuthUser) {
@@ -417,6 +486,44 @@ object LocalAccountDataStore {
         )
         profilesFlow.value = current
         saveProfiles(current)
+    }
+
+    fun updateUserDisplayName(
+        uid: String,
+        newDisplayName: String,
+        household: Household?
+    ) {
+        val cleanName = newDisplayName.trim().ifBlank { return }.take(100)
+        val currentProfiles = profilesFlow.value.toMutableMap()
+        val existing = currentProfiles[uid] ?: ensureUserProfile(uid, cleanName, "")
+        currentProfiles[uid] = existing.copy(
+            displayName = cleanName,
+            updatedAt = Timestamp.now()
+        )
+        profilesFlow.value = currentProfiles
+        saveProfiles(currentProfiles)
+
+        if (household != null) {
+            val hMap = householdsFlow.value.toMutableMap()
+            val curHh = hMap[household.id]
+            if (curHh != null) {
+                val updatedNames = curHh.memberNames.toMutableMap().apply {
+                    put(uid, cleanName)
+                }
+                hMap[household.id] = curHh.copy(
+                    memberNames = updatedNames,
+                    updatedAt = Timestamp.now()
+                )
+                householdsFlow.value = hMap
+                saveHouseholds(hMap)
+            }
+        }
+
+        val updatedExpenses = expensesFlow.value.map { tx ->
+            if (tx.userId == uid) tx.copy(userName = cleanName) else tx
+        }
+        expensesFlow.value = updatedExpenses
+        saveExpenses(updatedExpenses)
     }
 
     fun createHousehold(
@@ -626,6 +733,13 @@ object LocalAccountDataStore {
                 "UPI"
             }
 
+            cacheSmsMessage(
+                signature = candidate.id,
+                sender = parsed.sender,
+                body = parsed.smsBody,
+                timestamp = parsed.timestamp
+            )
+
             currentMap[docId] = ExpenseTransaction(
                 id = docId,
                 userId = uid,
@@ -638,7 +752,7 @@ object LocalAccountDataStore {
                 accountName = candidate.suggestedAccountName.ifBlank { parsed.bankName }.take(100),
                 paymentMode = paymentMode,
                 tags = tags,
-                notes = "Auto-parsed from ${parsed.sender}${parsed.reference?.let { " • Ref: $it" }.orEmpty()}".take(500),
+                notes = "[${parsed.sender}] ${parsed.smsBody}".take(500),
                 visibility = if (effectiveShared) "SHARED" else "PERSONAL",
                 smsSignature = candidate.id.take(200),
                 referenceNumber = parsed.reference.orEmpty().take(100),
@@ -1120,5 +1234,42 @@ object LocalAccountDataStore {
             }
             list
         }.getOrDefault(emptyList())
+    }
+
+    private fun saveSmsRawMap(map: Map<String, SmsRawRecord>) {
+        val arr = JSONArray()
+        map.values.forEach { r ->
+            arr.put(
+                JSONObject().apply {
+                    put("signature", r.signature)
+                    put("sender", r.sender)
+                    put("body", r.body)
+                    put("timestamp", r.timestamp)
+                }
+            )
+        }
+        prefs()?.edit()?.putString(KEY_SMS_RAW_MAP, arr.toString())?.apply()
+    }
+
+    private fun decodeSmsRawMap(raw: String?): Map<String, SmsRawRecord> {
+        if (raw.isNullOrBlank()) return emptyMap()
+        return runCatching {
+            val arr = JSONArray(raw)
+            val map = mutableMapOf<String, SmsRawRecord>()
+            for (i in 0 until arr.length()) {
+                val o = arr.getJSONObject(i)
+                val sig = o.optString("signature", "")
+                val body = o.optString("body", "")
+                if (sig.isNotBlank() && body.isNotBlank()) {
+                    map[sig] = SmsRawRecord(
+                        signature = sig,
+                        sender = o.optString("sender", ""),
+                        body = body,
+                        timestamp = o.optLong("timestamp", 0L)
+                    )
+                }
+            }
+            map
+        }.getOrDefault(emptyMap())
     }
 }

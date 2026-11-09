@@ -919,7 +919,7 @@ class AxioViewModel(
                 accountName = candidate.suggestedAccountName,
                 paymentMode = candidate.suggestedPaymentMode,
                 tags = (customTags + listOf("sms-auto", parsed.bankName.lowercase().replace(" ", "-"))).distinct(),
-                notes = "Auto-parsed from ${parsed.sender}${parsed.reference?.let { " • Ref: $it" }.orEmpty()}",
+                notes = "[${parsed.sender}] ${parsed.smsBody}".take(500),
                 isShared = shareFlag,
                 smsSignature = candidate.id,
                 referenceNumber = parsed.reference.orEmpty(),
@@ -1165,6 +1165,24 @@ class AxioViewModel(
                 repository.updateHouseholdSettings(household.id, household.name, householdLimit)
             }
             _statusBanner.value = "Budget updated."
+        }
+    }
+
+    fun updateUserName(context: Context, newDisplayName: String) {
+        val cleanName = newDisplayName.trim()
+        if (cleanName.isBlank()) {
+            _errorMessage.value = "Please enter a valid name."
+            return
+        }
+        viewModelScope.launch {
+            com.example.data.local.LocalAccountSessionManager.updateDisplayName(context, cleanName)
+            repository.updateUserDisplayName(cleanName, uiState.value.household)
+                .onSuccess {
+                    _statusBanner.value = "Name updated to $cleanName."
+                }
+                .onFailure { err ->
+                    _errorMessage.value = err.localizedMessage ?: "Failed to update name."
+                }
         }
     }
 

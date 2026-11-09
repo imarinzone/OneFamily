@@ -36,17 +36,12 @@ import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.Logout
 import androidx.compose.material.icons.filled.AccountBalanceWallet
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Groups
-import androidx.compose.material.icons.filled.Lock
-import androidx.compose.material.icons.filled.Palette
-import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.PieChart
-import androidx.compose.material.icons.filled.Sms
-import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -69,8 +64,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.credentials.CredentialManager
@@ -87,6 +80,7 @@ import com.example.data.sms.SmsInboxReader
 import com.example.data.sms.TransactionNotificationHelper
 import com.example.ui.auth.AuthScreen
 import com.example.ui.auth.signOut
+import com.example.ui.components.MonthPeriodSelectorBar
 import com.example.ui.screens.AddAccountDialog
 import com.example.ui.screens.AddCategoryBudgetDialog
 import com.example.ui.screens.AddTransactionDialog
@@ -94,12 +88,15 @@ import com.example.ui.screens.AnalyticsTabScreen
 import com.example.ui.screens.BudgetsTabScreen
 import com.example.ui.screens.EditOverallBudgetDialog
 import com.example.ui.screens.EditTransactionDialog
+import com.example.ui.screens.HomeTabScreen
 import com.example.ui.screens.HouseholdTabScreen
 import com.example.ui.screens.QuickCategoryPickerDialog
-import com.example.ui.screens.ThemeSettingsDialog
 import com.example.ui.theme.AxioFamilyTheme
+import com.example.ui.theme.LocalAppDimens
 import com.example.ui.viewmodel.AxioViewModel
 import com.example.ui.viewmodel.CategorySpendProgress
+import com.example.ui.viewmodel.DateRangePreset
+import com.example.ui.viewmodel.YearMonthPeriod
 import com.google.firebase.Firebase
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.FirebaseUser
@@ -201,12 +198,12 @@ fun AppNavigation(
 }
 
 enum class AxioNavTab(val label: String, val icon: ImageVector) {
+    HOME("Home", Icons.Default.Home),
     ANALYSIS("Analysis", Icons.Default.PieChart),
     BUDGETS("Budgets", Icons.Default.AccountBalanceWallet),
-    ACCOUNT("Account", Icons.Default.Groups)
+    ACCOUNT("Settings", Icons.Default.Settings)
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AxioMainShell(
     currentUserId: String,
@@ -216,6 +213,7 @@ fun AxioMainShell(
     onConsumeDeepLinkExpenseId: () -> Unit = {},
     onSignOut: () -> Unit = {}
 ) {
+    val dimens = LocalAppDimens.current
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
     val credentialManager = remember { CredentialManager.create(context) }
@@ -244,7 +242,6 @@ fun AxioMainShell(
     val currentTab = tabs[pagerState.currentPage]
 
     var showAddTransactionDialog by rememberSaveable { mutableStateOf(false) }
-    var showThemeDialog by rememberSaveable { mutableStateOf(false) }
     var showAddAccountDialog by rememberSaveable { mutableStateOf(false) }
     var showEditOverallBudgetDialog by rememberSaveable { mutableStateOf(false) }
     var editingCategoryBudget by remember { mutableStateOf<Pair<Boolean, CategorySpendProgress?>>(false to null) }
@@ -313,10 +310,10 @@ fun AxioMainShell(
         }
     }
 
-    if (currentTab != AxioNavTab.ANALYSIS) {
+    if (currentTab != AxioNavTab.HOME) {
         BackHandler {
             coroutineScope.launch {
-                pagerState.animateScrollToPage(AxioNavTab.ANALYSIS.ordinal)
+                pagerState.animateScrollToPage(AxioNavTab.HOME.ordinal)
             }
         }
     }
@@ -326,28 +323,35 @@ fun AxioMainShell(
     Scaffold(
         contentWindowInsets = WindowInsets.safeDrawing,
         topBar = {
-            AccountSharingTopBar(
-                userName = currentUserName,
-                selectedScope = uiState.selectedScope,
-                hasHousehold = uiState.household != null,
-                householdName = uiState.household?.name,
-                onScopeSelected = { viewModel.selectScope(it) },
-                onOpenAccountTab = {
-                    coroutineScope.launch {
-                        pagerState.animateScrollToPage(AxioNavTab.ACCOUNT.ordinal)
-                    }
-                },
-                onSmsSyncClick = triggerSmsSync,
-                onThemeClick = { showThemeDialog = true },
-                onSignOutClick = {
-                    signOut(
-                        context = context,
-                        credentialManager = credentialManager,
-                        onSignOutComplete = onSignOut,
-                        scope = coroutineScope
-                    )
-                }
-            )
+            // Top Month & Year Header (Left = Previous Month, Top Middle = Current Month & Year, Right = Next Month)
+            Surface(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .statusBarsPadding()
+                    .padding(vertical = dimens.itemSpacing * 0.45f),
+                color = MaterialTheme.colorScheme.background
+            ) {
+                MonthPeriodSelectorBar(
+                    selectedPeriod = uiState.selectedPeriod,
+                    periodLabel = uiState.periodLabel,
+                    onStepMonth = { viewModel.stepMonth(it) },
+                    onSelectCurrentMonth = { viewModel.selectPeriod(YearMonthPeriod.current()) },
+                    onToggleAllTime = {
+                        if (uiState.selectedDateRangePreset == DateRangePreset.ALL_TIME) {
+                            viewModel.selectDateRangePreset(DateRangePreset.MONTH)
+                        } else {
+                            viewModel.selectDateRangePreset(DateRangePreset.ALL_TIME)
+                        }
+                    },
+                    selectedDateRangePreset = uiState.selectedDateRangePreset,
+                    onSelectDateRangePreset = { viewModel.selectDateRangePreset(it) },
+                    onSelectMonthPeriod = { viewModel.selectPeriod(it) },
+                    customStartDateMillis = uiState.customStartDateMillis,
+                    customEndDateMillis = uiState.customEndDateMillis,
+                    onSelectCustomDateRange = { s, e -> viewModel.selectCustomDateRange(s, e) },
+                    showDateRangeChips = false
+                )
+            }
         }
     ) { innerPadding ->
         Box(
@@ -364,12 +368,18 @@ fun AxioMainShell(
                         Surface(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(horizontal = 16.dp, vertical = 4.dp),
-                            shape = RoundedCornerShape(14.dp),
+                                .padding(
+                                    horizontal = dimens.horizontalPadding,
+                                    vertical = dimens.itemSpacing * 0.35f
+                                ),
+                            shape = RoundedCornerShape(dimens.smallCornerRadius),
                             color = if (isErr) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.primaryContainer
                         ) {
                             Row(
-                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+                                modifier = Modifier.padding(
+                                    horizontal = dimens.horizontalPadding * 0.85f,
+                                    vertical = dimens.itemSpacing * 0.65f
+                                ),
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.SpaceBetween
                             ) {
@@ -379,15 +389,15 @@ fun AxioMainShell(
                                     color = if (isErr) MaterialTheme.colorScheme.onErrorContainer else MaterialTheme.colorScheme.onPrimaryContainer,
                                     modifier = Modifier.weight(1f)
                                 )
-                                Spacer(modifier = Modifier.width(8.dp))
+                                Spacer(modifier = Modifier.width(dimens.horizontalPadding * 0.5f))
                                 IconButton(
                                     onClick = { viewModel.dismissBanner() },
-                                    modifier = Modifier.size(24.dp)
+                                    modifier = Modifier.size(dimens.rowIconSize)
                                 ) {
                                     Icon(
                                         imageVector = Icons.Default.Close,
                                         contentDescription = "Dismiss",
-                                        modifier = Modifier.size(16.dp)
+                                        modifier = Modifier.size(dimens.rowIconSize * 0.72f)
                                     )
                                 }
                             }
@@ -403,10 +413,9 @@ fun AxioMainShell(
                         .fillMaxWidth()
                 ) { pageIndex ->
                     when (tabs[pageIndex]) {
-                        AxioNavTab.ANALYSIS -> AnalyticsTabScreen(
+                        AxioNavTab.HOME -> HomeTabScreen(
                             uiState = uiState,
-                            onStepMonth = { viewModel.stepMonth(it) },
-                            onSelectPeriod = { viewModel.selectPeriod(it) },
+                            onScopeSelected = { viewModel.selectScope(it) },
                             onSelectDateRangePreset = { viewModel.selectDateRangePreset(it) },
                             onSelectCustomDateRange = { s, e -> viewModel.selectCustomDateRange(s, e) },
                             onEditMonthlyBudget = { showEditOverallBudgetDialog = true },
@@ -428,12 +437,19 @@ fun AxioMainShell(
                             onDeleteTransaction = { viewModel.deleteTransaction(it) }
                         )
 
-                        AxioNavTab.BUDGETS -> BudgetsTabScreen(
+                        AxioNavTab.ANALYSIS -> AnalyticsTabScreen(
                             uiState = uiState,
                             onStepMonth = { viewModel.stepMonth(it) },
                             onSelectPeriod = { viewModel.selectPeriod(it) },
-                            onSelectDateRangePreset = { viewModel.selectDateRangePreset(it) },
-                            onSelectCustomDateRange = { s, e -> viewModel.selectCustomDateRange(s, e) },
+                            onSelectCategory = { viewModel.selectCategoryFilter(it) },
+                            onEditTransaction = { editingTransaction = it },
+                            onQuickChangeCategory = { quickCategoryTransaction = it },
+                            onToggleTransactionPrivacy = { viewModel.toggleTransactionPrivacy(it) },
+                            onDeleteTransaction = { viewModel.deleteTransaction(it) }
+                        )
+
+                        AxioNavTab.BUDGETS -> BudgetsTabScreen(
+                            uiState = uiState,
                             onEditOverallBudgetClick = { showEditOverallBudgetDialog = true },
                             onAddOrEditCategoryBudgetClick = { catProg ->
                                 editingCategoryBudget = true to catProg
@@ -444,7 +460,9 @@ fun AxioMainShell(
                             uiState = uiState,
                             currentUserName = currentUserName,
                             currentUserEmail = currentUserEmail,
-                            onScopeSelected = { viewModel.selectScope(it) },
+                            onUpdateUserName = { newName ->
+                                viewModel.updateUserName(context, newName)
+                            },
                             onAddAccountClick = { showAddAccountDialog = true },
                             onScanSmsClick = triggerSmsSync,
                             onSignOutClick = {
@@ -472,10 +490,11 @@ fun AxioMainShell(
                 }
             }
 
-            // Floating Bottom Navigation Pill Bar
+            // Floating Bottom Navigation Pill Bar (Add button shown ONLY on the Home Screen)
             FloatingBottomNavBar(
                 tabs = tabs,
                 selectedTab = currentTab,
+                showAddButton = currentTab == AxioNavTab.HOME,
                 onSelectTab = { tab ->
                     coroutineScope.launch {
                         pagerState.animateScrollToPage(tab.ordinal)
@@ -485,7 +504,7 @@ fun AxioMainShell(
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
                     .navigationBarsPadding()
-                    .padding(bottom = 14.dp)
+                    .padding(bottom = dimens.itemSpacing)
             )
         }
     }
@@ -566,15 +585,6 @@ fun AxioMainShell(
         )
     }
 
-    if (showThemeDialog) {
-        val currentThemeMode by LocalAccountSessionManager.themeMode.collectAsStateWithLifecycle()
-        ThemeSettingsDialog(
-            currentMode = currentThemeMode,
-            onSelectMode = { LocalAccountSessionManager.setThemeMode(context, it) },
-            onDismiss = { showThemeDialog = false }
-        )
-    }
-
     if (editingCategoryBudget.first) {
         AddCategoryBudgetDialog(
             initialProgress = editingCategoryBudget.second,
@@ -623,185 +633,15 @@ fun AxioMainShell(
 }
 
 @Composable
-private fun AccountSharingTopBar(
-    userName: String,
-    selectedScope: BudgetScope,
-    hasHousehold: Boolean,
-    householdName: String?,
-    onScopeSelected: (BudgetScope) -> Unit,
-    onOpenAccountTab: () -> Unit,
-    onSmsSyncClick: () -> Unit,
-    onThemeClick: () -> Unit,
-    onSignOutClick: () -> Unit
-) {
-    Surface(
-        modifier = Modifier
-            .fillMaxWidth()
-            .statusBarsPadding(),
-        color = MaterialTheme.colorScheme.background
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
-        ) {
-            // Left: Unified Account & Sharing Pill Bar
-            Surface(
-                modifier = Modifier
-                    .weight(1f, fill = false)
-                    .testTag("top_account_sharing_bar"),
-                shape = RoundedCornerShape(50),
-                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
-                border = BorderStroke(
-                    width = 1.dp,
-                    color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f)
-                )
-            ) {
-                Row(
-                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    // User Avatar & Name Pill -> Tapping opens Account & Sharing settings tab
-                    Row(
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(50))
-                            .clickable(onClick = onOpenAccountTab)
-                            .padding(horizontal = 8.dp, vertical = 4.dp)
-                            .testTag("top_account_profile_pill"),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .size(24.dp)
-                                .clip(CircleShape)
-                                .background(MaterialTheme.colorScheme.primaryContainer),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Person,
-                                contentDescription = "Account",
-                                tint = MaterialTheme.colorScheme.onPrimaryContainer,
-                                modifier = Modifier.size(14.dp)
-                            )
-                        }
-                        Text(
-                            text = userName.ifBlank { "Account" },
-                            style = MaterialTheme.typography.labelMedium,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onSurface,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                    }
-
-                    // Quick Sharing Toggle (Household vs Personal)
-                    val isHouseholdScope = selectedScope == BudgetScope.HOUSEHOLD_SHARED && hasHousehold
-                    Surface(
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(50))
-                            .clickable {
-                                if (hasHousehold) {
-                                    val next = if (selectedScope == BudgetScope.HOUSEHOLD_SHARED) {
-                                        BudgetScope.PERSONAL_ONLY
-                                    } else {
-                                        BudgetScope.HOUSEHOLD_SHARED
-                                    }
-                                    onScopeSelected(next)
-                                } else {
-                                    onOpenAccountTab()
-                                }
-                            }
-                            .testTag("top_sharing_scope_toggle"),
-                        shape = RoundedCornerShape(50),
-                        color = if (isHouseholdScope) {
-                            MaterialTheme.colorScheme.primary
-                        } else {
-                            MaterialTheme.colorScheme.surface
-                        }
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(4.dp)
-                        ) {
-                            Icon(
-                                imageVector = if (isHouseholdScope) Icons.Default.Groups else Icons.Default.Lock,
-                                contentDescription = null,
-                                tint = if (isHouseholdScope) {
-                                    MaterialTheme.colorScheme.onPrimary
-                                } else {
-                                    MaterialTheme.colorScheme.onSurfaceVariant
-                                },
-                                modifier = Modifier.size(13.dp)
-                            )
-                            Text(
-                                text = if (isHouseholdScope) {
-                                    householdName?.take(10) ?: "Family"
-                                } else {
-                                    "Personal"
-                                },
-                                style = MaterialTheme.typography.labelSmall,
-                                fontWeight = FontWeight.SemiBold,
-                                color = if (isHouseholdScope) {
-                                    MaterialTheme.colorScheme.onPrimary
-                                } else {
-                                    MaterialTheme.colorScheme.onSurface
-                                },
-                                maxLines = 1
-                            )
-                        }
-                    }
-                }
-            }
-
-            // Right: Action Icon Buttons (No title text)
-            Row(
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                IconButton(
-                    onClick = onSmsSyncClick,
-                    modifier = Modifier.testTag("top_bar_sms_sync_button")
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Sms,
-                        contentDescription = "Sync Phone SMS"
-                    )
-                }
-                IconButton(
-                    onClick = onThemeClick,
-                    modifier = Modifier.testTag("top_bar_theme_button")
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Palette,
-                        contentDescription = "Theme Settings"
-                    )
-                }
-                IconButton(
-                    onClick = onSignOutClick,
-                    modifier = Modifier.testTag("sign_out_button")
-                ) {
-                    Icon(
-                        imageVector = Icons.AutoMirrored.Filled.Logout,
-                        contentDescription = "Sign Out"
-                    )
-                }
-            }
-        }
-    }
-}
-
-@Composable
 private fun FloatingBottomNavBar(
     tabs: List<AxioNavTab>,
     selectedTab: AxioNavTab,
+    showAddButton: Boolean,
     onSelectTab: (AxioNavTab) -> Unit,
     onAddClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val dimens = LocalAppDimens.current
     Surface(
         modifier = modifier
             .shadow(
@@ -819,9 +659,12 @@ private fun FloatingBottomNavBar(
         )
     ) {
         Row(
-            modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+            modifier = Modifier.padding(
+                horizontal = dimens.horizontalPadding * 0.6f,
+                vertical = dimens.itemSpacing * 0.65f
+            ),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
+            horizontalArrangement = Arrangement.spacedBy(dimens.horizontalPadding * 0.45f)
         ) {
             tabs.forEach { tab ->
                 val isSelected = selectedTab == tab
@@ -836,8 +679,8 @@ private fun FloatingBottomNavBar(
 
                 Box(
                     modifier = Modifier
-                        .height(48.dp)
-                        .width(56.dp)
+                        .height(dimens.navPillHeight)
+                        .width(dimens.navItemWidth)
                         .clip(RoundedCornerShape(50))
                         .background(bgColor)
                         .clickable { onSelectTab(tab) }
@@ -848,27 +691,29 @@ private fun FloatingBottomNavBar(
                         imageVector = tab.icon,
                         contentDescription = tab.label,
                         tint = contentColor,
-                        modifier = Modifier.size(22.dp)
+                        modifier = Modifier.size(dimens.rowIconSize)
                     )
                 }
             }
 
-            // Integrated Floating Add Receipt Button inside the Floating Pill
-            Surface(
-                onClick = onAddClick,
-                modifier = Modifier
-                    .size(48.dp)
-                    .testTag("fab_add_expense"),
-                shape = CircleShape,
-                color = MaterialTheme.colorScheme.tertiaryContainer,
-                contentColor = MaterialTheme.colorScheme.onTertiaryContainer
-            ) {
-                Box(contentAlignment = Alignment.Center) {
-                    Icon(
-                        imageVector = Icons.Default.Add,
-                        contentDescription = "Add",
-                        modifier = Modifier.size(22.dp)
-                    )
+            // Show the Add button ONLY on the Home Screen
+            AnimatedVisibility(visible = showAddButton) {
+                Surface(
+                    onClick = onAddClick,
+                    modifier = Modifier
+                        .size(dimens.navPillHeight)
+                        .testTag("fab_add_expense"),
+                    shape = CircleShape,
+                    color = MaterialTheme.colorScheme.tertiaryContainer,
+                    contentColor = MaterialTheme.colorScheme.onTertiaryContainer
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(
+                            imageVector = Icons.Default.Add,
+                            contentDescription = "Add",
+                            modifier = Modifier.size(dimens.rowIconSize)
+                        )
+                    }
                 }
             }
         }

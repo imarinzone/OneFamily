@@ -26,7 +26,9 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AccessTime
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DeleteOutline
@@ -34,9 +36,14 @@ import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Groups
 import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.Message
 import androidx.compose.material.icons.filled.Palette
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.DatePicker
+import androidx.compose.material3.DatePickerDialog
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -47,6 +54,9 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.TimePicker
+import androidx.compose.material3.rememberDatePickerState
+import androidx.compose.material3.rememberTimePickerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
@@ -63,6 +73,8 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import com.example.data.local.LocalAccountDataStore
+import com.example.data.local.SmsRawRecord
 import com.example.data.model.ExpenseCategories
 import com.example.data.model.ExpenseTransaction
 import com.example.data.model.FinancialAccount
@@ -73,11 +85,65 @@ import com.example.ui.components.categoryIcon
 import com.example.ui.theme.AppThemeMode
 import com.example.ui.theme.BudgetSafeGreen
 import com.example.ui.theme.HouseholdBadgeIndigo
+import com.example.ui.theme.LocalAppDimens
 import com.example.ui.theme.PersonalBadgeTeal
 import com.example.ui.theme.categoryAccentColor
 import com.example.ui.viewmodel.CategorySpendProgress
+import java.text.SimpleDateFormat
+import java.util.Calendar
+import java.util.Date
+import java.util.Locale
+import java.util.TimeZone
 
-@OptIn(ExperimentalLayoutApi::class)
+private fun formatExactDate(millis: Long): String {
+    return SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date(millis))
+}
+
+private fun formatExactTime(millis: Long): String {
+    return SimpleDateFormat("hh:mm a", Locale.getDefault()).format(Date(millis))
+}
+
+private fun formatFullTimestamp(millis: Long): String {
+    return SimpleDateFormat("dd MMM yyyy, hh:mm:ss a", Locale.getDefault()).format(Date(millis))
+}
+
+/**
+ * Merges a UTC date-picker selection (`utcDateMillis`) with the existing local time-of-day
+ * (hour, minute, second, millisecond) from `currentTimestampMillis` so the exact timestamp is preserved.
+ */
+internal fun mergeSelectedDatePreservingTime(
+    utcDateMillis: Long,
+    currentTimestampMillis: Long
+): Long {
+    val utcCal = Calendar.getInstance(TimeZone.getTimeZone("UTC")).apply {
+        timeInMillis = utcDateMillis
+    }
+    val localCal = Calendar.getInstance().apply {
+        timeInMillis = currentTimestampMillis
+        set(Calendar.YEAR, utcCal.get(Calendar.YEAR))
+        set(Calendar.MONTH, utcCal.get(Calendar.MONTH))
+        set(Calendar.DAY_OF_MONTH, utcCal.get(Calendar.DAY_OF_MONTH))
+    }
+    return localCal.timeInMillis
+}
+
+/**
+ * Updates the hour and minute of `currentTimestampMillis` while preserving its date and seconds.
+ */
+internal fun mergeSelectedTimePreservingDate(
+    hourOfDay: Int,
+    minute: Int,
+    currentTimestampMillis: Long
+): Long {
+    val localCal = Calendar.getInstance().apply {
+        timeInMillis = currentTimestampMillis
+        set(Calendar.HOUR_OF_DAY, hourOfDay)
+        set(Calendar.MINUTE, minute)
+    }
+    return localCal.timeInMillis
+}
+
+@OptIn(ExperimentalLayoutApi::class, ExperimentalMaterial3Api::class)
 @Composable
 private fun InteractiveReceiptSheet(
     initialTitle: String,
@@ -90,6 +156,7 @@ private fun InteractiveReceiptSheet(
     initialNotes: String,
     initialIsShared: Boolean,
     initialDateMillis: Long,
+    rawSmsRecord: SmsRawRecord? = null,
     hasHousehold: Boolean,
     availableCategories: List<String>,
     currencySymbol: String,
@@ -112,6 +179,7 @@ private fun InteractiveReceiptSheet(
         transactionDateMillis: Long
     ) -> Unit
 ) {
+    val dimens = LocalAppDimens.current
     var title by remember { mutableStateOf(initialTitle) }
     var amountText by remember { mutableStateOf(initialAmountText) }
     var type by remember { mutableStateOf(initialType) }
@@ -125,6 +193,8 @@ private fun InteractiveReceiptSheet(
     var isShared by remember { mutableStateOf(initialIsShared && hasHousehold) }
     var txDateMillis by remember { mutableLongStateOf(initialDateMillis) }
     var showExtraDetails by remember { mutableStateOf(initialNotes.isNotBlank() || initialTagsInput.isNotBlank()) }
+    var showDatePickerModal by remember { mutableStateOf(false) }
+    var showTimePickerModal by remember { mutableStateOf(false) }
 
     val catAccent = categoryAccentColor(category)
     val allCats = remember(availableCategories, category, customCategoryInput) {
@@ -139,8 +209,8 @@ private fun InteractiveReceiptSheet(
     ) {
         Column(
             modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 18.dp, vertical = 20.dp)
+                .fillMaxWidth(0.94f)
+                .padding(vertical = dimens.itemSpacing)
                 .verticalScroll(rememberScrollState()),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
@@ -151,7 +221,7 @@ private fun InteractiveReceiptSheet(
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 20.dp, vertical = 14.dp)
+                        .padding(horizontal = dimens.cardPadding, vertical = dimens.itemSpacing)
                         .animateContentSize(spring(dampingRatio = Spring.DampingRatioLowBouncy)),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
@@ -161,27 +231,29 @@ private fun InteractiveReceiptSheet(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        // 1-Tap Rubber Stamp Toggle for Household vs Personal
                         val stampColor = if (isShared) HouseholdBadgeIndigo else PersonalBadgeTeal
                         Surface(
-                            shape = RoundedCornerShape(8.dp),
+                            shape = RoundedCornerShape(dimens.smallCornerRadius * 0.6f),
                             color = stampColor.copy(alpha = 0.14f),
                             modifier = Modifier
-                                .border(1.5.dp, stampColor, RoundedCornerShape(8.dp))
+                                .border(1.5.dp, stampColor, RoundedCornerShape(dimens.smallCornerRadius * 0.6f))
                                 .clickable(enabled = hasHousehold) { isShared = !isShared }
                                 .testTag("transaction_shared_switch")
                         ) {
                             Row(
-                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                                modifier = Modifier.padding(
+                                    horizontal = dimens.horizontalPadding * 0.65f,
+                                    vertical = dimens.itemSpacing * 0.45f
+                                ),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Icon(
                                     imageVector = if (isShared) Icons.Default.Groups else Icons.Default.Lock,
                                     contentDescription = null,
                                     tint = stampColor,
-                                    modifier = Modifier.size(14.dp)
+                                    modifier = Modifier.size(dimens.rowIconSize * 0.68f)
                                 )
-                                Spacer(modifier = Modifier.width(5.dp))
+                                Spacer(modifier = Modifier.width(dimens.horizontalPadding * 0.35f))
                                 Text(
                                     text = if (isShared) "HOUSEHOLD" else "PERSONAL",
                                     style = MaterialTheme.typography.labelSmall,
@@ -191,10 +263,9 @@ private fun InteractiveReceiptSheet(
                             }
                         }
 
-                        // Category Squircle Emblem (No text underneath)
                         Box(
                             modifier = Modifier
-                                .size(48.dp)
+                                .size(dimens.rowIconBoxSize)
                                 .clip(CircleShape)
                                 .background(catAccent.copy(alpha = 0.16f)),
                             contentAlignment = Alignment.Center
@@ -203,7 +274,7 @@ private fun InteractiveReceiptSheet(
                                 imageVector = categoryIcon(category),
                                 contentDescription = category,
                                 tint = catAccent,
-                                modifier = Modifier.size(24.dp)
+                                modifier = Modifier.size(dimens.rowIconSize)
                             )
                         }
 
@@ -212,7 +283,7 @@ private fun InteractiveReceiptSheet(
                                 IconButton(
                                     onClick = onDelete,
                                     modifier = Modifier
-                                        .size(34.dp)
+                                        .size(dimens.rowIconBoxSize * 0.85f)
                                         .testTag("edit_dialog_delete_button")
                                 ) {
                                     Icon(
@@ -224,7 +295,7 @@ private fun InteractiveReceiptSheet(
                             }
                             IconButton(
                                 onClick = onDismiss,
-                                modifier = Modifier.size(34.dp)
+                                modifier = Modifier.size(dimens.rowIconBoxSize * 0.85f)
                             ) {
                                 Icon(
                                     imageVector = Icons.Default.Close,
@@ -236,8 +307,8 @@ private fun InteractiveReceiptSheet(
                     }
 
                     // Expense vs Income Pill Toggle
-                    Spacer(modifier = Modifier.height(10.dp))
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Spacer(modifier = Modifier.height(dimens.itemSpacing * 0.7f))
+                    Row(horizontalArrangement = Arrangement.spacedBy(dimens.horizontalPadding * 0.5f)) {
                         FilterChip(
                             selected = type == "EXPENSE",
                             onClick = { type = "EXPENSE" },
@@ -253,12 +324,63 @@ private fun InteractiveReceiptSheet(
                         )
                     }
 
+                    // Original SMS Section when editing an SMS-backed transaction
+                    if (rawSmsRecord != null && rawSmsRecord.body.isNotBlank()) {
+                        Spacer(modifier = Modifier.height(dimens.itemSpacing * 0.7f))
+                        Surface(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("edit_dialog_raw_sms_box"),
+                            shape = RoundedCornerShape(dimens.smallCornerRadius),
+                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.65f)
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(dimens.cardPadding * 0.75f),
+                                verticalArrangement = Arrangement.spacedBy(dimens.itemSpacing * 0.35f)
+                            ) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Icon(
+                                            imageVector = Icons.Default.Message,
+                                            contentDescription = null,
+                                            tint = MaterialTheme.colorScheme.primary,
+                                            modifier = Modifier.size(dimens.rowIconSize * 0.72f)
+                                        )
+                                        Spacer(modifier = Modifier.width(dimens.horizontalPadding * 0.35f))
+                                        Text(
+                                            text = rawSmsRecord.sender.ifBlank { "SMS" },
+                                            style = MaterialTheme.typography.labelMedium,
+                                            fontWeight = FontWeight.Bold,
+                                            color = MaterialTheme.colorScheme.primary
+                                        )
+                                    }
+                                    Text(
+                                        text = formatFullTimestamp(
+                                            if (rawSmsRecord.timestamp > 0L) rawSmsRecord.timestamp else txDateMillis
+                                        ),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                                Text(
+                                    text = rawSmsRecord.body,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                            }
+                        }
+                    }
+
                     ReceiptDashedDividerLine()
 
                     // Big Receipt Total & Merchant Input
                     Row(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        horizontalArrangement = Arrangement.spacedBy(dimens.horizontalPadding * 0.6f),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         OutlinedTextField(
@@ -267,7 +389,7 @@ private fun InteractiveReceiptSheet(
                             label = { Text("Total ($currencySymbol)") },
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                             singleLine = true,
-                            shape = RoundedCornerShape(14.dp),
+                            shape = RoundedCornerShape(dimens.smallCornerRadius),
                             modifier = Modifier
                                 .weight(0.45f)
                                 .testTag(amountTestTag)
@@ -278,7 +400,7 @@ private fun InteractiveReceiptSheet(
                             onValueChange = { title = it },
                             label = { Text("Merchant") },
                             singleLine = true,
-                            shape = RoundedCornerShape(14.dp),
+                            shape = RoundedCornerShape(dimens.smallCornerRadius),
                             modifier = Modifier
                                 .weight(0.55f)
                                 .testTag(titleTestTag)
@@ -301,8 +423,12 @@ private fun InteractiveReceiptSheet(
                         TextButton(
                             onClick = { showCustomCategoryField = !showCustomCategoryField }
                         ) {
-                            Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(14.dp))
-                            Spacer(modifier = Modifier.width(4.dp))
+                            Icon(
+                                Icons.Default.Add,
+                                contentDescription = null,
+                                modifier = Modifier.size(dimens.rowIconSize * 0.65f)
+                            )
+                            Spacer(modifier = Modifier.width(dimens.horizontalPadding * 0.25f))
                             Text("Custom", style = MaterialTheme.typography.labelSmall)
                         }
                     }
@@ -316,17 +442,17 @@ private fun InteractiveReceiptSheet(
                             },
                             label = { Text("Custom Category") },
                             singleLine = true,
-                            shape = RoundedCornerShape(14.dp),
+                            shape = RoundedCornerShape(dimens.smallCornerRadius),
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(bottom = 8.dp)
+                                .padding(bottom = dimens.itemSpacing * 0.6f)
                         )
                     }
 
                     FlowRow(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                        horizontalArrangement = Arrangement.spacedBy(dimens.horizontalPadding * 0.4f),
+                        verticalArrangement = Arrangement.spacedBy(dimens.itemSpacing * 0.5f)
                     ) {
                         allCats.forEach { cat ->
                             val isSelected = category.equals(cat, ignoreCase = true)
@@ -343,7 +469,10 @@ private fun InteractiveReceiptSheet(
                                     style = MaterialTheme.typography.labelSmall,
                                     fontWeight = FontWeight.Bold,
                                     color = if (isSelected) Color.White else chipAccent,
-                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                                    modifier = Modifier.padding(
+                                        horizontal = dimens.horizontalPadding * 0.75f,
+                                        vertical = dimens.itemSpacing * 0.5f
+                                    )
                                 )
                             }
                         }
@@ -351,12 +480,12 @@ private fun InteractiveReceiptSheet(
 
                     ReceiptDashedDividerLine()
 
-                    // Quick Date & Payment Method Row
+                    // Payment Method Row
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
                             .horizontalScroll(rememberScrollState()),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        horizontalArrangement = Arrangement.spacedBy(dimens.horizontalPadding * 0.4f),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         listOf("UPI", "CARD", "BANK", "CASH", "WALLET").forEach { mode ->
@@ -371,23 +500,52 @@ private fun InteractiveReceiptSheet(
                         }
                     }
 
+                    Spacer(modifier = Modifier.height(dimens.itemSpacing * 0.5f))
+
+                    // Exact Date & Timestamp Selector Row (No Today/Yesterday/-1 Day buttons)
                     Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .horizontalScroll(rememberScrollState()),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(dimens.horizontalPadding * 0.5f),
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        OutlinedButton(onClick = { txDateMillis = System.currentTimeMillis() }) {
-                            Text("Today", style = MaterialTheme.typography.labelSmall)
+                        OutlinedButton(
+                            onClick = { showDatePickerModal = true },
+                            shape = RoundedCornerShape(dimens.smallCornerRadius),
+                            modifier = Modifier
+                                .weight(1f)
+                                .testTag("tx_date_picker_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.CalendarMonth,
+                                contentDescription = null,
+                                modifier = Modifier.size(dimens.rowIconSize * 0.75f)
+                            )
+                            Spacer(modifier = Modifier.width(dimens.horizontalPadding * 0.35f))
+                            Text(
+                                text = formatExactDate(txDateMillis),
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.SemiBold
+                            )
                         }
-                        OutlinedButton(onClick = { txDateMillis = System.currentTimeMillis() - 86_400_000L }) {
-                            Text("Yesterday", style = MaterialTheme.typography.labelSmall)
-                        }
-                        OutlinedButton(onClick = { txDateMillis -= 86_400_000L }) {
-                            Text("-1 Day", style = MaterialTheme.typography.labelSmall)
-                        }
-                        OutlinedButton(onClick = { txDateMillis += 86_400_000L }) {
-                            Text("+1 Day", style = MaterialTheme.typography.labelSmall)
+
+                        OutlinedButton(
+                            onClick = { showTimePickerModal = true },
+                            shape = RoundedCornerShape(dimens.smallCornerRadius),
+                            modifier = Modifier
+                                .weight(1f)
+                                .testTag("tx_time_picker_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.AccessTime,
+                                contentDescription = null,
+                                modifier = Modifier.size(dimens.rowIconSize * 0.75f)
+                            )
+                            Spacer(modifier = Modifier.width(dimens.horizontalPadding * 0.35f))
+                            Text(
+                                text = formatExactTime(txDateMillis),
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.SemiBold
+                            )
                         }
                     }
 
@@ -401,26 +559,26 @@ private fun InteractiveReceiptSheet(
                             style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
-                        Spacer(modifier = Modifier.width(4.dp))
+                        Spacer(modifier = Modifier.width(dimens.horizontalPadding * 0.25f))
                         Icon(
                             imageVector = if (showExtraDetails) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
                             contentDescription = null,
                             tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.size(18.dp)
+                            modifier = Modifier.size(dimens.rowIconSize * 0.8f)
                         )
                     }
 
                     AnimatedVisibility(visible = showExtraDetails) {
                         Column(
                             modifier = Modifier.fillMaxWidth(),
-                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                            verticalArrangement = Arrangement.spacedBy(dimens.itemSpacing * 0.65f)
                         ) {
                             OutlinedTextField(
                                 value = accountName,
                                 onValueChange = { accountName = it },
                                 label = { Text("Account / Card") },
                                 singleLine = true,
-                                shape = RoundedCornerShape(14.dp),
+                                shape = RoundedCornerShape(dimens.smallCornerRadius),
                                 modifier = Modifier.fillMaxWidth()
                             )
                             OutlinedTextField(
@@ -428,7 +586,7 @@ private fun InteractiveReceiptSheet(
                                 onValueChange = { tagsInput = it },
                                 label = { Text("#Tags") },
                                 singleLine = true,
-                                shape = RoundedCornerShape(14.dp),
+                                shape = RoundedCornerShape(dimens.smallCornerRadius),
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .testTag("add_tx_tags_input")
@@ -437,8 +595,8 @@ private fun InteractiveReceiptSheet(
                                 value = notes,
                                 onValueChange = { notes = it },
                                 label = { Text("Note") },
-                                maxLines = 2,
-                                shape = RoundedCornerShape(14.dp),
+                                maxLines = 3,
+                                shape = RoundedCornerShape(dimens.smallCornerRadius),
                                 modifier = Modifier.fillMaxWidth()
                             )
                         }
@@ -467,17 +625,21 @@ private fun InteractiveReceiptSheet(
                             }
                         },
                         enabled = (amountText.toDoubleOrNull() ?: 0.0) > 0.0,
-                        shape = RoundedCornerShape(16.dp),
+                        shape = RoundedCornerShape(dimens.smallCornerRadius),
                         colors = ButtonDefaults.buttonColors(
                             containerColor = if (type == "INCOME") BudgetSafeGreen else MaterialTheme.colorScheme.primary
                         ),
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(50.dp)
+                            .height(dimens.navPillHeight)
                             .testTag(saveTestTag)
                     ) {
-                        Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(18.dp))
-                        Spacer(modifier = Modifier.width(8.dp))
+                        Icon(
+                            Icons.Default.Check,
+                            contentDescription = null,
+                            modifier = Modifier.size(dimens.rowIconSize * 0.8f)
+                        )
+                        Spacer(modifier = Modifier.width(dimens.horizontalPadding * 0.5f))
                         Text(
                             text = "Save",
                             style = MaterialTheme.typography.titleMedium,
@@ -487,6 +649,77 @@ private fun InteractiveReceiptSheet(
                 }
             }
         }
+    }
+
+    if (showDatePickerModal) {
+        val datePickerState = rememberDatePickerState(initialSelectedDateMillis = txDateMillis)
+        DatePickerDialog(
+            onDismissRequest = { showDatePickerModal = false },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val selectedUtcMillis = datePickerState.selectedDateMillis
+                        if (selectedUtcMillis != null) {
+                            txDateMillis = mergeSelectedDatePreservingTime(
+                                utcDateMillis = selectedUtcMillis,
+                                currentTimestampMillis = txDateMillis
+                            )
+                        }
+                        showDatePickerModal = false
+                    }
+                ) {
+                    Text("Apply")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDatePickerModal = false }) {
+                    Text("Cancel")
+                }
+            }
+        ) {
+            DatePicker(state = datePickerState)
+        }
+    }
+
+    if (showTimePickerModal) {
+        val cal = remember(txDateMillis) {
+            Calendar.getInstance().apply { timeInMillis = txDateMillis }
+        }
+        val timePickerState = rememberTimePickerState(
+            initialHour = cal.get(Calendar.HOUR_OF_DAY),
+            initialMinute = cal.get(Calendar.MINUTE),
+            is24Hour = false
+        )
+        AlertDialog(
+            onDismissRequest = { showTimePickerModal = false },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        txDateMillis = mergeSelectedTimePreservingDate(
+                            hourOfDay = timePickerState.hour,
+                            minute = timePickerState.minute,
+                            currentTimestampMillis = txDateMillis
+                        )
+                        showTimePickerModal = false
+                    }
+                ) {
+                    Text("Apply")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showTimePickerModal = false }) {
+                    Text("Cancel")
+                }
+            },
+            text = {
+                Box(
+                    modifier = Modifier.fillMaxWidth(),
+                    contentAlignment = Alignment.Center
+                ) {
+                    TimePicker(state = timePickerState)
+                }
+            }
+        )
     }
 }
 
@@ -522,6 +755,7 @@ fun AddTransactionDialog(
         initialNotes = "",
         initialIsShared = hasHousehold && defaultShared,
         initialDateMillis = System.currentTimeMillis(),
+        rawSmsRecord = null,
         hasHousehold = hasHousehold,
         availableCategories = availableCategories,
         currencySymbol = currencySymbol,
@@ -560,6 +794,9 @@ fun EditTransactionDialog(
     } else {
         transaction.amount.toString()
     }
+    val rawSmsRecord = remember(transaction.id, transaction.smsSignature, transaction.notes) {
+        LocalAccountDataStore.getSmsMessageForTransaction(transaction)
+    }
 
     InteractiveReceiptSheet(
         initialTitle = transaction.title,
@@ -572,6 +809,7 @@ fun EditTransactionDialog(
         initialNotes = transaction.notes,
         initialIsShared = transaction.visibility == "SHARED" && hasHousehold,
         initialDateMillis = transaction.transactionDateMillis,
+        rawSmsRecord = rawSmsRecord,
         hasHousehold = hasHousehold,
         availableCategories = availableCategories,
         currencySymbol = currencySymbol,
@@ -607,6 +845,7 @@ fun QuickCategoryPickerDialog(
     onSelectCategory: (String) -> Unit,
     onOpenFullEditor: () -> Unit
 ) {
+    val dimens = LocalAppDimens.current
     var selectedCat by remember(transaction.id) { mutableStateOf(transaction.category) }
     var customCategory by remember { mutableStateOf("") }
 
@@ -624,9 +863,9 @@ fun QuickCategoryPickerDialog(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(20.dp)
+                    .padding(dimens.cardPadding)
                     .verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
+                verticalArrangement = Arrangement.spacedBy(dimens.itemSpacing)
             ) {
                 Text(
                     text = transaction.title,
@@ -638,8 +877,8 @@ fun QuickCategoryPickerDialog(
                 ReceiptDashedDividerLine()
 
                 FlowRow(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                    horizontalArrangement = Arrangement.spacedBy(dimens.horizontalPadding * 0.5f),
+                    verticalArrangement = Arrangement.spacedBy(dimens.itemSpacing * 0.65f)
                 ) {
                     categories.forEach { cat ->
                         val accent = categoryAccentColor(cat)
@@ -655,16 +894,19 @@ fun QuickCategoryPickerDialog(
                                 }
                         ) {
                             Row(
-                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                                modifier = Modifier.padding(
+                                    horizontal = dimens.horizontalPadding * 0.75f,
+                                    vertical = dimens.itemSpacing * 0.65f
+                                ),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Icon(
                                     imageVector = categoryIcon(cat),
                                     contentDescription = null,
                                     tint = if (isSel) Color.White else accent,
-                                    modifier = Modifier.size(16.dp)
+                                    modifier = Modifier.size(dimens.rowIconSize * 0.72f)
                                 )
-                                Spacer(modifier = Modifier.width(6.dp))
+                                Spacer(modifier = Modifier.width(dimens.horizontalPadding * 0.35f))
                                 Text(
                                     text = cat,
                                     style = MaterialTheme.typography.labelLarge,
@@ -681,7 +923,7 @@ fun QuickCategoryPickerDialog(
                     onValueChange = { customCategory = it },
                     label = { Text("New Category") },
                     singleLine = true,
-                    shape = RoundedCornerShape(16.dp),
+                    shape = RoundedCornerShape(dimens.smallCornerRadius),
                     modifier = Modifier.fillMaxWidth()
                 )
 
@@ -693,7 +935,7 @@ fun QuickCategoryPickerDialog(
                         Text("Close")
                     }
                     TextButton(onClick = onOpenFullEditor) {
-                        Text("Edit")
+                        Text("Edit Full Receipt")
                     }
                     if (customCategory.isNotBlank()) {
                         Button(onClick = { onSelectCategory(customCategory.trim()) }) {
@@ -712,6 +954,7 @@ fun ThemeSettingsDialog(
     onSelectMode: (AppThemeMode) -> Unit,
     onDismiss: () -> Unit
 ) {
+    val dimens = LocalAppDimens.current
     Dialog(onDismissRequest = onDismiss) {
         ReceiptTicketCard(
             containerColor = MaterialTheme.colorScheme.surface,
@@ -720,8 +963,8 @@ fun ThemeSettingsDialog(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(20.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp),
+                    .padding(dimens.cardPadding),
+                verticalArrangement = Arrangement.spacedBy(dimens.itemSpacing),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 Row(
@@ -733,7 +976,7 @@ fun ThemeSettingsDialog(
                         contentDescription = null,
                         tint = MaterialTheme.colorScheme.primary
                     )
-                    Spacer(modifier = Modifier.width(8.dp))
+                    Spacer(modifier = Modifier.width(dimens.horizontalPadding * 0.5f))
                     Text(
                         text = "Theme",
                         style = MaterialTheme.typography.titleLarge,
@@ -773,6 +1016,7 @@ fun AddCategoryBudgetDialog(
     onDismiss: () -> Unit,
     onSave: (category: String, limit: Double, alertPct: Int, isShared: Boolean) -> Unit
 ) {
+    val dimens = LocalAppDimens.current
     var category by remember { mutableStateOf(initialProgress?.category ?: "Groceries") }
     var customCategory by remember { mutableStateOf("") }
     var limitText by remember {
@@ -790,9 +1034,9 @@ fun AddCategoryBudgetDialog(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(20.dp)
+                    .padding(dimens.cardPadding)
                     .verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(10.dp)
+                verticalArrangement = Arrangement.spacedBy(dimens.itemSpacing * 0.85f)
             ) {
                 Text(
                     text = "Category Limit",
@@ -803,8 +1047,8 @@ fun AddCategoryBudgetDialog(
                 ReceiptDashedDividerLine()
 
                 FlowRow(
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                    horizontalArrangement = Arrangement.spacedBy(dimens.horizontalPadding * 0.4f),
+                    verticalArrangement = Arrangement.spacedBy(dimens.itemSpacing * 0.5f)
                 ) {
                     ExpenseCategories.EXPENSE_ONLY.forEach { cat ->
                         FilterChip(
@@ -823,7 +1067,7 @@ fun AddCategoryBudgetDialog(
                     onValueChange = { customCategory = it },
                     label = { Text("Custom Category") },
                     singleLine = true,
-                    shape = RoundedCornerShape(16.dp),
+                    shape = RoundedCornerShape(dimens.smallCornerRadius),
                     modifier = Modifier.fillMaxWidth()
                 )
 
@@ -833,7 +1077,7 @@ fun AddCategoryBudgetDialog(
                     label = { Text("Limit ($currencySymbol)") },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                     singleLine = true,
-                    shape = RoundedCornerShape(16.dp),
+                    shape = RoundedCornerShape(dimens.smallCornerRadius),
                     modifier = Modifier.fillMaxWidth()
                 )
 
@@ -858,7 +1102,7 @@ fun AddCategoryBudgetDialog(
                     TextButton(onClick = onDismiss) {
                         Text("Cancel")
                     }
-                    Spacer(modifier = Modifier.width(8.dp))
+                    Spacer(modifier = Modifier.width(dimens.horizontalPadding * 0.5f))
                     Button(
                         onClick = {
                             val limit = limitText.toDoubleOrNull() ?: 0.0
@@ -884,6 +1128,7 @@ fun EditOverallBudgetDialog(
     onDismiss: () -> Unit,
     onSave: (personalLimit: Double, householdLimit: Double?, currency: String) -> Unit
 ) {
+    val dimens = LocalAppDimens.current
     var personalText by remember {
         mutableStateOf(if (personalBudget > 0.0) personalBudget.toInt().toString() else "")
     }
@@ -900,8 +1145,8 @@ fun EditOverallBudgetDialog(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(20.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp)
+                    .padding(dimens.cardPadding),
+                verticalArrangement = Arrangement.spacedBy(dimens.itemSpacing * 0.85f)
             ) {
                 Text(
                     text = "Budget",
@@ -918,7 +1163,7 @@ fun EditOverallBudgetDialog(
                         label = { Text("Household") },
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                         singleLine = true,
-                        shape = RoundedCornerShape(16.dp),
+                        shape = RoundedCornerShape(dimens.smallCornerRadius),
                         modifier = Modifier.fillMaxWidth()
                     )
                 }
@@ -928,7 +1173,7 @@ fun EditOverallBudgetDialog(
                     label = { Text("Personal") },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                     singleLine = true,
-                    shape = RoundedCornerShape(16.dp),
+                    shape = RoundedCornerShape(dimens.smallCornerRadius),
                     modifier = Modifier.fillMaxWidth()
                 )
                 OutlinedTextField(
@@ -936,7 +1181,7 @@ fun EditOverallBudgetDialog(
                     onValueChange = { currency = it.take(4) },
                     label = { Text("Currency") },
                     singleLine = true,
-                    shape = RoundedCornerShape(16.dp),
+                    shape = RoundedCornerShape(dimens.smallCornerRadius),
                     modifier = Modifier.fillMaxWidth()
                 )
 
@@ -947,7 +1192,7 @@ fun EditOverallBudgetDialog(
                     TextButton(onClick = onDismiss) {
                         Text("Cancel")
                     }
-                    Spacer(modifier = Modifier.width(8.dp))
+                    Spacer(modifier = Modifier.width(dimens.horizontalPadding * 0.5f))
                     Button(
                         onClick = {
                             val pLimit = personalText.toDoubleOrNull() ?: 0.0
@@ -976,6 +1221,7 @@ fun AddAccountDialog(
         creditLimit: Double
     ) -> Unit
 ) {
+    val dimens = LocalAppDimens.current
     var bankName by remember { mutableStateOf("HDFC Bank") }
     var accountType by remember { mutableStateOf("BANK") }
     var lastFour by remember { mutableStateOf("4821") }
@@ -990,9 +1236,9 @@ fun AddAccountDialog(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(20.dp)
+                    .padding(dimens.cardPadding)
                     .verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(10.dp)
+                verticalArrangement = Arrangement.spacedBy(dimens.itemSpacing * 0.85f)
             ) {
                 Text(
                     text = "Add Account",
@@ -1004,7 +1250,7 @@ fun AddAccountDialog(
 
                 Row(
                     modifier = Modifier.horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    horizontalArrangement = Arrangement.spacedBy(dimens.horizontalPadding * 0.4f)
                 ) {
                     listOf("BANK", "CREDIT_CARD", "UPI", "CASH").forEach { type ->
                         FilterChip(
@@ -1019,7 +1265,7 @@ fun AddAccountDialog(
                     onValueChange = { bankName = it },
                     label = { Text("Name") },
                     singleLine = true,
-                    shape = RoundedCornerShape(16.dp),
+                    shape = RoundedCornerShape(dimens.smallCornerRadius),
                     modifier = Modifier.fillMaxWidth()
                 )
                 OutlinedTextField(
@@ -1028,7 +1274,7 @@ fun AddAccountDialog(
                     label = { Text("Last 4 Digits") },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                     singleLine = true,
-                    shape = RoundedCornerShape(16.dp),
+                    shape = RoundedCornerShape(dimens.smallCornerRadius),
                     modifier = Modifier.fillMaxWidth()
                 )
                 OutlinedTextField(
@@ -1037,7 +1283,7 @@ fun AddAccountDialog(
                     label = { Text("Balance ($currencySymbol)") },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                     singleLine = true,
-                    shape = RoundedCornerShape(16.dp),
+                    shape = RoundedCornerShape(dimens.smallCornerRadius),
                     modifier = Modifier.fillMaxWidth()
                 )
 
@@ -1048,7 +1294,7 @@ fun AddAccountDialog(
                     TextButton(onClick = onDismiss) {
                         Text("Cancel")
                     }
-                    Spacer(modifier = Modifier.width(8.dp))
+                    Spacer(modifier = Modifier.width(dimens.horizontalPadding * 0.5f))
                     Button(
                         onClick = {
                             val suffix = if (lastFour.isNotBlank()) " ••$lastFour" else ""

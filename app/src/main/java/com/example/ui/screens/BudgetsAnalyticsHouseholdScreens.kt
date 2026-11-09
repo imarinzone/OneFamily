@@ -30,6 +30,7 @@ import androidx.compose.material.icons.automirrored.filled.Logout
 import androidx.compose.material.icons.automirrored.filled.ReceiptLong
 import androidx.compose.material.icons.filled.AccountBalance
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
@@ -40,11 +41,13 @@ import androidx.compose.material.icons.filled.FilterList
 import androidx.compose.material.icons.filled.Groups
 import androidx.compose.material.icons.filled.MarkEmailUnread
 import androidx.compose.material.icons.filled.Palette
+import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.PersonAdd
 import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.filled.Sms
+import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material.icons.filled.Verified
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.FilterChip
@@ -58,6 +61,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -83,7 +87,6 @@ import com.example.ui.components.AccountsCarouselStrip
 import com.example.ui.components.CategoryDonutChart
 import com.example.ui.components.CustomDateRangePickerModal
 import com.example.ui.components.ExpenseTransactionItemCard
-import com.example.ui.components.MonthPeriodSelectorBar
 import com.example.ui.components.MonthlyBarGraph
 import com.example.ui.components.MonthlyBudgetPulseCard
 import com.example.ui.components.ReceiptDashedDividerLine
@@ -92,278 +95,27 @@ import com.example.ui.components.ScopeSwitcherBar
 import com.example.ui.components.ThemeModeSelectorBar
 import com.example.ui.components.categoryIcon
 import com.example.ui.components.formatCurrency
+import com.example.ui.components.formatShortDate
 import com.example.ui.theme.BudgetDangerCoral
 import com.example.ui.theme.BudgetSafeGreen
 import com.example.ui.theme.BudgetWarnAmber
 import com.example.ui.theme.HouseholdBadgeIndigo
+import com.example.ui.theme.LocalAppDimens
 import com.example.ui.theme.categoryAccentColor
 import com.example.ui.viewmodel.AxioDashboardUiState
 import com.example.ui.viewmodel.CategorySpendProgress
 import com.example.ui.viewmodel.DateRangePreset
 import com.example.ui.viewmodel.YearMonthPeriod
 
-@Composable
-fun BudgetsTabScreen(
-    uiState: AxioDashboardUiState,
-    onStepMonth: (Int) -> Unit,
-    onSelectPeriod: (YearMonthPeriod?) -> Unit,
-    onSelectDateRangePreset: (DateRangePreset) -> Unit = {},
-    onSelectCustomDateRange: (Long, Long) -> Unit = { _, _ -> },
-    onEditOverallBudgetClick: () -> Unit,
-    onAddOrEditCategoryBudgetClick: (CategorySpendProgress?) -> Unit
-) {
-    val currency = uiState.userProfile?.currencySymbol ?: "₹"
-
-    LazyColumn(
-        modifier = Modifier
-            .fillMaxSize()
-            .testTag("budgets_tab_list"),
-        contentPadding = PaddingValues(0.dp, 8.dp, 0.dp, 120.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp)
-    ) {
-        item {
-            MonthPeriodSelectorBar(
-                selectedPeriod = uiState.selectedPeriod,
-                periodLabel = uiState.periodLabel,
-                onStepMonth = onStepMonth,
-                onSelectCurrentMonth = { onSelectPeriod(YearMonthPeriod.current()) },
-                onToggleAllTime = {
-                    if (uiState.selectedDateRangePreset == DateRangePreset.ALL_TIME) {
-                        onSelectDateRangePreset(DateRangePreset.MONTH)
-                    } else {
-                        onSelectDateRangePreset(DateRangePreset.ALL_TIME)
-                    }
-                },
-                selectedDateRangePreset = uiState.selectedDateRangePreset,
-                onSelectDateRangePreset = onSelectDateRangePreset,
-                onSelectMonthPeriod = { onSelectPeriod(it) },
-                customStartDateMillis = uiState.customStartDateMillis,
-                customEndDateMillis = uiState.customEndDateMillis,
-                onSelectCustomDateRange = onSelectCustomDateRange
-            )
-        }
-
-        // Receipt Ticket Summary for Monthly Budgets (Single-Line Household & Personal Pills)
-        item {
-            Box(modifier = Modifier.padding(horizontal = 16.dp)) {
-                ReceiptTicketCard(
-                    containerColor = MaterialTheme.colorScheme.surface,
-                    contentColor = MaterialTheme.colorScheme.onSurface
-                ) {
-                    Column(modifier = Modifier.padding(18.dp)) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(
-                                text = "Budgets",
-                                style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.Bold
-                            )
-                            IconButton(
-                                onClick = onEditOverallBudgetClick,
-                                modifier = Modifier
-                                    .size(34.dp)
-                                    .testTag("configure_overall_budget_button")
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Edit,
-                                    contentDescription = "Edit Monthly Budget",
-                                    tint = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.size(18.dp)
-                                )
-                            }
-                        }
-
-                        ReceiptDashedDividerLine()
-
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(10.dp)
-                        ) {
-                            Surface(
-                                modifier = Modifier.weight(1f),
-                                shape = RoundedCornerShape(16.dp),
-                                color = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.55f)
-                            ) {
-                                Row(
-                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 12.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.SpaceBetween
-                                ) {
-                                    Text(
-                                        text = "Household",
-                                        style = MaterialTheme.typography.labelMedium,
-                                        fontWeight = FontWeight.SemiBold,
-                                        color = MaterialTheme.colorScheme.onTertiaryContainer,
-                                        maxLines = 1
-                                    )
-                                    val hhLimit = uiState.household?.monthlyBudgetLimit ?: 0.0
-                                    Text(
-                                        text = if (hhLimit > 0.0) {
-                                            formatCurrency(hhLimit, currency)
-                                        } else {
-                                            "Not set"
-                                        },
-                                        style = MaterialTheme.typography.titleSmall,
-                                        fontWeight = FontWeight.Bold,
-                                        color = MaterialTheme.colorScheme.onTertiaryContainer,
-                                        maxLines = 1
-                                    )
-                                }
-                            }
-
-                            Surface(
-                                modifier = Modifier.weight(1f),
-                                shape = RoundedCornerShape(16.dp),
-                                color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.55f)
-                            ) {
-                                Row(
-                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 12.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.SpaceBetween
-                                ) {
-                                    Text(
-                                        text = "Personal",
-                                        style = MaterialTheme.typography.labelMedium,
-                                        fontWeight = FontWeight.SemiBold,
-                                        color = MaterialTheme.colorScheme.onPrimaryContainer,
-                                        maxLines = 1
-                                    )
-                                    val pLimit = uiState.userProfile?.personalMonthlyBudget ?: 0.0
-                                    Text(
-                                        text = if (pLimit > 0.0) {
-                                            formatCurrency(pLimit, currency)
-                                        } else {
-                                            "Not set"
-                                        },
-                                        style = MaterialTheme.typography.titleSmall,
-                                        fontWeight = FontWeight.Bold,
-                                        color = MaterialTheme.colorScheme.onPrimaryContainer,
-                                        maxLines = 1
-                                    )
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        item {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text = "Categories",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold
-                )
-                IconButton(
-                    onClick = { onAddOrEditCategoryBudgetClick(null) },
-                    modifier = Modifier.testTag("add_category_budget_button")
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Add,
-                        contentDescription = "Set Category Limit",
-                        tint = MaterialTheme.colorScheme.primary
-                    )
-                }
-            }
-        }
-
-        items(
-            items = uiState.categoryProgressList,
-            key = { it.category }
-        ) { item ->
-            val catColor = categoryAccentColor(item.category)
-            val barColor = when {
-                item.isOverBudget -> BudgetDangerCoral
-                item.isNearAlert -> BudgetWarnAmber
-                else -> BudgetSafeGreen
-            }
-            Box(modifier = Modifier.padding(horizontal = 16.dp)) {
-                Card(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(22.dp))
-                        .clickable { onAddOrEditCategoryBudgetClick(item) },
-                    shape = RoundedCornerShape(22.dp),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                    elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
-                ) {
-                    Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp)) {
-                        // Single-line Category Row: Icon + Name + Amount
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .size(44.dp)
-                                    .clip(RoundedCornerShape(14.dp))
-                                    .background(catColor.copy(alpha = 0.16f)),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Icon(
-                                    imageVector = categoryIcon(item.category),
-                                    contentDescription = item.category,
-                                    tint = catColor,
-                                    modifier = Modifier.size(22.dp)
-                                )
-                            }
-                            Spacer(modifier = Modifier.width(14.dp))
-                            Text(
-                                text = item.category,
-                                style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.SemiBold,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier.weight(1f)
-                            )
-                            Spacer(modifier = Modifier.width(12.dp))
-                            Text(
-                                text = formatCurrency(item.spent, currency),
-                                style = MaterialTheme.typography.titleLarge,
-                                fontWeight = FontWeight.Bold,
-                                color = if (item.limit > 0 && item.isOverBudget) barColor else MaterialTheme.colorScheme.onSurface
-                            )
-                        }
-
-                        if (item.limit > 0) {
-                            Spacer(modifier = Modifier.height(10.dp))
-                            LinearProgressIndicator(
-                                progress = { item.progressFraction.coerceIn(0f, 1f) },
-                                color = barColor,
-                                trackColor = MaterialTheme.colorScheme.surfaceVariant,
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(8.dp)
-                                    .clip(RoundedCornerShape(50))
-                            )
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
 /**
- * Unified Analysis Dashboard & Receipts Screen:
- * Combines all features of the Analysis screen, Dashboard pulse card, and Receipts Ledger
- * into one cohesive, gesture-enabled screen.
+ * Home Screen (`HomeTabScreen`):
+ * - Displays the Personal & Family section switcher (`ScopeSwitcherBar`) ONLY on the Home screen.
+ * - Displays the Monthly Budget Pulse Card, search & filter drawer, and full interactive transaction list.
  */
 @Composable
-fun AnalyticsTabScreen(
+fun HomeTabScreen(
     uiState: AxioDashboardUiState,
-    onStepMonth: (Int) -> Unit,
-    onSelectPeriod: (YearMonthPeriod?) -> Unit,
+    onScopeSelected: (BudgetScope) -> Unit,
     onSelectDateRangePreset: (DateRangePreset) -> Unit = {},
     onSelectCustomDateRange: (Long, Long) -> Unit = { _, _ -> },
     onEditMonthlyBudget: () -> Unit = {},
@@ -379,22 +131,16 @@ fun AnalyticsTabScreen(
     onScanSmsClick: () -> Unit = {},
     onAddTransactionClick: () -> Unit = {},
     onAcceptEmailInvite: (Household) -> Unit = {},
-    onSelectCategoryAndOpenLedger: (String) -> Unit = {},
     onEditTransaction: (ExpenseTransaction) -> Unit = {},
     onQuickChangeCategory: (ExpenseTransaction) -> Unit = {},
     onToggleTransactionPrivacy: (ExpenseTransaction) -> Unit = {},
     onDeleteTransaction: (ExpenseTransaction) -> Unit = {}
 ) {
+    val dimens = LocalAppDimens.current
     val currency = uiState.userProfile?.currencySymbol ?: "₹"
-    val categoryTotals = uiState.categoryProgressList
-        .filter { it.spent > 0 }
-        .map { it.category to it.spent }
 
-    var moreBreakdownsExpanded by rememberSaveable { mutableStateOf(false) }
     var filtersExpanded by rememberSaveable { mutableStateOf(false) }
     var showDrawerCustomRangePicker by rememberSaveable { mutableStateOf(false) }
-
-    val activePieCategory = uiState.selectedCategoryFilter.takeIf { it != "All" }
 
     val hasActiveFilter = uiState.searchQuery.isNotBlank() ||
         uiState.selectedTypeFilter != "All" ||
@@ -408,57 +154,44 @@ fun AnalyticsTabScreen(
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
-            .testTag("analytics_tab_list"),
-        contentPadding = PaddingValues(0.dp, 8.dp, 0.dp, 120.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
+            .testTag("home_tab_list"),
+        contentPadding = PaddingValues(0.dp, dimens.itemSpacing * 0.5f, 0.dp, dimens.bottomListPadding),
+        verticalArrangement = Arrangement.spacedBy(dimens.itemSpacing)
     ) {
-        // 1. Smoothly Scrollable Month & Custom Date Range Bar
+        // 1. Personal & Family Section Switcher (Shown ONLY on the Home Screen)
         item {
-            MonthPeriodSelectorBar(
-                selectedPeriod = uiState.selectedPeriod,
-                periodLabel = uiState.periodLabel,
-                onStepMonth = onStepMonth,
-                onSelectCurrentMonth = { onSelectPeriod(YearMonthPeriod.current()) },
-                onToggleAllTime = {
-                    if (uiState.selectedDateRangePreset == DateRangePreset.ALL_TIME) {
-                        onSelectDateRangePreset(DateRangePreset.MONTH)
-                    } else {
-                        onSelectDateRangePreset(DateRangePreset.ALL_TIME)
-                    }
-                },
-                selectedDateRangePreset = uiState.selectedDateRangePreset,
-                onSelectDateRangePreset = onSelectDateRangePreset,
-                onSelectMonthPeriod = { onSelectPeriod(it) },
-                customStartDateMillis = uiState.customStartDateMillis,
-                customEndDateMillis = uiState.customEndDateMillis,
-                onSelectCustomDateRange = onSelectCustomDateRange
+            ScopeSwitcherBar(
+                selectedScope = uiState.selectedScope,
+                hasHousehold = uiState.household != null,
+                householdName = uiState.household?.name,
+                onScopeSelected = onScopeSelected
             )
         }
 
-        // 2. Pending Email Invites Banner (Merged from Dashboard)
+        // 2. Pending Email Invites Banner
         if (uiState.pendingEmailInvites.isNotEmpty()) {
             item {
                 val invite = uiState.pendingEmailInvites.first()
                 Card(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 16.dp),
-                    shape = RoundedCornerShape(22.dp),
+                        .padding(horizontal = dimens.horizontalPadding),
+                    shape = RoundedCornerShape(dimens.cardCornerRadius),
                     colors = CardDefaults.cardColors(
                         containerColor = MaterialTheme.colorScheme.tertiaryContainer
                     )
                 ) {
                     Row(
-                        modifier = Modifier.padding(16.dp),
+                        modifier = Modifier.padding(dimens.cardPadding),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Icon(
                             imageVector = Icons.Default.MarkEmailUnread,
                             contentDescription = null,
                             tint = MaterialTheme.colorScheme.onTertiaryContainer,
-                            modifier = Modifier.size(26.dp)
+                            modifier = Modifier.size(dimens.rowIconSize)
                         )
-                        Spacer(modifier = Modifier.width(12.dp))
+                        Spacer(modifier = Modifier.width(dimens.horizontalPadding * 0.75f))
                         Text(
                             text = invite.name,
                             style = MaterialTheme.typography.titleMedium,
@@ -477,7 +210,7 @@ fun AnalyticsTabScreen(
             }
         }
 
-        // 3. Hero Monthly Spending & Budget Pulse Card (Merged from Dashboard)
+        // 3. Hero Monthly Spending & Budget Pulse Card
         item {
             MonthlyBudgetPulseCard(
                 totalSpent = uiState.totalMonthlySpent,
@@ -492,170 +225,19 @@ fun AnalyticsTabScreen(
             )
         }
 
-        // 4. Receipt Ticket Card: 6-Month Bar Graph + Interactive Category Pie Chart
-        item {
-            Box(modifier = Modifier.padding(horizontal = 16.dp)) {
-                ReceiptTicketCard(
-                    containerColor = MaterialTheme.colorScheme.surface,
-                    contentColor = MaterialTheme.colorScheme.onSurface
-                ) {
-                    Column(modifier = Modifier.padding(18.dp)) {
-                        Text(
-                            text = "Monthly Trend",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold
-                        )
-                        Spacer(modifier = Modifier.height(8.dp))
-                        MonthlyBarGraph(
-                            bars = uiState.monthlyTrendBars,
-                            currencySymbol = currency,
-                            onSelectMonth = { onSelectPeriod(it) },
-                            onStepMonth = onStepMonth
-                        )
-
-                        if (categoryTotals.isNotEmpty()) {
-                            ReceiptDashedDividerLine()
-
-                            Text(
-                                text = "Categories",
-                                style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.Bold
-                            )
-                            CategoryDonutChart(
-                                categoryTotals = categoryTotals,
-                                currencySymbol = currency,
-                                selectedCategory = activePieCategory,
-                                onCategoryClick = { clickedCategory ->
-                                    if (activePieCategory != null && activePieCategory.equals(clickedCategory, ignoreCase = true)) {
-                                        onSelectCategory("All")
-                                    } else {
-                                        onSelectCategory(clickedCategory)
-                                    }
-                                }
-                            )
-                        }
-                    }
-                }
-            }
-        }
-
-        // 5. Progressive Disclosure: Expandable Top Places & Member Split Card
-        if (uiState.topMerchants.isNotEmpty() || uiState.memberSpendMap.isNotEmpty()) {
-            item {
-                Box(modifier = Modifier.padding(horizontal = 16.dp)) {
-                    Card(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .animateContentSize(spring(dampingRatio = Spring.DampingRatioLowBouncy)),
-                        shape = RoundedCornerShape(24.dp),
-                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
-                    ) {
-                        Column(modifier = Modifier.fillMaxWidth()) {
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clickable { moreBreakdownsExpanded = !moreBreakdownsExpanded }
-                                    .padding(18.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.SpaceBetween
-                            ) {
-                                Text(
-                                    text = "Top Places & Split",
-                                    style = MaterialTheme.typography.titleMedium,
-                                    fontWeight = FontWeight.Bold
-                                )
-                                Icon(
-                                    imageVector = if (moreBreakdownsExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
-                                    contentDescription = "Toggle Details",
-                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-
-                            AnimatedVisibility(visible = moreBreakdownsExpanded) {
-                                Column(
-                                    modifier = Modifier.padding(start = 18.dp, end = 18.dp, bottom = 18.dp),
-                                    verticalArrangement = Arrangement.spacedBy(12.dp)
-                                ) {
-                                    ReceiptDashedDividerLine()
-
-                                    if (uiState.memberSpendMap.isNotEmpty()) {
-                                        val total = uiState.memberSpendMap.values.sum().coerceAtLeast(1.0)
-                                        uiState.memberSpendMap.entries.sortedByDescending { it.value }.forEach { (member, spent) ->
-                                            val ratio = (spent / total).toFloat().coerceIn(0f, 1f)
-                                            Column(modifier = Modifier.padding(vertical = 4.dp)) {
-                                                Row(
-                                                    modifier = Modifier.fillMaxWidth(),
-                                                    horizontalArrangement = Arrangement.SpaceBetween
-                                                ) {
-                                                    Text(text = member, style = MaterialTheme.typography.titleSmall)
-                                                    Text(
-                                                        text = formatCurrency(spent, currency),
-                                                        style = MaterialTheme.typography.labelLarge,
-                                                        color = HouseholdBadgeIndigo,
-                                                        fontWeight = FontWeight.Bold
-                                                    )
-                                                }
-                                                Spacer(modifier = Modifier.height(4.dp))
-                                                LinearProgressIndicator(
-                                                    progress = { ratio },
-                                                    color = HouseholdBadgeIndigo,
-                                                    trackColor = MaterialTheme.colorScheme.surfaceVariant,
-                                                    modifier = Modifier
-                                                        .fillMaxWidth()
-                                                        .height(8.dp)
-                                                        .clip(RoundedCornerShape(50))
-                                                )
-                                            }
-                                        }
-                                    }
-
-                                    if (uiState.topMerchants.isNotEmpty()) {
-                                        uiState.topMerchants.take(5).forEach { (merchant, total) ->
-                                            Row(
-                                                modifier = Modifier
-                                                    .fillMaxWidth()
-                                                    .padding(vertical = 4.dp),
-                                                horizontalArrangement = Arrangement.SpaceBetween,
-                                                verticalAlignment = Alignment.CenterVertically
-                                            ) {
-                                                Text(
-                                                    text = merchant,
-                                                    style = MaterialTheme.typography.bodyMedium,
-                                                    maxLines = 1,
-                                                    overflow = TextOverflow.Ellipsis,
-                                                    modifier = Modifier.weight(1f)
-                                                )
-                                                Spacer(modifier = Modifier.width(8.dp))
-                                                Text(
-                                                    text = formatCurrency(total, currency),
-                                                    style = MaterialTheme.typography.titleSmall,
-                                                    fontWeight = FontWeight.Bold
-                                                )
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        // 6. Search & Filter Drawer (Merged from Ledger Dashboard)
+        // 4. Search & Expandable Filter Drawer
         item {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 16.dp)
+                    .padding(horizontal = dimens.horizontalPadding)
                     .animateContentSize(spring(dampingRatio = Spring.DampingRatioLowBouncy)),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
+                verticalArrangement = Arrangement.spacedBy(dimens.itemSpacing * 0.65f)
             ) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    horizontalArrangement = Arrangement.spacedBy(dimens.horizontalPadding * 0.5f)
                 ) {
                     OutlinedTextField(
                         value = uiState.searchQuery,
@@ -692,7 +274,6 @@ fun AnalyticsTabScreen(
                     }
                 }
 
-                // Active Category Pill when filtered (e.g., after clicking a Pie Chart slice)
                 if (uiState.selectedCategoryFilter != "All") {
                     val catAccent = categoryAccentColor(uiState.selectedCategoryFilter)
                     Surface(
@@ -704,51 +285,52 @@ fun AnalyticsTabScreen(
                             .testTag("active_category_filter_pill")
                     ) {
                         Row(
-                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+                            modifier = Modifier.padding(
+                                horizontal = dimens.horizontalPadding * 0.85f,
+                                vertical = dimens.itemSpacing * 0.6f
+                            ),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Icon(
                                 imageVector = categoryIcon(uiState.selectedCategoryFilter),
                                 contentDescription = null,
                                 tint = catAccent,
-                                modifier = Modifier.size(16.dp)
+                                modifier = Modifier.size(dimens.rowIconSize * 0.72f)
                             )
-                            Spacer(modifier = Modifier.width(6.dp))
+                            Spacer(modifier = Modifier.width(dimens.horizontalPadding * 0.35f))
                             Text(
                                 text = uiState.selectedCategoryFilter,
                                 style = MaterialTheme.typography.labelLarge,
                                 fontWeight = FontWeight.Bold,
                                 color = catAccent
                             )
-                            Spacer(modifier = Modifier.width(6.dp))
+                            Spacer(modifier = Modifier.width(dimens.horizontalPadding * 0.35f))
                             Icon(
                                 imageVector = Icons.Default.Close,
                                 contentDescription = "Clear Category Filter",
                                 tint = catAccent,
-                                modifier = Modifier.size(16.dp)
+                                modifier = Modifier.size(dimens.rowIconSize * 0.72f)
                             )
                         }
                     }
                 }
 
-                // Expandable Filter Drawer
                 AnimatedVisibility(visible = filtersExpanded || hasActiveFilter) {
                     Card(
-                        shape = RoundedCornerShape(22.dp),
+                        shape = RoundedCornerShape(dimens.cardCornerRadius),
                         colors = CardDefaults.cardColors(
                             containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.65f)
                         )
                     ) {
                         Column(
-                            modifier = Modifier.padding(12.dp),
-                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                            modifier = Modifier.padding(dimens.cardPadding * 0.7f),
+                            verticalArrangement = Arrangement.spacedBy(dimens.itemSpacing * 0.5f)
                         ) {
-                            // Date Range Row inside Filter Drawer
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .horizontalScroll(rememberScrollState()),
-                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                horizontalArrangement = Arrangement.spacedBy(dimens.horizontalPadding * 0.4f)
                             ) {
                                 DateRangePreset.entries.forEach { preset ->
                                     FilterChip(
@@ -770,17 +352,23 @@ fun AnalyticsTabScreen(
                                                     preset.label
                                                 }
                                             )
-                                        }
+                                        },
+                                        modifier = Modifier.testTag(
+                                            if (preset == DateRangePreset.ALL_TIME) {
+                                                "all_time_period_chip"
+                                            } else {
+                                                "date_range_chip_${preset.name.lowercase()}"
+                                            }
+                                        )
                                     )
                                 }
                             }
 
-                            // Type & Sort Row
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .horizontalScroll(rememberScrollState()),
-                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                horizontalArrangement = Arrangement.spacedBy(dimens.horizontalPadding * 0.4f)
                             ) {
                                 listOf("All" to "All", "EXPENSE" to "Expenses", "INCOME" to "Income").forEach { (typeVal, label) ->
                                     FilterChip(
@@ -804,14 +392,13 @@ fun AnalyticsTabScreen(
                                 }
                             }
 
-                            // Category Filter Chips
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .horizontalScroll(rememberScrollState()),
-                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                horizontalArrangement = Arrangement.spacedBy(dimens.horizontalPadding * 0.4f)
                             ) {
-                                listOf("All") + uiState.availableCategories.forEach { cat ->
+                                (listOf("All") + uiState.availableCategories).forEach { cat ->
                                     FilterChip(
                                         selected = uiState.selectedCategoryFilter.equals(cat, ignoreCase = true),
                                         onClick = { onSelectCategory(cat) },
@@ -820,12 +407,11 @@ fun AnalyticsTabScreen(
                                 }
                             }
 
-                            // Payment Mode Filter Chips
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .horizontalScroll(rememberScrollState()),
-                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                horizontalArrangement = Arrangement.spacedBy(dimens.horizontalPadding * 0.4f)
                             ) {
                                 listOf("All", "UPI", "BANK", "CARD", "WALLET", "CASH").forEach { mode ->
                                     FilterChip(
@@ -855,20 +441,20 @@ fun AnalyticsTabScreen(
             }
         }
 
-        // 7. Full Filtered Transactions List (with Swipe Right = Share, Swipe Left = Delete, Tap = Edit)
+        // 5. Filtered Transactions List
         if (uiState.filteredExpenses.isEmpty()) {
             item {
                 Surface(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 16.dp),
-                    shape = RoundedCornerShape(24.dp),
+                        .padding(horizontal = dimens.horizontalPadding),
+                    shape = RoundedCornerShape(dimens.cardCornerRadius),
                     color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
                 ) {
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(horizontal = 20.dp, vertical = 18.dp),
+                            .padding(dimens.cardPadding),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
@@ -876,9 +462,9 @@ fun AnalyticsTabScreen(
                             imageVector = Icons.AutoMirrored.Filled.ReceiptLong,
                             contentDescription = null,
                             tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(32.dp)
+                            modifier = Modifier.size(dimens.rowIconSize * 1.4f)
                         )
-                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(dimens.horizontalPadding * 0.6f)) {
                             if (uiState.allScopedExpenses.isNotEmpty()) {
                                 Button(
                                     onClick = { onSelectDateRangePreset(DateRangePreset.ALL_TIME) },
@@ -893,8 +479,8 @@ fun AnalyticsTabScreen(
                                     shape = RoundedCornerShape(50),
                                     modifier = Modifier.testTag("empty_state_sms_parser_button")
                                 ) {
-                                    Icon(Icons.Default.Sms, contentDescription = null, modifier = Modifier.size(16.dp))
-                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Icon(Icons.Default.Sync, contentDescription = null, modifier = Modifier.size(dimens.rowIconSize * 0.72f))
+                                    Spacer(modifier = Modifier.width(dimens.horizontalPadding * 0.35f))
                                     Text("Sync")
                                 }
                             }
@@ -903,8 +489,8 @@ fun AnalyticsTabScreen(
                                 shape = RoundedCornerShape(50),
                                 modifier = Modifier.testTag("empty_state_add_expense_button")
                             ) {
-                                Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
-                                Spacer(modifier = Modifier.width(6.dp))
+                                Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(dimens.rowIconSize * 0.72f))
+                                Spacer(modifier = Modifier.width(dimens.horizontalPadding * 0.35f))
                                 Text("Add")
                             }
                         }
@@ -916,7 +502,7 @@ fun AnalyticsTabScreen(
                 items = uiState.filteredExpenses,
                 key = { "${it.visibility}_${it.id}" }
             ) { expense ->
-                Box(modifier = Modifier.padding(horizontal = 16.dp)) {
+                Box(modifier = Modifier.padding(horizontal = dimens.horizontalPadding)) {
                     ExpenseTransactionItemCard(
                         expense = expense,
                         currencySymbol = currency,
@@ -945,16 +531,627 @@ fun AnalyticsTabScreen(
 }
 
 /**
- * Unified Account, Financial Accounts & Family Sharing Screen:
- * Consolidates user account info, sharing scope settings, bank/card accounts,
- * household join code & member invitations, and theme preferences.
+ * Analysis Tab (`AnalyticsTabScreen`):
+ * - Displays 6-Month Monthly Trend Bar Graph and Interactive Category Donut Chart.
+ * - Shows all categories, and when any category is tapped (either in the donut chart or in the category list),
+ *   expands/displays ALL transactions for that category with full details.
+ * - Tapping any transaction opens the full `EditTransactionDialog` so the user can edit the entire transaction
+ *   (merchant, amount, timestamp, category, account, payment mode, tags, notes, shared/personal) and view the raw SMS.
+ */
+@Composable
+fun AnalyticsTabScreen(
+    uiState: AxioDashboardUiState,
+    onStepMonth: (Int) -> Unit,
+    onSelectPeriod: (YearMonthPeriod?) -> Unit,
+    onSelectCategory: (String) -> Unit = {},
+    onEditTransaction: (ExpenseTransaction) -> Unit = {},
+    onQuickChangeCategory: (ExpenseTransaction) -> Unit = {},
+    onToggleTransactionPrivacy: (ExpenseTransaction) -> Unit = {},
+    onDeleteTransaction: (ExpenseTransaction) -> Unit = {}
+) {
+    val dimens = LocalAppDimens.current
+    val currency = uiState.userProfile?.currencySymbol ?: "₹"
+    val categoryTotals = uiState.categoryProgressList
+        .filter { it.spent > 0 }
+        .map { it.category to it.spent }
+
+    var selectedAnalysisCategory by rememberSaveable {
+        mutableStateOf<String?>(uiState.selectedCategoryFilter.takeIf { it != "All" })
+    }
+    var moreBreakdownsExpanded by rememberSaveable { mutableStateOf(false) }
+
+    // Keep local selection synced if external filter changes
+    LaunchedEffect(uiState.selectedCategoryFilter) {
+        if (uiState.selectedCategoryFilter != "All") {
+            selectedAnalysisCategory = uiState.selectedCategoryFilter
+        }
+    }
+
+    val toggleCategorySelection: (String) -> Unit = { clickedCategory ->
+        if (selectedAnalysisCategory != null && selectedAnalysisCategory.equals(clickedCategory, ignoreCase = true)) {
+            selectedAnalysisCategory = null
+            onSelectCategory("All")
+        } else {
+            selectedAnalysisCategory = clickedCategory
+            onSelectCategory(clickedCategory)
+        }
+    }
+
+    // All transactions in the current period grouped by category
+    val allPeriodTransactions = uiState.activeExpenses
+
+    LazyColumn(
+        modifier = Modifier
+            .fillMaxSize()
+            .testTag("analytics_tab_list"),
+        contentPadding = PaddingValues(0.dp, dimens.itemSpacing * 0.5f, 0.dp, dimens.bottomListPadding),
+        verticalArrangement = Arrangement.spacedBy(dimens.itemSpacing)
+    ) {
+        // 1. Receipt Ticket Card: 6-Month Bar Graph + Interactive Category Pie Chart
+        item {
+            Box(modifier = Modifier.padding(horizontal = dimens.horizontalPadding)) {
+                ReceiptTicketCard(
+                    containerColor = MaterialTheme.colorScheme.surface,
+                    contentColor = MaterialTheme.colorScheme.onSurface
+                ) {
+                    Column(modifier = Modifier.padding(dimens.cardPadding)) {
+                        Text(
+                            text = "Monthly Trend",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Spacer(modifier = Modifier.height(dimens.itemSpacing * 0.65f))
+                        MonthlyBarGraph(
+                            bars = uiState.monthlyTrendBars,
+                            currencySymbol = currency,
+                            onSelectMonth = { onSelectPeriod(it) },
+                            onStepMonth = onStepMonth
+                        )
+
+                        if (categoryTotals.isNotEmpty()) {
+                            ReceiptDashedDividerLine()
+
+                            Text(
+                                text = "Categories",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold
+                            )
+                            CategoryDonutChart(
+                                categoryTotals = categoryTotals,
+                                currencySymbol = currency,
+                                selectedCategory = selectedAnalysisCategory,
+                                onCategoryClick = toggleCategorySelection
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        // 2. Interactive Category Breakdown Cards: Tap any category to view & edit all its transactions
+        items(
+            items = uiState.categoryProgressList.filter { it.spent > 0 },
+            key = { "analysis_cat_${it.category}" }
+        ) { catItem ->
+            val isExpanded = selectedAnalysisCategory != null &&
+                selectedAnalysisCategory.equals(catItem.category, ignoreCase = true)
+            val catColor = categoryAccentColor(catItem.category)
+            val categoryTransactions = remember(allPeriodTransactions, catItem.category) {
+                allPeriodTransactions
+                    .filter { it.category.equals(catItem.category, ignoreCase = true) }
+                    .sortedByDescending { it.transactionDateMillis }
+            }
+
+            Box(modifier = Modifier.padding(horizontal = dimens.horizontalPadding)) {
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(dimens.cardCornerRadius))
+                        .animateContentSize(spring(dampingRatio = Spring.DampingRatioLowBouncy))
+                        .testTag("analysis_category_card_${catItem.category.lowercase().replace(" ", "_")}"),
+                    shape = RoundedCornerShape(dimens.cardCornerRadius),
+                    colors = CardDefaults.cardColors(
+                        containerColor = if (isExpanded) {
+                            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f)
+                        } else {
+                            MaterialTheme.colorScheme.surface
+                        }
+                    ),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+                ) {
+                    Column(modifier = Modifier.fillMaxWidth()) {
+                        // Category Header Row (Tap to expand/collapse all transactions in this category)
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { toggleCategorySelection(catItem.category) }
+                                .padding(
+                                    horizontal = dimens.horizontalPadding,
+                                    vertical = dimens.itemSpacing * 1.1f
+                                ),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(dimens.rowIconBoxSize)
+                                    .clip(RoundedCornerShape(dimens.smallCornerRadius))
+                                    .background(catColor.copy(alpha = 0.16f)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = categoryIcon(catItem.category),
+                                    contentDescription = catItem.category,
+                                    tint = catColor,
+                                    modifier = Modifier.size(dimens.rowIconSize)
+                                )
+                            }
+                            Spacer(modifier = Modifier.width(dimens.horizontalPadding * 0.85f))
+                            Text(
+                                text = "${catItem.category} (${categoryTransactions.size})",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.SemiBold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f)
+                            )
+                            Spacer(modifier = Modifier.width(dimens.horizontalPadding * 0.5f))
+                            Text(
+                                text = formatCurrency(catItem.spent, currency),
+                                style = MaterialTheme.typography.titleLarge,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                            Spacer(modifier = Modifier.width(dimens.horizontalPadding * 0.35f))
+                            Icon(
+                                imageVector = if (isExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                                contentDescription = "Toggle Category Transactions",
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+
+                        // Expanded Transactions List for this Category (Tap any transaction to Edit Full Transaction)
+                        AnimatedVisibility(visible = isExpanded) {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(
+                                        start = dimens.horizontalPadding * 0.75f,
+                                        end = dimens.horizontalPadding * 0.75f,
+                                        bottom = dimens.itemSpacing
+                                    ),
+                                verticalArrangement = Arrangement.spacedBy(dimens.itemSpacing * 0.7f)
+                            ) {
+                                ReceiptDashedDividerLine()
+                                categoryTransactions.forEach { tx ->
+                                    Surface(
+                                        shape = RoundedCornerShape(dimens.smallCornerRadius),
+                                        color = MaterialTheme.colorScheme.surface,
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clip(RoundedCornerShape(dimens.smallCornerRadius))
+                                            .clickable { onEditTransaction(tx) }
+                                            .testTag("analysis_tx_row_${tx.id}")
+                                    ) {
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(
+                                                    horizontal = dimens.horizontalPadding * 0.85f,
+                                                    vertical = dimens.itemSpacing * 0.85f
+                                                ),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.SpaceBetween
+                                        ) {
+                                            Column(modifier = Modifier.weight(1f)) {
+                                                Text(
+                                                    text = tx.title,
+                                                    style = MaterialTheme.typography.titleSmall,
+                                                    fontWeight = FontWeight.SemiBold,
+                                                    maxLines = 1,
+                                                    overflow = TextOverflow.Ellipsis
+                                                )
+                                                Text(
+                                                    text = "${formatShortDate(tx.transactionDateMillis)} • ${tx.accountName}",
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                    maxLines = 1,
+                                                    overflow = TextOverflow.Ellipsis
+                                                )
+                                            }
+                                            Spacer(modifier = Modifier.width(dimens.horizontalPadding * 0.5f))
+                                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                                Text(
+                                                    text = formatCurrency(tx.amount, currency),
+                                                    style = MaterialTheme.typography.titleMedium,
+                                                    fontWeight = FontWeight.Bold
+                                                )
+                                                Spacer(modifier = Modifier.width(dimens.horizontalPadding * 0.35f))
+                                                IconButton(
+                                                    onClick = { onEditTransaction(tx) },
+                                                    modifier = Modifier
+                                                        .size(dimens.rowIconBoxSize * 0.75f)
+                                                        .testTag("analysis_edit_tx_button_${tx.id}")
+                                                ) {
+                                                    Icon(
+                                                        imageVector = Icons.Default.Edit,
+                                                        contentDescription = "Edit Transaction",
+                                                        tint = MaterialTheme.colorScheme.primary,
+                                                        modifier = Modifier.size(dimens.rowIconSize * 0.8f)
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // 3. Expandable Top Places & Member Split Card
+        if (uiState.topMerchants.isNotEmpty() || uiState.memberSpendMap.isNotEmpty()) {
+            item {
+                Box(modifier = Modifier.padding(horizontal = dimens.horizontalPadding)) {
+                    Card(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .animateContentSize(spring(dampingRatio = Spring.DampingRatioLowBouncy)),
+                        shape = RoundedCornerShape(dimens.cardCornerRadius),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+                    ) {
+                        Column(modifier = Modifier.fillMaxWidth()) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable { moreBreakdownsExpanded = !moreBreakdownsExpanded }
+                                    .padding(dimens.cardPadding),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text(
+                                    text = "Top Places & Split",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Icon(
+                                    imageVector = if (moreBreakdownsExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                                    contentDescription = "Toggle Details",
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+
+                            AnimatedVisibility(visible = moreBreakdownsExpanded) {
+                                Column(
+                                    modifier = Modifier.padding(
+                                        start = dimens.cardPadding,
+                                        end = dimens.cardPadding,
+                                        bottom = dimens.cardPadding
+                                    ),
+                                    verticalArrangement = Arrangement.spacedBy(dimens.itemSpacing)
+                                ) {
+                                    ReceiptDashedDividerLine()
+
+                                    if (uiState.memberSpendMap.isNotEmpty()) {
+                                        val total = uiState.memberSpendMap.values.sum().coerceAtLeast(1.0)
+                                        uiState.memberSpendMap.entries.sortedByDescending { it.value }.forEach { (member, spent) ->
+                                            val ratio = (spent / total).toFloat().coerceIn(0f, 1f)
+                                            Column(modifier = Modifier.padding(vertical = dimens.itemSpacing * 0.3f)) {
+                                                Row(
+                                                    modifier = Modifier.fillMaxWidth(),
+                                                    horizontalArrangement = Arrangement.SpaceBetween
+                                                ) {
+                                                    Text(text = member, style = MaterialTheme.typography.titleSmall)
+                                                    Text(
+                                                        text = formatCurrency(spent, currency),
+                                                        style = MaterialTheme.typography.labelLarge,
+                                                        color = HouseholdBadgeIndigo,
+                                                        fontWeight = FontWeight.Bold
+                                                    )
+                                                }
+                                                Spacer(modifier = Modifier.height(dimens.itemSpacing * 0.3f))
+                                                LinearProgressIndicator(
+                                                    progress = { ratio },
+                                                    color = HouseholdBadgeIndigo,
+                                                    trackColor = MaterialTheme.colorScheme.surfaceVariant,
+                                                    modifier = Modifier
+                                                        .fillMaxWidth()
+                                                        .height(8.dp)
+                                                        .clip(RoundedCornerShape(50))
+                                                )
+                                            }
+                                        }
+                                    }
+
+                                    if (uiState.topMerchants.isNotEmpty()) {
+                                        uiState.topMerchants.take(5).forEach { (merchant, total) ->
+                                            Row(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .padding(vertical = dimens.itemSpacing * 0.3f),
+                                                horizontalArrangement = Arrangement.SpaceBetween,
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                Text(
+                                                    text = merchant,
+                                                    style = MaterialTheme.typography.bodyMedium,
+                                                    maxLines = 1,
+                                                    overflow = TextOverflow.Ellipsis,
+                                                    modifier = Modifier.weight(1f)
+                                                )
+                                                Spacer(modifier = Modifier.width(dimens.horizontalPadding * 0.5f))
+                                                Text(
+                                                    text = formatCurrency(total, currency),
+                                                    style = MaterialTheme.typography.titleSmall,
+                                                    fontWeight = FontWeight.Bold
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun BudgetsTabScreen(
+    uiState: AxioDashboardUiState,
+    onEditOverallBudgetClick: () -> Unit,
+    onAddOrEditCategoryBudgetClick: (CategorySpendProgress?) -> Unit
+) {
+    val dimens = LocalAppDimens.current
+    val currency = uiState.userProfile?.currencySymbol ?: "₹"
+
+    LazyColumn(
+        modifier = Modifier
+            .fillMaxSize()
+            .testTag("budgets_tab_list"),
+        contentPadding = PaddingValues(0.dp, dimens.itemSpacing * 0.5f, 0.dp, dimens.bottomListPadding),
+        verticalArrangement = Arrangement.spacedBy(dimens.itemSpacing)
+    ) {
+        // Receipt Ticket Summary for Monthly Budgets (Single-Line Household & Personal Pills)
+        item {
+            Box(modifier = Modifier.padding(horizontal = dimens.horizontalPadding)) {
+                ReceiptTicketCard(
+                    containerColor = MaterialTheme.colorScheme.surface,
+                    contentColor = MaterialTheme.colorScheme.onSurface
+                ) {
+                    Column(modifier = Modifier.padding(dimens.cardPadding)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "Budgets",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold
+                            )
+                            IconButton(
+                                onClick = onEditOverallBudgetClick,
+                                modifier = Modifier
+                                    .size(dimens.rowIconBoxSize * 0.8f)
+                                    .testTag("configure_overall_budget_button")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Edit,
+                                    contentDescription = "Edit Monthly Budget",
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(dimens.rowIconSize * 0.8f)
+                                )
+                            }
+                        }
+
+                        ReceiptDashedDividerLine()
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(dimens.horizontalPadding * 0.6f)
+                        ) {
+                            Surface(
+                                modifier = Modifier.weight(1f),
+                                shape = RoundedCornerShape(dimens.smallCornerRadius),
+                                color = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.55f)
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(
+                                        horizontal = dimens.horizontalPadding * 0.75f,
+                                        vertical = dimens.itemSpacing
+                                    ),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Text(
+                                        text = "Household",
+                                        style = MaterialTheme.typography.labelMedium,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = MaterialTheme.colorScheme.onTertiaryContainer,
+                                        maxLines = 1
+                                    )
+                                    val hhLimit = uiState.household?.monthlyBudgetLimit ?: 0.0
+                                    Text(
+                                        text = if (hhLimit > 0.0) {
+                                            formatCurrency(hhLimit, currency)
+                                        } else {
+                                            "Not set"
+                                        },
+                                        style = MaterialTheme.typography.titleSmall,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.onTertiaryContainer,
+                                        maxLines = 1
+                                    )
+                                }
+                            }
+
+                            Surface(
+                                modifier = Modifier.weight(1f),
+                                shape = RoundedCornerShape(dimens.smallCornerRadius),
+                                color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.55f)
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(
+                                        horizontal = dimens.horizontalPadding * 0.75f,
+                                        vertical = dimens.itemSpacing
+                                    ),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Text(
+                                        text = "Personal",
+                                        style = MaterialTheme.typography.labelMedium,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                        maxLines = 1
+                                    )
+                                    val pLimit = uiState.userProfile?.personalMonthlyBudget ?: 0.0
+                                    Text(
+                                        text = if (pLimit > 0.0) {
+                                            formatCurrency(pLimit, currency)
+                                        } else {
+                                            "Not set"
+                                        },
+                                        style = MaterialTheme.typography.titleSmall,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                        maxLines = 1
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        item {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = dimens.horizontalPadding),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "Categories",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold
+                )
+                IconButton(
+                    onClick = { onAddOrEditCategoryBudgetClick(null) },
+                    modifier = Modifier.testTag("add_category_budget_button")
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Add,
+                        contentDescription = "Set Category Limit",
+                        tint = MaterialTheme.colorScheme.primary
+                    )
+                }
+            }
+        }
+
+        items(
+            items = uiState.categoryProgressList,
+            key = { it.category }
+        ) { item ->
+            val catColor = categoryAccentColor(item.category)
+            val barColor = when {
+                item.isOverBudget -> BudgetDangerCoral
+                item.isNearAlert -> BudgetWarnAmber
+                else -> BudgetSafeGreen
+            }
+            Box(modifier = Modifier.padding(horizontal = dimens.horizontalPadding)) {
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(dimens.cardCornerRadius))
+                        .clickable { onAddOrEditCategoryBudgetClick(item) },
+                    shape = RoundedCornerShape(dimens.cardCornerRadius),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+                ) {
+                    Column(
+                        modifier = Modifier.padding(
+                            horizontal = dimens.horizontalPadding,
+                            vertical = dimens.itemSpacing * 1.1f
+                        )
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(dimens.rowIconBoxSize)
+                                    .clip(RoundedCornerShape(dimens.smallCornerRadius))
+                                    .background(catColor.copy(alpha = 0.16f)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = categoryIcon(item.category),
+                                    contentDescription = item.category,
+                                    tint = catColor,
+                                    modifier = Modifier.size(dimens.rowIconSize)
+                                )
+                            }
+                            Spacer(modifier = Modifier.width(dimens.horizontalPadding * 0.85f))
+                            Text(
+                                text = item.category,
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.SemiBold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f)
+                            )
+                            Spacer(modifier = Modifier.width(dimens.horizontalPadding * 0.75f))
+                            Text(
+                                text = formatCurrency(item.spent, currency),
+                                style = MaterialTheme.typography.titleLarge,
+                                fontWeight = FontWeight.Bold,
+                                color = if (item.limit > 0 && item.isOverBudget) barColor else MaterialTheme.colorScheme.onSurface
+                            )
+                        }
+
+                        if (item.limit > 0) {
+                            Spacer(modifier = Modifier.height(dimens.itemSpacing * 0.8f))
+                            LinearProgressIndicator(
+                                progress = { item.progressFraction.coerceIn(0f, 1f) },
+                                color = barColor,
+                                trackColor = MaterialTheme.colorScheme.surfaceVariant,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(8.dp)
+                                    .clip(RoundedCornerShape(50))
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Unified Account, Settings & Family Sharing Screen (`HouseholdTabScreen`):
+ * - Edit User Name section (`edit_user_name_input` & `save_user_name_button`)
+ * - SMS Sync section with updated sync icon (`Icons.Default.Sync`, `scan_sms_button`)
+ * - Material 3 Theme selector (`System`, `Light`, `Dark` Full AMOLED `#000000`)
+ * - Financial Accounts (`AccountsCarouselStrip`)
+ * - Household creation, join code, email invitations, and members roster
+ * - Dedicated Logout section (`settings_logout_button`)
  */
 @Composable
 fun HouseholdTabScreen(
     uiState: AxioDashboardUiState,
     currentUserName: String = "",
     currentUserEmail: String = "",
-    onScopeSelected: (BudgetScope) -> Unit = {},
+    onUpdateUserName: (String) -> Unit = {},
     onAddAccountClick: () -> Unit = {},
     onScanSmsClick: () -> Unit = {},
     onSignOutClick: () -> Unit = {},
@@ -963,63 +1160,67 @@ fun HouseholdTabScreen(
     onInviteByEmail: (String) -> Unit,
     onAcceptEmailInvite: (Household) -> Unit
 ) {
+    val dimens = LocalAppDimens.current
     val context = LocalContext.current
     val clipboardManager = LocalClipboardManager.current
     val currentThemeMode by LocalAccountSessionManager.themeMode.collectAsStateWithLifecycle()
     val currency = uiState.userProfile?.currencySymbol ?: "₹"
+
+    val displayName = uiState.userProfile?.displayName?.takeIf { it.isNotBlank() }
+        ?: currentUserName.ifBlank { "Member" }
+    var editableUserName by remember(displayName) { mutableStateOf(displayName) }
 
     var newHouseholdName by remember { mutableStateOf("Our Family Home") }
     var newHouseholdLimit by remember { mutableStateOf("") }
     var joinCodeInput by remember { mutableStateOf("") }
     var inviteEmailInput by remember { mutableStateOf("") }
 
-    val displayName = currentUserName.ifBlank { uiState.userProfile?.displayName ?: "Member" }
-
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
             .testTag("household_tab_list"),
-        contentPadding = PaddingValues(16.dp, 8.dp, 16.dp, 120.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
+        contentPadding = PaddingValues(
+            dimens.horizontalPadding,
+            dimens.itemSpacing * 0.5f,
+            dimens.horizontalPadding,
+            dimens.bottomListPadding
+        ),
+        verticalArrangement = Arrangement.spacedBy(dimens.itemSpacing * 1.15f)
     ) {
-        // 1. Account & Sharing Overview Bar Card
+        // 1. User Profile & Edit Name Section
         item {
             Card(
                 modifier = Modifier
                     .fillMaxWidth()
                     .testTag("account_sharing_card"),
-                shape = RoundedCornerShape(24.dp),
+                shape = RoundedCornerShape(dimens.cardCornerRadius),
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
                 elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
             ) {
                 Column(
-                    modifier = Modifier.padding(18.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                    modifier = Modifier.padding(dimens.cardPadding),
+                    verticalArrangement = Arrangement.spacedBy(dimens.itemSpacing)
                 ) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.weight(1f)
+                        Box(
+                            modifier = Modifier
+                                .size(dimens.rowIconBoxSize)
+                                .clip(CircleShape)
+                                .background(MaterialTheme.colorScheme.primaryContainer),
+                            contentAlignment = Alignment.Center
                         ) {
-                            Box(
-                                modifier = Modifier
-                                    .size(44.dp)
-                                    .clip(CircleShape)
-                                    .background(MaterialTheme.colorScheme.primaryContainer),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Text(
-                                    text = displayName.take(1).uppercase(),
-                                    style = MaterialTheme.typography.titleMedium,
-                                    fontWeight = FontWeight.Bold,
-                                    color = MaterialTheme.colorScheme.primary
-                                )
-                            }
-                            Spacer(modifier = Modifier.width(12.dp))
+                            Icon(
+                                imageVector = Icons.Default.Person,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(dimens.rowIconSize)
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(dimens.horizontalPadding * 0.75f))
+                        Column(modifier = Modifier.weight(1f)) {
                             Text(
                                 text = displayName,
                                 style = MaterialTheme.typography.titleMedium,
@@ -1027,58 +1228,176 @@ fun HouseholdTabScreen(
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
                             )
-                        }
-
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            IconButton(
-                                onClick = onScanSmsClick,
-                                modifier = Modifier.testTag("scan_sms_button")
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Sms,
-                                    contentDescription = "Sync SMS",
-                                    tint = MaterialTheme.colorScheme.primary
-                                )
-                            }
-                            IconButton(
-                                onClick = onSignOutClick
-                            ) {
-                                Icon(
-                                    imageVector = Icons.AutoMirrored.Filled.Logout,
-                                    contentDescription = "Sign Out",
-                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                            if (currentUserEmail.isNotBlank()) {
+                                Text(
+                                    text = currentUserEmail,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
                                 )
                             }
                         }
                     }
 
-                    // Active Sharing Scope Switcher inside Account Bar
-                    ScopeSwitcherBar(
-                        selectedScope = uiState.selectedScope,
-                        hasHousehold = uiState.household != null,
-                        householdName = uiState.household?.name,
-                        onScopeSelected = onScopeSelected
+                    // Edit User Name Row
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(dimens.horizontalPadding * 0.6f)
+                    ) {
+                        OutlinedTextField(
+                            value = editableUserName,
+                            onValueChange = { editableUserName = it },
+                            label = { Text("Your Name") },
+                            singleLine = true,
+                            shape = RoundedCornerShape(dimens.smallCornerRadius),
+                            modifier = Modifier
+                                .weight(1f)
+                                .testTag("edit_user_name_input")
+                        )
+                        Button(
+                            onClick = {
+                                if (editableUserName.isNotBlank()) {
+                                    onUpdateUserName(editableUserName.trim())
+                                }
+                            },
+                            enabled = editableUserName.isNotBlank() && editableUserName.trim() != displayName,
+                            shape = RoundedCornerShape(dimens.smallCornerRadius),
+                            modifier = Modifier
+                                .height(dimens.navPillHeight)
+                                .testTag("save_user_name_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Check,
+                                contentDescription = "Save Name",
+                                modifier = Modifier.size(dimens.rowIconSize * 0.8f)
+                            )
+                            Spacer(modifier = Modifier.width(dimens.horizontalPadding * 0.3f))
+                            Text("Save")
+                        }
+                    }
+                }
+            }
+        }
+
+        // 2. SMS Sync Section (Updated Sync Icon)
+        item {
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(dimens.cardCornerRadius),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(dimens.cardPadding),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(dimens.rowIconBoxSize * 0.85f)
+                                .clip(CircleShape)
+                                .background(MaterialTheme.colorScheme.primaryContainer),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Sync,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(dimens.rowIconSize * 0.85f)
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(dimens.horizontalPadding * 0.75f))
+                        Text(
+                            text = "SMS Sync",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+
+                    Button(
+                        onClick = onScanSmsClick,
+                        shape = RoundedCornerShape(50),
+                        modifier = Modifier.testTag("scan_sms_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Sync,
+                            contentDescription = "Sync SMS",
+                            modifier = Modifier.size(dimens.rowIconSize * 0.75f)
+                        )
+                        Spacer(modifier = Modifier.width(dimens.horizontalPadding * 0.35f))
+                        Text("Sync Now")
+                    }
+                }
+            }
+        }
+
+        // 3. Material 3 Theme & Appearance Card (System / Light / Dark AMOLED)
+        item {
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(dimens.cardCornerRadius),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+            ) {
+                Column(
+                    modifier = Modifier.padding(dimens.cardPadding),
+                    verticalArrangement = Arrangement.spacedBy(dimens.itemSpacing * 0.85f)
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(
+                            modifier = Modifier
+                                .size(dimens.rowIconBoxSize * 0.85f)
+                                .clip(CircleShape)
+                                .background(MaterialTheme.colorScheme.secondaryContainer),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Palette,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.secondary,
+                                modifier = Modifier.size(dimens.rowIconSize * 0.85f)
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(dimens.horizontalPadding * 0.75f))
+                        Text(
+                            text = "Theme",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+
+                    ThemeModeSelectorBar(
+                        currentMode = currentThemeMode,
+                        onSelectMode = { LocalAccountSessionManager.setThemeMode(context, it) }
                     )
                 }
             }
         }
 
-        // 2. Financial Accounts Card (Bank, Credit Card, UPI, Cash)
+        // 4. Financial Accounts Card (Bank, Credit Card, UPI, Cash)
         item {
             Card(
                 modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(24.dp),
+                shape = RoundedCornerShape(dimens.cardCornerRadius),
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
                 elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
             ) {
                 Column(
-                    modifier = Modifier.padding(18.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                    modifier = Modifier.padding(dimens.cardPadding),
+                    verticalArrangement = Arrangement.spacedBy(dimens.itemSpacing)
                 ) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Box(
                             modifier = Modifier
-                                .size(36.dp)
+                                .size(dimens.rowIconBoxSize * 0.85f)
                                 .clip(CircleShape)
                                 .background(MaterialTheme.colorScheme.tertiaryContainer),
                             contentAlignment = Alignment.Center
@@ -1087,10 +1406,10 @@ fun HouseholdTabScreen(
                                 imageVector = Icons.Default.AccountBalance,
                                 contentDescription = null,
                                 tint = MaterialTheme.colorScheme.tertiary,
-                                modifier = Modifier.size(18.dp)
+                                modifier = Modifier.size(dimens.rowIconSize * 0.85f)
                             )
                         }
-                        Spacer(modifier = Modifier.width(12.dp))
+                        Spacer(modifier = Modifier.width(dimens.horizontalPadding * 0.75f))
                         Text(
                             text = "Accounts",
                             style = MaterialTheme.typography.titleMedium,
@@ -1107,49 +1426,7 @@ fun HouseholdTabScreen(
             }
         }
 
-        // 3. Material 3 Theme & Appearance Card (System / Light / Dark AMOLED)
-        item {
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(24.dp),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
-            ) {
-                Column(
-                    modifier = Modifier.padding(18.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Box(
-                            modifier = Modifier
-                                .size(36.dp)
-                                .clip(CircleShape)
-                                .background(MaterialTheme.colorScheme.secondaryContainer),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Palette,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.secondary,
-                                modifier = Modifier.size(18.dp)
-                            )
-                        }
-                        Spacer(modifier = Modifier.width(12.dp))
-                        Text(
-                            text = "Theme",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold
-                        )
-                    }
-
-                    ThemeModeSelectorBar(
-                        currentMode = currentThemeMode,
-                        onSelectMode = { LocalAccountSessionManager.setThemeMode(context, it) }
-                    )
-                }
-            }
-        }
-
+        // 5. Family Household Sharing Settings
         val household = uiState.household
 
         if (household == null) {
@@ -1157,17 +1434,17 @@ fun HouseholdTabScreen(
                 item {
                     Card(
                         modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(22.dp),
+                        shape = RoundedCornerShape(dimens.cardCornerRadius),
                         colors = CardDefaults.cardColors(
                             containerColor = MaterialTheme.colorScheme.tertiaryContainer
                         )
                     ) {
-                        Column(modifier = Modifier.padding(18.dp)) {
+                        Column(modifier = Modifier.padding(dimens.cardPadding)) {
                             uiState.pendingEmailInvites.forEach { inv ->
                                 Row(
                                     modifier = Modifier
                                         .fillMaxWidth()
-                                        .padding(vertical = 4.dp),
+                                        .padding(vertical = dimens.itemSpacing * 0.35f),
                                     horizontalArrangement = Arrangement.SpaceBetween,
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
@@ -1187,20 +1464,19 @@ fun HouseholdTabScreen(
                 }
             }
 
-            // Create Household Receipt Ticket
             item {
                 ReceiptTicketCard(
                     containerColor = MaterialTheme.colorScheme.surface,
                     contentColor = MaterialTheme.colorScheme.onSurface
                 ) {
-                    Column(modifier = Modifier.padding(20.dp)) {
+                    Column(modifier = Modifier.padding(dimens.cardPadding)) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Icon(
                                 imageVector = Icons.Default.Groups,
                                 contentDescription = null,
                                 tint = MaterialTheme.colorScheme.primary
                             )
-                            Spacer(modifier = Modifier.width(10.dp))
+                            Spacer(modifier = Modifier.width(dimens.horizontalPadding * 0.6f))
                             Text(
                                 text = "Create Household",
                                 style = MaterialTheme.typography.titleLarge,
@@ -1213,30 +1489,30 @@ fun HouseholdTabScreen(
                             onValueChange = { newHouseholdName = it },
                             label = { Text("Household Name") },
                             singleLine = true,
-                            shape = RoundedCornerShape(16.dp),
+                            shape = RoundedCornerShape(dimens.smallCornerRadius),
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .testTag("create_household_name_input")
                         )
-                        Spacer(modifier = Modifier.height(10.dp))
+                        Spacer(modifier = Modifier.height(dimens.itemSpacing * 0.8f))
                         OutlinedTextField(
                             value = newHouseholdLimit,
                             onValueChange = { newHouseholdLimit = it },
                             label = { Text("Monthly Budget ($currency)") },
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                             singleLine = true,
-                            shape = RoundedCornerShape(16.dp),
+                            shape = RoundedCornerShape(dimens.smallCornerRadius),
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .testTag("create_household_limit_input")
                         )
-                        Spacer(modifier = Modifier.height(14.dp))
+                        Spacer(modifier = Modifier.height(dimens.itemSpacing))
                         Button(
                             onClick = {
                                 val limit = newHouseholdLimit.toDoubleOrNull() ?: 0.0
                                 onCreateHousehold(newHouseholdName, limit)
                             },
-                            shape = RoundedCornerShape(16.dp),
+                            shape = RoundedCornerShape(dimens.smallCornerRadius),
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .testTag("create_household_submit_button")
@@ -1247,31 +1523,30 @@ fun HouseholdTabScreen(
                 }
             }
 
-            // Join Existing Household by 6-Character Code
             item {
                 Card(
                     modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(24.dp),
+                    shape = RoundedCornerShape(dimens.cardCornerRadius),
                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
                 ) {
-                    Column(modifier = Modifier.padding(20.dp)) {
+                    Column(modifier = Modifier.padding(dimens.cardPadding)) {
                         Text(
                             text = "Join with Code",
                             style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.Bold
                         )
-                        Spacer(modifier = Modifier.height(12.dp))
+                        Spacer(modifier = Modifier.height(dimens.itemSpacing))
                         OutlinedTextField(
                             value = joinCodeInput,
                             onValueChange = { joinCodeInput = it.uppercase().take(8) },
                             label = { Text("Code") },
                             singleLine = true,
-                            shape = RoundedCornerShape(16.dp),
+                            shape = RoundedCornerShape(dimens.smallCornerRadius),
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .testTag("join_household_code_input")
                         )
-                        Spacer(modifier = Modifier.height(12.dp))
+                        Spacer(modifier = Modifier.height(dimens.itemSpacing))
                         Button(
                             onClick = {
                                 if (joinCodeInput.isNotBlank()) {
@@ -1279,7 +1554,7 @@ fun HouseholdTabScreen(
                                 }
                             },
                             enabled = joinCodeInput.trim().length >= 4,
-                            shape = RoundedCornerShape(16.dp),
+                            shape = RoundedCornerShape(dimens.smallCornerRadius),
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .testTag("join_household_submit_button")
@@ -1290,13 +1565,12 @@ fun HouseholdTabScreen(
                 }
             }
         } else {
-            // Active Household Sharing Settings & Join Code Ticket
             item {
                 ReceiptTicketCard(
                     containerColor = MaterialTheme.colorScheme.surface,
                     contentColor = MaterialTheme.colorScheme.onSurface
                 ) {
-                    Column(modifier = Modifier.padding(20.dp)) {
+                    Column(modifier = Modifier.padding(dimens.cardPadding)) {
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             verticalAlignment = Alignment.CenterVertically,
@@ -1311,7 +1585,7 @@ fun HouseholdTabScreen(
                                     contentDescription = null,
                                     tint = MaterialTheme.colorScheme.primary
                                 )
-                                Spacer(modifier = Modifier.width(8.dp))
+                                Spacer(modifier = Modifier.width(dimens.horizontalPadding * 0.5f))
                                 Text(
                                     text = household.name,
                                     style = MaterialTheme.typography.titleLarge,
@@ -1333,13 +1607,16 @@ fun HouseholdTabScreen(
                         ReceiptDashedDividerLine()
 
                         Surface(
-                            shape = RoundedCornerShape(18.dp),
+                            shape = RoundedCornerShape(dimens.smallCornerRadius),
                             color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.55f)
                         ) {
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .padding(horizontal = 16.dp, vertical = 10.dp),
+                                    .padding(
+                                        horizontal = dimens.horizontalPadding,
+                                        vertical = dimens.itemSpacing * 0.85f
+                                    ),
                                 horizontalArrangement = Arrangement.SpaceBetween,
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
@@ -1356,20 +1633,19 @@ fun HouseholdTabScreen(
                                     shape = RoundedCornerShape(50),
                                     modifier = Modifier.testTag("copy_join_code_button")
                                 ) {
-                                    Icon(Icons.Default.ContentCopy, contentDescription = null, modifier = Modifier.size(16.dp))
-                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Icon(Icons.Default.ContentCopy, contentDescription = null, modifier = Modifier.size(dimens.rowIconSize * 0.72f))
+                                    Spacer(modifier = Modifier.width(dimens.horizontalPadding * 0.35f))
                                     Text("Copy")
                                 }
                             }
                         }
 
-                        Spacer(modifier = Modifier.height(14.dp))
+                        Spacer(modifier = Modifier.height(dimens.itemSpacing))
 
-                        // Invite Family Member by Email Row
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                            horizontalArrangement = Arrangement.spacedBy(dimens.horizontalPadding * 0.6f)
                         ) {
                             OutlinedTextField(
                                 value = inviteEmailInput,
@@ -1379,7 +1655,7 @@ fun HouseholdTabScreen(
                                     Icon(Icons.Default.PersonAdd, contentDescription = null)
                                 },
                                 singleLine = true,
-                                shape = RoundedCornerShape(16.dp),
+                                shape = RoundedCornerShape(dimens.smallCornerRadius),
                                 modifier = Modifier
                                     .weight(1f)
                                     .testTag("invite_member_email_input")
@@ -1391,7 +1667,7 @@ fun HouseholdTabScreen(
                                         inviteEmailInput = ""
                                     }
                                 },
-                                shape = RoundedCornerShape(16.dp),
+                                shape = RoundedCornerShape(dimens.smallCornerRadius),
                                 modifier = Modifier.testTag("send_email_invite_button")
                             ) {
                                 Text("Invite")
@@ -1401,21 +1677,20 @@ fun HouseholdTabScreen(
                 }
             }
 
-            // Linked Household Members Roster (Single-line rows)
             item {
                 Card(
                     modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(24.dp),
+                    shape = RoundedCornerShape(dimens.cardCornerRadius),
                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
                     elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
                 ) {
-                    Column(modifier = Modifier.padding(18.dp)) {
+                    Column(modifier = Modifier.padding(dimens.cardPadding)) {
                         Text(
                             text = "Members",
                             style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.Bold
                         )
-                        Spacer(modifier = Modifier.height(10.dp))
+                        Spacer(modifier = Modifier.height(dimens.itemSpacing * 0.8f))
                         household.memberUids.forEach { uid ->
                             val name = household.memberNames[uid] ?: "Member"
                             val memberSharedSpend = uiState.sharedExpenses
@@ -1425,7 +1700,7 @@ fun HouseholdTabScreen(
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .padding(vertical = 8.dp),
+                                    .padding(vertical = dimens.itemSpacing * 0.6f),
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.SpaceBetween
                             ) {
@@ -1435,7 +1710,7 @@ fun HouseholdTabScreen(
                                 ) {
                                     Box(
                                         modifier = Modifier
-                                            .size(40.dp)
+                                            .size(dimens.rowIconBoxSize * 0.9f)
                                             .clip(CircleShape)
                                             .background(HouseholdBadgeIndigo.copy(alpha = 0.16f)),
                                         contentAlignment = Alignment.Center
@@ -1447,7 +1722,7 @@ fun HouseholdTabScreen(
                                             fontWeight = FontWeight.Bold
                                         )
                                     }
-                                    Spacer(modifier = Modifier.width(12.dp))
+                                    Spacer(modifier = Modifier.width(dimens.horizontalPadding * 0.75f))
                                     Text(
                                         text = name,
                                         style = MaterialTheme.typography.titleSmall,
@@ -1456,7 +1731,7 @@ fun HouseholdTabScreen(
                                         overflow = TextOverflow.Ellipsis
                                     )
                                 }
-                                Spacer(modifier = Modifier.width(8.dp))
+                                Spacer(modifier = Modifier.width(dimens.horizontalPadding * 0.5f))
                                 Text(
                                     text = formatCurrency(memberSharedSpend, currency),
                                     style = MaterialTheme.typography.titleSmall,
@@ -1464,6 +1739,68 @@ fun HouseholdTabScreen(
                                 )
                             }
                         }
+                    }
+                }
+            }
+        }
+
+        // 6. Dedicated Logout Section in Settings
+        item {
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(dimens.cardCornerRadius),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(dimens.cardPadding),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(dimens.rowIconBoxSize * 0.85f)
+                                .clip(CircleShape)
+                                .background(MaterialTheme.colorScheme.errorContainer),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.Logout,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.error,
+                                modifier = Modifier.size(dimens.rowIconSize * 0.85f)
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(dimens.horizontalPadding * 0.75f))
+                        Text(
+                            text = "Logout",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+
+                    Button(
+                        onClick = onSignOutClick,
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.error,
+                            contentColor = MaterialTheme.colorScheme.onError
+                        ),
+                        shape = RoundedCornerShape(50),
+                        modifier = Modifier.testTag("sign_out_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.Logout,
+                            contentDescription = "Sign Out",
+                            modifier = Modifier.size(dimens.rowIconSize * 0.75f)
+                        )
+                        Spacer(modifier = Modifier.width(dimens.horizontalPadding * 0.35f))
+                        Text("Logout")
                     }
                 }
             }

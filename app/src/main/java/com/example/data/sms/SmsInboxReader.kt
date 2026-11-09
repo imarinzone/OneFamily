@@ -80,6 +80,12 @@ class SmsInboxReader(private val context: Context) {
                         ) ?: continue
 
                         val signature = parsed.generateTransactionId()
+                        com.example.data.local.LocalAccountDataStore.cacheSmsMessage(
+                            signature = signature,
+                            sender = sender,
+                            body = body,
+                            timestamp = timestamp
+                        )
                         if (signature in seenSignatures) continue
                         seenSignatures.add(signature)
 
@@ -124,6 +130,12 @@ class SmsInboxReader(private val context: Context) {
         ) ?: return null
 
         val signature = parsed.generateTransactionId()
+        com.example.data.local.LocalAccountDataStore.cacheSmsMessage(
+            signature = signature,
+            sender = sender,
+            body = body,
+            timestamp = timestamp
+        )
         val category = BankParserFactory.inferCategory(parsed)
         val isShared = defaultShared ?: true
 

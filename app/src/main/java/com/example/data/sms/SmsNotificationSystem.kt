@@ -243,7 +243,7 @@ class IncomingSmsBroadcastReceiver : BroadcastReceiver() {
                     accountName = candidate.suggestedAccountName,
                     paymentMode = candidate.suggestedPaymentMode,
                     tags = listOf("sms-auto", parsed.bankName.lowercase().replace(" ", "-")),
-                    notes = "Auto-parsed from ${parsed.sender}${parsed.reference?.let { " • Ref: $it" }.orEmpty()}",
+                    notes = "[${parsed.sender}] ${parsed.smsBody}".take(500),
                     isShared = effectiveShared,
                     smsSignature = candidate.id,
                     referenceNumber = parsed.reference.orEmpty(),

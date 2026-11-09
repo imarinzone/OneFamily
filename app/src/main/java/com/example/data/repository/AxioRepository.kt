@@ -179,6 +179,49 @@ class AxioRepository(private val dbProvider: () -> FirebaseFirestore) {
         }
     }
 
+    suspend fun updateUserDisplayName(
+        newDisplayName: String,
+        household: Household?
+    ): Result<Unit> = runCatching {
+        val cleanName = newDisplayName.trim().ifBlank {
+            throw IllegalArgumentException("Name cannot be empty.")
+        }.take(100)
+
+        if (isLocalMode()) {
+            val uid = requireLocalUserId()
+            LocalAccountDataStore.updateUserDisplayName(uid, cleanName, household)
+            return@runCatching
+        }
+
+        val uid = requireUserId()
+        val userDocRef = db.collection("users").document(uid)
+        try {
+            userDocRef.update(
+                mapOf(
+                    "displayName" to cleanName,
+                    "updatedAt" to FieldValue.serverTimestamp()
+                )
+            ).await()
+
+            if (household != null && household.id.isNotBlank()) {
+                val updatedNames = household.memberNames.toMutableMap().apply {
+                    put(uid, cleanName)
+                }
+                db.collection("households").document(household.id).update(
+                    mapOf(
+                        "memberNames" to updatedNames,
+                        "updatedAt" to FieldValue.serverTimestamp()
+                    )
+                ).await()
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.UPDATE, userDocRef.path)
+            throw e
+        }
+    }
+
     // --- HOUSEHOLD CREATION, LINKING & INVITES ---
 
     fun observeHousehold(householdId: String): Flow<Household?> {
@@ -677,6 +720,13 @@ class AxioRepository(private val dbProvider: () -> FirebaseFirestore) {
                     "UPI"
                 }
 
+                LocalAccountDataStore.cacheSmsMessage(
+                    signature = candidate.id,
+                    sender = parsed.sender,
+                    body = parsed.smsBody,
+                    timestamp = parsed.timestamp
+                )
+
                 val payload = mapOf(
                     "userId" to uid,
                     "userName" to userName.ifBlank { "Me" }.take(100),
@@ -688,7 +738,7 @@ class AxioRepository(private val dbProvider: () -> FirebaseFirestore) {
                     "accountName" to candidate.suggestedAccountName.ifBlank { parsed.bankName }.take(100),
                     "paymentMode" to paymentMode,
                     "tags" to tags,
-                    "notes" to "Auto-parsed from ${parsed.sender}${parsed.reference?.let { " • Ref: $it" }.orEmpty()}".take(500),
+                    "notes" to "[${parsed.sender}] ${parsed.smsBody}".take(500),
                     "visibility" to if (effectiveShared) "SHARED" else "PERSONAL",
                     "smsSignature" to candidate.id.take(200),
                     "referenceNumber" to parsed.reference.orEmpty().take(100),

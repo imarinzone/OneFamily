@@ -15,23 +15,20 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.foundation.gestures.snapping.rememberSnapFlingBehavior
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.itemsIndexed
-import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -74,7 +71,6 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberDateRangePickerState
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -92,13 +88,13 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
-import kotlin.math.roundToInt
 import com.example.data.model.BudgetScope
 import com.example.data.model.ExpenseTransaction
 import com.example.data.model.FinancialAccount
@@ -107,6 +103,7 @@ import com.example.ui.theme.BudgetDangerCoral
 import com.example.ui.theme.BudgetSafeGreen
 import com.example.ui.theme.BudgetWarnAmber
 import com.example.ui.theme.HouseholdBadgeIndigo
+import com.example.ui.theme.LocalAppDimens
 import com.example.ui.theme.PersonalBadgeTeal
 import com.example.ui.theme.categoryAccentColor
 import com.example.ui.viewmodel.DateRangePreset
@@ -118,6 +115,7 @@ import java.util.Date
 import java.util.Locale
 import kotlin.math.atan2
 import kotlin.math.hypot
+import kotlin.math.roundToInt
 
 fun formatCurrency(amount: Double, symbol: String = "₹"): String {
     val formatter = NumberFormat.getNumberInstance(Locale.forLanguageTag("en-IN")).apply {
@@ -162,18 +160,19 @@ fun ScopeSwitcherBar(
     householdName: String?,
     onScopeSelected: (BudgetScope) -> Unit
 ) {
+    val dimens = LocalAppDimens.current
     Surface(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 6.dp),
+            .padding(horizontal = dimens.horizontalPadding, vertical = dimens.itemSpacing * 0.35f),
         shape = RoundedCornerShape(50),
         color = MaterialTheme.colorScheme.surfaceVariant
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(4.dp),
-            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                .padding(dimens.horizontalPadding * 0.25f),
+            horizontalArrangement = Arrangement.spacedBy(dimens.horizontalPadding * 0.4f)
         ) {
             BudgetScope.entries.forEach { scope ->
                 val isSelected = selectedScope == scope
@@ -205,7 +204,7 @@ fun ScopeSwitcherBar(
                         .clip(RoundedCornerShape(50))
                         .background(bgColor)
                         .clickable { onScopeSelected(scope) }
-                        .padding(vertical = 10.dp)
+                        .padding(vertical = dimens.itemSpacing * 0.8f)
                         .testTag("scope_chip_${scope.name.lowercase()}"),
                     contentAlignment = Alignment.Center
                 ) {
@@ -214,9 +213,9 @@ fun ScopeSwitcherBar(
                             imageVector = if (scope == BudgetScope.HOUSEHOLD_SHARED) Icons.Default.Groups else Icons.Default.Lock,
                             contentDescription = null,
                             tint = contentColor,
-                            modifier = Modifier.size(18.dp)
+                            modifier = Modifier.size(dimens.rowIconSize * 0.8f)
                         )
-                        Spacer(modifier = Modifier.width(6.dp))
+                        Spacer(modifier = Modifier.width(dimens.horizontalPadding * 0.35f))
                         Text(
                             text = label,
                             style = MaterialTheme.typography.labelLarge,
@@ -275,82 +274,61 @@ fun CustomDateRangePickerModal(
             showModeToggle = true,
             modifier = Modifier
                 .fillMaxWidth()
-                .height(440.dp)
+                .fillMaxHeight(0.68f)
         )
     }
 }
 
+/**
+ * Top Month & Year Switcher Header:
+ * - Left: Previous Month (`< Oct`)
+ * - Middle: Current Selected Month & Year (`Nov 2026`)
+ * - Right: Next Month (`Dec >`)
+ * - Supports horizontal swipe gestures to smoothly step between months, plus optional date range chips.
+ */
 @Composable
 fun MonthPeriodSelectorBar(
     selectedPeriod: YearMonthPeriod?,
     periodLabel: String,
     onStepMonth: (Int) -> Unit,
     onSelectCurrentMonth: () -> Unit,
-    onToggleAllTime: () -> Unit,
+    onToggleAllTime: () -> Unit = {},
     selectedDateRangePreset: DateRangePreset = if (selectedPeriod == null) DateRangePreset.ALL_TIME else DateRangePreset.MONTH,
     onSelectDateRangePreset: ((DateRangePreset) -> Unit)? = null,
     onSelectMonthPeriod: ((YearMonthPeriod) -> Unit)? = null,
     customStartDateMillis: Long? = null,
     customEndDateMillis: Long? = null,
-    onSelectCustomDateRange: ((Long, Long) -> Unit)? = null
+    onSelectCustomDateRange: ((Long, Long) -> Unit)? = null,
+    showDateRangeChips: Boolean = false
 ) {
+    val dimens = LocalAppDimens.current
     val activePeriod = selectedPeriod ?: YearMonthPeriod.current()
-    val activeMonthLabel = activePeriod.formatDisplay()
+    val prevPeriod = activePeriod.previousMonth()
+    val nextPeriod = activePeriod.nextMonth()
+    val centerMonthYearLabel = if (selectedDateRangePreset == DateRangePreset.MONTH) {
+        activePeriod.formatDisplay()
+    } else {
+        periodLabel
+    }
+
     var showCustomRangePicker by rememberSaveable { mutableStateOf(false) }
-
-    // Build a smooth horizontally scrollable timeline of 31 months (-24 to +6 around current month)
-    val monthTimeline = remember {
-        val current = YearMonthPeriod.current()
-        val list = mutableListOf<YearMonthPeriod>()
-        var cursor = current
-        repeat(24) { cursor = cursor.previousMonth() }
-        repeat(31) {
-            list.add(cursor)
-            cursor = cursor.nextMonth()
-        }
-        list.toList()
-    }
-
-    val activeIndex = remember(activePeriod, monthTimeline) {
-        monthTimeline.indexOf(activePeriod).takeIf { it >= 0 } ?: 24
-    }
-
-    val monthListState = rememberLazyListState(
-        initialFirstVisibleItemIndex = (activeIndex - 1).coerceAtLeast(0)
-    )
-    val snapFlingBehavior = rememberSnapFlingBehavior(lazyListState = monthListState)
-
-    // Smoothly scroll the month carousel whenever the active month changes
-    LaunchedEffect(activeIndex) {
-        val targetScrollIndex = (activeIndex - 1).coerceAtLeast(0)
-        runCatching {
-            monthListState.animateScrollToItem(targetScrollIndex)
-        }
-    }
-
     var dragAccumulated by remember { mutableFloatStateOf(0f) }
+    var barWidthPx by remember { mutableFloatStateOf(1f) }
 
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp)
+            .padding(horizontal = dimens.horizontalPadding),
+        verticalArrangement = Arrangement.spacedBy(dimens.itemSpacing * 0.65f)
     ) {
-        // Row 1: Smoothly Scrollable & Swipeable Month Selector Strip
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            // Swipeable & Animated Month Stepper Pill (< MMM yyyy >)
-            Surface(
-                shape = RoundedCornerShape(50),
-                color = if (selectedDateRangePreset == DateRangePreset.MONTH) {
-                    MaterialTheme.colorScheme.primaryContainer
-                } else {
-                    MaterialTheme.colorScheme.surfaceVariant
-                },
-                modifier = Modifier.pointerInput(activePeriod) {
+        // Top Header: Left = Previous Month, Middle = Current Month & Year, Right = Next Month
+        Surface(
+            shape = RoundedCornerShape(50),
+            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f),
+            modifier = Modifier
+                .fillMaxWidth()
+                .onSizeChanged { barWidthPx = it.width.toFloat().coerceAtLeast(1f) }
+                .pointerInput(activePeriod) {
                     detectHorizontalDragGestures(
                         onDragStart = { dragAccumulated = 0f },
                         onHorizontalDrag = { change, dragAmount ->
@@ -358,53 +336,86 @@ fun MonthPeriodSelectorBar(
                             dragAccumulated += dragAmount
                         },
                         onDragEnd = {
-                            if (dragAccumulated > 48f) {
+                            val swipeThreshold = barWidthPx * 0.12f
+                            if (dragAccumulated > swipeThreshold) {
                                 onStepMonth(-1)
-                            } else if (dragAccumulated < -48f) {
+                            } else if (dragAccumulated < -swipeThreshold) {
                                 onStepMonth(1)
                             }
                             dragAccumulated = 0f
                         }
                     )
                 }
+                .testTag("top_month_switcher_bar")
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(
+                        horizontal = dimens.horizontalPadding * 0.5f,
+                        vertical = dimens.itemSpacing * 0.45f
+                    ),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
             ) {
+                // Left: Previous Month
                 Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
-                ) {
-                    IconButton(
-                        onClick = { onStepMonth(-1) },
-                        modifier = Modifier
-                            .size(34.dp)
-                            .testTag("prev_month_button")
-                    ) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.KeyboardArrowLeft,
-                            contentDescription = "Previous Month"
+                    modifier = Modifier
+                        .weight(1f)
+                        .clip(RoundedCornerShape(50))
+                        .clickable { onStepMonth(-1) }
+                        .padding(
+                            horizontal = dimens.horizontalPadding * 0.5f,
+                            vertical = dimens.itemSpacing * 0.45f
                         )
-                    }
+                        .testTag("prev_month_button"),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.Start
+                ) {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.KeyboardArrowLeft,
+                        contentDescription = "Previous Month",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(dimens.rowIconSize * 0.85f)
+                    )
+                    Spacer(modifier = Modifier.width(dimens.horizontalPadding * 0.2f))
+                    Text(
+                        text = prevPeriod.formatShortMonth(),
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.Medium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1
+                    )
+                }
 
+                // Middle: Current Selected Month & Year
+                Surface(
+                    shape = RoundedCornerShape(50),
+                    color = MaterialTheme.colorScheme.primaryContainer,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(50))
+                        .clickable {
+                            showCustomRangePicker = true
+                        }
+                        .testTag("center_month_year_pill")
+                ) {
                     Row(
+                        modifier = Modifier.padding(
+                            horizontal = dimens.horizontalPadding * 0.9f,
+                            vertical = dimens.itemSpacing * 0.55f
+                        ),
                         verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(50))
-                            .clickable {
-                                if (onSelectDateRangePreset != null) {
-                                    onSelectDateRangePreset(DateRangePreset.MONTH)
-                                }
-                                onSelectCurrentMonth()
-                            }
-                            .padding(horizontal = 8.dp, vertical = 6.dp)
+                        horizontalArrangement = Arrangement.Center
                     ) {
                         Icon(
                             imageVector = Icons.Default.CalendarMonth,
                             contentDescription = null,
                             tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(16.dp)
+                            modifier = Modifier.size(dimens.rowIconSize * 0.75f)
                         )
-                        Spacer(modifier = Modifier.width(6.dp))
+                        Spacer(modifier = Modifier.width(dimens.horizontalPadding * 0.35f))
                         AnimatedContent(
-                            targetState = activeMonthLabel,
+                            targetState = centerMonthYearLabel,
                             transitionSpec = {
                                 (slideInHorizontally { width -> width / 2 } + fadeIn())
                                     .togetherWith(slideOutHorizontally { width -> -width / 2 } + fadeOut())
@@ -414,155 +425,111 @@ fun MonthPeriodSelectorBar(
                             Text(
                                 text = targetLabel,
                                 style = MaterialTheme.typography.titleSmall,
-                                fontWeight = FontWeight.Bold
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                maxLines = 1
                             )
                         }
                     }
-
-                    IconButton(
-                        onClick = { onStepMonth(1) },
-                        modifier = Modifier
-                            .size(34.dp)
-                            .testTag("next_month_button")
-                    ) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
-                            contentDescription = "Next Month"
-                        )
-                    }
                 }
-            }
 
-            // Smooth Horizontally Scrollable Month Carousel (Snapping LazyRow)
-            LazyRow(
-                state = monthListState,
-                flingBehavior = snapFlingBehavior,
-                modifier = Modifier
-                    .weight(1f)
-                    .testTag("smooth_month_scroll_row"),
-                contentPadding = PaddingValues(horizontal = 4.dp),
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                itemsIndexed(
-                    items = monthTimeline,
-                    key = { _, ym -> "${ym.year}_${ym.month}" }
-                ) { _, ym ->
-                    val isSelectedMonth = selectedDateRangePreset == DateRangePreset.MONTH && ym == activePeriod
-                    val bg by animateColorAsState(
-                        targetValue = if (isSelectedMonth) {
-                            MaterialTheme.colorScheme.primary
-                        } else {
-                            MaterialTheme.colorScheme.surfaceVariant
-                        },
-                        animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
-                        label = "month_pill_bg"
-                    )
-                    val fg by animateColorAsState(
-                        targetValue = if (isSelectedMonth) {
-                            MaterialTheme.colorScheme.onPrimary
-                        } else {
-                            MaterialTheme.colorScheme.onSurfaceVariant
-                        },
-                        animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
-                        label = "month_pill_fg"
-                    )
-                    Surface(
-                        shape = RoundedCornerShape(50),
-                        color = bg,
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(50))
-                            .clickable {
-                                if (onSelectMonthPeriod != null) {
-                                    onSelectMonthPeriod(ym)
-                                } else {
-                                    val delta = (ym.year - activePeriod.year) * 12 + (ym.month - activePeriod.month)
-                                    if (delta == 0) {
-                                        onSelectDateRangePreset?.invoke(DateRangePreset.MONTH)
-                                    } else {
-                                        val stepDir = if (delta > 0) 1 else -1
-                                        repeat(kotlin.math.abs(delta)) { onStepMonth(stepDir) }
-                                    }
-                                }
-                            }
-                    ) {
-                        Text(
-                            text = ym.formatDisplay(),
-                            style = MaterialTheme.typography.labelMedium,
-                            fontWeight = if (isSelectedMonth) FontWeight.Bold else FontWeight.Medium,
-                            color = fg,
-                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp)
+                // Right: Next Month
+                Row(
+                    modifier = Modifier
+                        .weight(1f)
+                        .clip(RoundedCornerShape(50))
+                        .clickable { onStepMonth(1) }
+                        .padding(
+                            horizontal = dimens.horizontalPadding * 0.5f,
+                            vertical = dimens.itemSpacing * 0.45f
                         )
-                    }
+                        .testTag("next_month_button"),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.End
+                ) {
+                    Text(
+                        text = nextPeriod.formatShortMonth(),
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.Medium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1
+                    )
+                    Spacer(modifier = Modifier.width(dimens.horizontalPadding * 0.2f))
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                        contentDescription = "Next Month",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(dimens.rowIconSize * 0.85f)
+                    )
                 }
             }
         }
 
-        // Row 2: Date Range Filter Chips + Custom Date Range Picker Trigger
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .horizontalScroll(rememberScrollState()),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            // Custom Date Range Chip (opens Material 3 DateRangePicker modal)
-            val isCustomSelected = selectedDateRangePreset == DateRangePreset.CUSTOM
-            val customChipLabel = if (isCustomSelected && customStartDateMillis != null && customEndDateMillis != null) {
-                periodLabel
-            } else {
-                "Custom Range"
-            }
-            FilterChip(
-                selected = isCustomSelected,
-                onClick = { showCustomRangePicker = true },
-                shape = RoundedCornerShape(50),
-                leadingIcon = {
-                    Icon(
-                        imageVector = Icons.Default.DateRange,
-                        contentDescription = null,
-                        modifier = Modifier.size(16.dp)
-                    )
-                },
-                label = { Text(customChipLabel) },
-                modifier = Modifier.testTag("date_range_chip_custom")
-            )
-
-            val presets = listOf(
-                DateRangePreset.MONTH to "Current Month",
-                DateRangePreset.LAST_30_DAYS to "Last 30 Days",
-                DateRangePreset.LAST_7_DAYS to "Last 7 Days",
-                DateRangePreset.LAST_90_DAYS to "Last 3 Months",
-                DateRangePreset.THIS_YEAR to "This Year",
-                DateRangePreset.ALL_TIME to "All Time"
-            )
-            presets.forEach { (preset, chipLabel) ->
-                val isSelected = selectedDateRangePreset == preset &&
-                    (preset != DateRangePreset.MONTH || selectedPeriod == YearMonthPeriod.current())
+        if (showDateRangeChips) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState()),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(dimens.horizontalPadding * 0.5f)
+            ) {
+                val isCustomSelected = selectedDateRangePreset == DateRangePreset.CUSTOM
+                val customChipLabel = if (isCustomSelected && customStartDateMillis != null && customEndDateMillis != null) {
+                    periodLabel
+                } else {
+                    "Custom Range"
+                }
                 FilterChip(
-                    selected = isSelected,
-                    onClick = {
-                        if (onSelectDateRangePreset != null) {
-                            if (preset == DateRangePreset.MONTH) {
+                    selected = isCustomSelected,
+                    onClick = { showCustomRangePicker = true },
+                    shape = RoundedCornerShape(50),
+                    leadingIcon = {
+                        Icon(
+                            imageVector = Icons.Default.DateRange,
+                            contentDescription = null,
+                            modifier = Modifier.size(dimens.rowIconSize * 0.72f)
+                        )
+                    },
+                    label = { Text(customChipLabel) },
+                    modifier = Modifier.testTag("date_range_chip_custom")
+                )
+
+                val presets = listOf(
+                    DateRangePreset.MONTH to "Current Month",
+                    DateRangePreset.LAST_30_DAYS to "Last 30 Days",
+                    DateRangePreset.LAST_7_DAYS to "Last 7 Days",
+                    DateRangePreset.LAST_90_DAYS to "Last 3 Months",
+                    DateRangePreset.THIS_YEAR to "This Year",
+                    DateRangePreset.ALL_TIME to "All Time"
+                )
+                presets.forEach { (preset, chipLabel) ->
+                    val isSelected = selectedDateRangePreset == preset &&
+                        (preset != DateRangePreset.MONTH || selectedPeriod == YearMonthPeriod.current())
+                    FilterChip(
+                        selected = isSelected,
+                        onClick = {
+                            if (onSelectDateRangePreset != null) {
+                                if (preset == DateRangePreset.MONTH) {
+                                    onSelectCurrentMonth()
+                                }
+                                onSelectDateRangePreset(preset)
+                            } else if (preset == DateRangePreset.ALL_TIME) {
+                                onToggleAllTime()
+                            } else if (preset == DateRangePreset.MONTH) {
                                 onSelectCurrentMonth()
                             }
-                            onSelectDateRangePreset(preset)
-                        } else if (preset == DateRangePreset.ALL_TIME) {
-                            onToggleAllTime()
-                        } else if (preset == DateRangePreset.MONTH) {
-                            onSelectCurrentMonth()
-                        }
-                    },
-                    shape = RoundedCornerShape(50),
-                    label = { Text(chipLabel) },
-                    modifier = Modifier.testTag(
-                        if (preset == DateRangePreset.ALL_TIME) {
-                            "all_time_period_chip"
-                        } else {
-                            "date_range_chip_${preset.name.lowercase()}"
-                        }
+                        },
+                        shape = RoundedCornerShape(50),
+                        label = { Text(chipLabel) },
+                        modifier = Modifier.testTag(
+                            if (preset == DateRangePreset.ALL_TIME) {
+                                "all_time_period_chip"
+                            } else {
+                                "date_range_chip_${preset.name.lowercase()}"
+                            }
+                        )
                     )
-                )
+                }
             }
         }
     }
@@ -591,6 +558,7 @@ fun MonthlyBudgetPulseCard(
     household: Household?,
     onEditBudgetClick: () -> Unit
 ) {
+    val dimens = LocalAppDimens.current
     val hasAssignedBudget = monthlyBudget > 0.0
     val rawProgress = if (hasAssignedBudget) (totalSpent / monthlyBudget).toFloat().coerceIn(0f, 1f) else 0f
     val animatedProgress by animateFloatAsState(
@@ -608,13 +576,13 @@ fun MonthlyBudgetPulseCard(
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp)
+            .padding(horizontal = dimens.horizontalPadding)
             .clickable { onEditBudgetClick() },
-        shape = RoundedCornerShape(28.dp),
+        shape = RoundedCornerShape(dimens.cardCornerRadius),
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.surface
         ),
-        elevation = CardDefaults.cardElevation(defaultElevation = 3.dp)
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
     ) {
         Column(
             modifier = Modifier
@@ -627,7 +595,7 @@ fun MonthlyBudgetPulseCard(
                         )
                     )
                 )
-                .padding(20.dp)
+                .padding(dimens.cardPadding)
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -646,30 +614,30 @@ fun MonthlyBudgetPulseCard(
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
-                    Spacer(modifier = Modifier.width(8.dp))
+                    Spacer(modifier = Modifier.width(dimens.horizontalPadding * 0.5f))
                     IconButton(
                         onClick = onEditBudgetClick,
                         modifier = Modifier
-                            .size(32.dp)
+                            .size(dimens.rowIconBoxSize * 0.75f)
                             .testTag("edit_monthly_budget_button")
                     ) {
                         Icon(
                             imageVector = Icons.Default.Edit,
                             contentDescription = "Edit Budget",
                             tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(18.dp)
+                            modifier = Modifier.size(dimens.rowIconSize * 0.8f)
                         )
                     }
                 }
 
                 if (hasAssignedBudget) {
                     Box(
-                        modifier = Modifier.size(92.dp),
+                        modifier = Modifier.size(dimens.pulseRingSize),
                         contentAlignment = Alignment.Center
                     ) {
                         val trackColor = MaterialTheme.colorScheme.surfaceVariant
-                        Canvas(modifier = Modifier.size(84.dp)) {
-                            val strokeWidth = 11.dp.toPx()
+                        Canvas(modifier = Modifier.size(dimens.pulseRingSize * 0.9f)) {
+                            val strokeWidth = size.minDimension * 0.13f
                             drawArc(
                                 color = trackColor,
                                 startAngle = 135f,
@@ -700,20 +668,20 @@ fun MonthlyBudgetPulseCard(
                         Icon(
                             imageVector = Icons.Default.Add,
                             contentDescription = null,
-                            modifier = Modifier.size(16.dp)
+                            modifier = Modifier.size(dimens.rowIconSize * 0.72f)
                         )
-                        Spacer(modifier = Modifier.width(6.dp))
+                        Spacer(modifier = Modifier.width(dimens.horizontalPadding * 0.35f))
                         Text("Set Budget")
                     }
                 }
             }
 
             if (hasAssignedBudget) {
-                Spacer(modifier = Modifier.height(14.dp))
+                Spacer(modifier = Modifier.height(dimens.itemSpacing))
 
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    horizontalArrangement = Arrangement.spacedBy(dimens.horizontalPadding * 0.6f)
                 ) {
                     val leftAmount = (monthlyBudget - totalSpent).coerceAtLeast(0.0)
                     MetricMiniPill(
@@ -738,13 +706,17 @@ private fun MetricMiniPill(
     text: String,
     accentColor: Color
 ) {
+    val dimens = LocalAppDimens.current
     Surface(
         modifier = modifier,
-        shape = RoundedCornerShape(18.dp),
+        shape = RoundedCornerShape(dimens.smallCornerRadius),
         color = MaterialTheme.colorScheme.surface.copy(alpha = 0.85f)
     ) {
         Box(
-            modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+            modifier = Modifier.padding(
+                horizontal = dimens.horizontalPadding * 0.85f,
+                vertical = dimens.itemSpacing * 0.8f
+            ),
             contentAlignment = Alignment.Center
         ) {
             Text(
@@ -766,10 +738,11 @@ fun MonthlyBarGraph(
     onSelectMonth: (YearMonthPeriod) -> Unit,
     onStepMonth: ((Int) -> Unit)? = null
 ) {
+    val dimens = LocalAppDimens.current
     val maxExpense = bars.maxOfOrNull { it.expenseTotal }?.coerceAtLeast(1.0) ?: 1.0
     var dragAccum by remember { mutableFloatStateOf(0f) }
 
-    Column(
+    BoxWithConstraints(
         modifier = Modifier
             .fillMaxWidth()
             .pointerInput(bars) {
@@ -781,13 +754,14 @@ fun MonthlyBarGraph(
                     },
                     onDragEnd = {
                         val selectedBar = bars.firstOrNull { it.isSelected } ?: bars.lastOrNull()
-                        if (dragAccum > 56f) {
+                        val threshold = size.width * 0.14f
+                        if (dragAccum > threshold) {
                             if (onStepMonth != null) {
                                 onStepMonth(-1)
                             } else if (selectedBar != null) {
                                 onSelectMonth(selectedBar.period.previousMonth())
                             }
-                        } else if (dragAccum < -56f) {
+                        } else if (dragAccum < -threshold) {
                             if (onStepMonth != null) {
                                 onStepMonth(1)
                             } else if (selectedBar != null) {
@@ -799,11 +773,14 @@ fun MonthlyBarGraph(
                 )
             }
     ) {
+        val barWidth = (maxWidth / (bars.size.coerceAtLeast(1) * 2.2f)).coerceIn(18.dp, 36.dp)
+        val maxBarHeight = dimens.barChartHeight * 0.58f
+
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(145.dp)
-                .padding(top = 8.dp),
+                .height(dimens.barChartHeight)
+                .padding(top = dimens.itemSpacing * 0.5f),
             horizontalArrangement = Arrangement.SpaceEvenly,
             verticalAlignment = Alignment.Bottom
         ) {
@@ -818,9 +795,12 @@ fun MonthlyBarGraph(
                 Column(
                     modifier = Modifier
                         .weight(1f)
-                        .clip(RoundedCornerShape(12.dp))
+                        .clip(RoundedCornerShape(dimens.smallCornerRadius * 0.8f))
                         .clickable { onSelectMonth(bar.period) }
-                        .padding(horizontal = 4.dp, vertical = 4.dp),
+                        .padding(
+                            horizontal = dimens.horizontalPadding * 0.2f,
+                            vertical = dimens.itemSpacing * 0.3f
+                        ),
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.Bottom
                 ) {
@@ -831,15 +811,15 @@ fun MonthlyBarGraph(
                         fontWeight = if (bar.isSelected) FontWeight.Bold else FontWeight.Normal,
                         maxLines = 1
                     )
-                    Spacer(modifier = Modifier.height(6.dp))
+                    Spacer(modifier = Modifier.height(dimens.itemSpacing * 0.45f))
                     Box(
                         modifier = Modifier
-                            .width(28.dp)
-                            .height((84.dp * heightFraction).coerceAtLeast(8.dp))
+                            .width(barWidth)
+                            .height((maxBarHeight * heightFraction).coerceAtLeast(8.dp))
                             .clip(RoundedCornerShape(50))
                             .background(barColor)
                     )
-                    Spacer(modifier = Modifier.height(6.dp))
+                    Spacer(modifier = Modifier.height(dimens.itemSpacing * 0.45f))
                     Text(
                         text = bar.label,
                         style = MaterialTheme.typography.labelMedium,
@@ -859,12 +839,13 @@ fun AccountsCarouselStrip(
     currencySymbol: String,
     onAddAccountClick: () -> Unit
 ) {
+    val dimens = LocalAppDimens.current
     Column(modifier = Modifier.fillMaxWidth()) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .horizontalScroll(rememberScrollState()),
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            horizontalArrangement = Arrangement.spacedBy(dimens.horizontalPadding * 0.6f),
             verticalAlignment = Alignment.CenterVertically
         ) {
             accounts.forEach { acc ->
@@ -881,13 +862,13 @@ fun AccountsCarouselStrip(
             }
             OutlinedButton(
                 onClick = onAddAccountClick,
-                shape = RoundedCornerShape(18.dp),
+                shape = RoundedCornerShape(dimens.smallCornerRadius),
                 modifier = Modifier
-                    .height(52.dp)
+                    .height(dimens.navPillHeight)
                     .testTag("add_account_button")
             ) {
-                Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
-                Spacer(modifier = Modifier.width(6.dp))
+                Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(dimens.rowIconSize * 0.8f))
+                Spacer(modifier = Modifier.width(dimens.horizontalPadding * 0.35f))
                 Text("Add")
             }
         }
@@ -900,6 +881,7 @@ private fun AccountSummaryCard(
     amountLabel: String,
     accountType: String
 ) {
+    val dimens = LocalAppDimens.current
     val icon = when (accountType) {
         "CREDIT_CARD" -> Icons.Default.CreditCard
         "UPI" -> Icons.Default.QrCode2
@@ -907,16 +889,19 @@ private fun AccountSummaryCard(
         else -> Icons.Default.AccountBalance
     }
     Surface(
-        shape = RoundedCornerShape(18.dp),
+        shape = RoundedCornerShape(dimens.smallCornerRadius),
         color = MaterialTheme.colorScheme.surfaceVariant
     ) {
         Row(
-            modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+            modifier = Modifier.padding(
+                horizontal = dimens.horizontalPadding * 0.85f,
+                vertical = dimens.itemSpacing * 0.8f
+            ),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Box(
                 modifier = Modifier
-                    .size(34.dp)
+                    .size(dimens.rowIconBoxSize * 0.78f)
                     .clip(CircleShape)
                     .background(MaterialTheme.colorScheme.primaryContainer),
                 contentAlignment = Alignment.Center
@@ -925,10 +910,10 @@ private fun AccountSummaryCard(
                     imageVector = icon,
                     contentDescription = null,
                     tint = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.size(18.dp)
+                    modifier = Modifier.size(dimens.rowIconSize * 0.8f)
                 )
             }
-            Spacer(modifier = Modifier.width(10.dp))
+            Spacer(modifier = Modifier.width(dimens.horizontalPadding * 0.6f))
             Text(
                 text = title,
                 style = MaterialTheme.typography.titleSmall,
@@ -936,7 +921,7 @@ private fun AccountSummaryCard(
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
-            Spacer(modifier = Modifier.width(10.dp))
+            Spacer(modifier = Modifier.width(dimens.horizontalPadding * 0.6f))
             Text(
                 text = amountLabel,
                 style = MaterialTheme.typography.titleSmall,
@@ -949,11 +934,9 @@ private fun AccountSummaryCard(
 }
 
 /**
- * Single-Line Transaction Row with Gesture Controls:
- * - Shows ONLY Category Icon, Merchant Name, and Amount on one clean horizontal line.
- * - Tap Icon -> Quick Category Picker
- * - Tap Row -> Interactive Receipt Editor
- * - Long-Press Row -> Quick Category Picker
+ * Single-Line Transaction Row with Relative Screen Sizing & Gesture Controls:
+ * - Tap anywhere on Row -> Opens full Receipt Editor (`onEditTransaction`)
+ * - Long-Press Row -> Opens Quick Category Picker (`onQuickChangeCategory`)
  * - Swipe Right -> Toggle Household / Personal Sharing (`onTogglePrivacy`)
  * - Swipe Left -> Delete Transaction (`onDelete`)
  */
@@ -968,9 +951,11 @@ fun ExpenseTransactionItemCard(
     onQuickChangeCategory: () -> Unit = {},
     onTagClick: (String) -> Unit = {}
 ) {
+    val dimens = LocalAppDimens.current
     val isIncome = expense.type == "INCOME"
     val catColor = categoryAccentColor(expense.category)
     var dragOffsetX by remember { mutableFloatStateOf(0f) }
+    var cardWidthPx by remember { mutableFloatStateOf(1f) }
     val animatedOffsetX by animateFloatAsState(
         targetValue = dragOffsetX,
         animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessMedium),
@@ -980,9 +965,9 @@ fun ExpenseTransactionItemCard(
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(22.dp))
+            .onSizeChanged { cardWidthPx = it.width.toFloat().coerceAtLeast(1f) }
+            .clip(RoundedCornerShape(dimens.cardCornerRadius))
     ) {
-        // Gesture Reveal Background (Swipe Right = Share/Private, Swipe Left = Delete)
         if (kotlin.math.abs(animatedOffsetX) > 6f) {
             val isSwipingRight = animatedOffsetX > 0f
             val bgRevealColor = if (isSwipingRight) {
@@ -994,7 +979,7 @@ fun ExpenseTransactionItemCard(
                 modifier = Modifier
                     .matchParentSize()
                     .background(bgRevealColor.copy(alpha = 0.25f))
-                    .padding(horizontal = 20.dp),
+                    .padding(horizontal = dimens.horizontalPadding * 1.2f),
                 contentAlignment = if (isSwipingRight) Alignment.CenterStart else Alignment.CenterEnd
             ) {
                 Icon(
@@ -1005,7 +990,7 @@ fun ExpenseTransactionItemCard(
                     },
                     contentDescription = null,
                     tint = bgRevealColor,
-                    modifier = Modifier.size(22.dp)
+                    modifier = Modifier.size(dimens.rowIconSize)
                 )
             }
         }
@@ -1014,31 +999,33 @@ fun ExpenseTransactionItemCard(
             modifier = Modifier
                 .fillMaxWidth()
                 .offset { IntOffset(animatedOffsetX.roundToInt(), 0) }
-                .clip(RoundedCornerShape(22.dp))
+                .clip(RoundedCornerShape(dimens.cardCornerRadius))
                 .pointerInput(expense.id, canTogglePrivacy) {
                     detectTapGestures(
                         onTap = { onEditTransaction() },
                         onLongPress = { onQuickChangeCategory() }
                     )
                 }
-                .pointerInput(expense.id, canTogglePrivacy) {
+                .pointerInput(expense.id, canTogglePrivacy, cardWidthPx) {
+                    val maxDrag = cardWidthPx * 0.38f
+                    val triggerThreshold = cardWidthPx * 0.22f
                     detectHorizontalDragGestures(
                         onHorizontalDrag = { change, dragAmount ->
                             change.consume()
                             val next = dragOffsetX + dragAmount
                             dragOffsetX = if (canTogglePrivacy) {
-                                next.coerceIn(-180f, 180f)
+                                next.coerceIn(-maxDrag, maxDrag)
                             } else {
-                                next.coerceIn(-180f, 0f)
+                                next.coerceIn(-maxDrag, 0f)
                             }
                         },
                         onDragEnd = {
                             when {
-                                dragOffsetX > 100f && canTogglePrivacy -> {
+                                dragOffsetX > triggerThreshold && canTogglePrivacy -> {
                                     dragOffsetX = 0f
                                     onTogglePrivacy()
                                 }
-                                dragOffsetX < -100f -> {
+                                dragOffsetX < -triggerThreshold -> {
                                     dragOffsetX = 0f
                                     onDelete()
                                 }
@@ -1053,7 +1040,7 @@ fun ExpenseTransactionItemCard(
                     )
                 }
                 .testTag("expense_card_${expense.id}"),
-            shape = RoundedCornerShape(22.dp),
+            shape = RoundedCornerShape(dimens.cardCornerRadius),
             colors = CardDefaults.cardColors(
                 containerColor = MaterialTheme.colorScheme.surface
             ),
@@ -1062,16 +1049,18 @@ fun ExpenseTransactionItemCard(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 14.dp),
+                    .padding(
+                        horizontal = dimens.horizontalPadding,
+                        vertical = dimens.itemSpacing * 1.1f
+                    ),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                // Punchy Category Icon Squircle (tap to quick-change category)
                 Box(
                     modifier = Modifier
-                        .size(44.dp)
-                        .clip(RoundedCornerShape(14.dp))
+                        .size(dimens.rowIconBoxSize)
+                        .clip(RoundedCornerShape(dimens.smallCornerRadius))
                         .background(catColor.copy(alpha = 0.16f))
-                        .clickable { onQuickChangeCategory() }
+                        .clickable { onEditTransaction() }
                         .testTag("category_pill_${expense.id}"),
                     contentAlignment = Alignment.Center
                 ) {
@@ -1079,13 +1068,12 @@ fun ExpenseTransactionItemCard(
                         imageVector = categoryIcon(expense.category),
                         contentDescription = expense.category,
                         tint = catColor,
-                        modifier = Modifier.size(22.dp)
+                        modifier = Modifier.size(dimens.rowIconSize)
                     )
                 }
 
-                Spacer(modifier = Modifier.width(14.dp))
+                Spacer(modifier = Modifier.width(dimens.horizontalPadding * 0.85f))
 
-                // Single-Line Merchant Name Only
                 Text(
                     text = expense.title,
                     style = MaterialTheme.typography.titleMedium,
@@ -1095,9 +1083,8 @@ fun ExpenseTransactionItemCard(
                     modifier = Modifier.weight(1f)
                 )
 
-                Spacer(modifier = Modifier.width(12.dp))
+                Spacer(modifier = Modifier.width(dimens.horizontalPadding * 0.75f))
 
-                // Bold Amount Only
                 Text(
                     text = "${if (isIncome) "+" else "-"}${formatCurrency(expense.amount, currencySymbol)}",
                     style = MaterialTheme.typography.titleLarge,
@@ -1110,7 +1097,7 @@ fun ExpenseTransactionItemCard(
 }
 
 /**
- * Interactive Pie / Donut Chart:
+ * Interactive Pie / Donut Chart with Relative Screen Sizing:
  * Clicking directly on any pie slice on the Canvas OR clicking any category in the legend
  * invokes `onCategoryClick(category)` to display that category's transactions.
  */
@@ -1121,6 +1108,7 @@ fun CategoryDonutChart(
     selectedCategory: String? = null,
     onCategoryClick: (String) -> Unit = {}
 ) {
+    val dimens = LocalAppDimens.current
     val palette = listOf(
         Color(0xFFFF5A5F), // Warm Coral
         Color(0xFFFFB703), // Sunny Marigold
@@ -1128,26 +1116,29 @@ fun CategoryDonutChart(
         Color(0xFF8338EC), // Berry Pop
         Color(0xFFEC4899), // Pink Pop
         Color(0xFF118AB2), // Ocean Pop
-        Color(0xFFF97316)  // Tangerine
+        Color(0xFFF97316), // Tangerine
+        Color(0xFF14B8A6), // Teal
+        Color(0xFFA855F7), // Purple
+        Color(0xFFEAB308)  // Gold
     )
-    val visibleSlices = categoryTotals.take(palette.size)
+    val visibleSlices = categoryTotals
     val grandTotal = visibleSlices.sumOf { it.second }.coerceAtLeast(1.0)
 
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = 8.dp),
+            .padding(vertical = dimens.itemSpacing * 0.65f),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Box(
             modifier = Modifier
-                .size(132.dp)
+                .size(dimens.donutChartSize)
                 .testTag("category_pie_chart_canvas"),
             contentAlignment = Alignment.Center
         ) {
             Canvas(
                 modifier = Modifier
-                    .size(116.dp)
+                    .size(dimens.donutChartSize * 0.88f)
                     .pointerInput(visibleSlices) {
                         detectTapGestures { tapOffset ->
                             if (visibleSlices.isEmpty()) return@detectTapGestures
@@ -1157,10 +1148,8 @@ fun CategoryDonutChart(
                             val dy = tapOffset.y - cy
                             val distance = hypot(dx.toDouble(), dy.toDouble()).toFloat()
                             val outerRadius = size.width / 2f
-                            // Ignore taps far outside the circle
                             if (distance > outerRadius * 1.15f) return@detectTapGestures
 
-                            // Convert tap angle to [0, 360) clockwise starting from -90 deg (12 o'clock)
                             val degFromEast = Math.toDegrees(atan2(dy.toDouble(), dx.toDouble())).toFloat()
                             val clockwiseFromTop = ((degFromEast + 90f) % 360f + 360f) % 360f
 
@@ -1176,8 +1165,8 @@ fun CategoryDonutChart(
                         }
                     }
             ) {
-                val baseStroke = 22.dp.toPx()
-                val selectedStroke = 27.dp.toPx()
+                val baseStroke = size.minDimension * 0.19f
+                val selectedStroke = size.minDimension * 0.24f
                 var startAngle = -90f
                 visibleSlices.forEachIndexed { idx, (cat, amount) ->
                     val sweep = ((amount / grandTotal) * 360.0).toFloat()
@@ -1207,17 +1196,17 @@ fun CategoryDonutChart(
             )
         }
 
-        Spacer(modifier = Modifier.width(16.dp))
+        Spacer(modifier = Modifier.width(dimens.horizontalPadding))
 
         Column(
             modifier = Modifier.weight(1f),
-            verticalArrangement = Arrangement.spacedBy(6.dp)
+            verticalArrangement = Arrangement.spacedBy(dimens.itemSpacing * 0.45f)
         ) {
             visibleSlices.forEachIndexed { idx, (category, amount) ->
                 val pct = ((amount / grandTotal) * 100).toInt()
                 val isSelected = selectedCategory != null && selectedCategory.equals(category, ignoreCase = true)
                 Surface(
-                    shape = RoundedCornerShape(10.dp),
+                    shape = RoundedCornerShape(dimens.smallCornerRadius * 0.7f),
                     color = if (isSelected) {
                         palette[idx % palette.size].copy(alpha = 0.16f)
                     } else {
@@ -1225,14 +1214,17 @@ fun CategoryDonutChart(
                     },
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clip(RoundedCornerShape(10.dp))
+                        .clip(RoundedCornerShape(dimens.smallCornerRadius * 0.7f))
                         .clickable { onCategoryClick(category) }
                         .testTag("pie_slice_legend_${category.lowercase().replace(" ", "_")}")
                 ) {
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(horizontal = 6.dp, vertical = 4.dp),
+                            .padding(
+                                horizontal = dimens.horizontalPadding * 0.4f,
+                                vertical = dimens.itemSpacing * 0.35f
+                            ),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
@@ -1242,11 +1234,11 @@ fun CategoryDonutChart(
                         ) {
                             Box(
                                 modifier = Modifier
-                                    .size(10.dp)
+                                    .size(dimens.rowIconSize * 0.45f)
                                     .clip(CircleShape)
                                     .background(palette[idx % palette.size])
                             )
-                            Spacer(modifier = Modifier.width(8.dp))
+                            Spacer(modifier = Modifier.width(dimens.horizontalPadding * 0.5f))
                             Text(
                                 text = category,
                                 style = MaterialTheme.typography.bodySmall,
@@ -1272,10 +1264,11 @@ fun ReceiptZigzagEdgeStrip(
     paperColor: Color = MaterialTheme.colorScheme.surface,
     isTop: Boolean = true
 ) {
+    val dimens = LocalAppDimens.current
     Canvas(
         modifier = Modifier
             .fillMaxWidth()
-            .height(10.dp)
+            .height(dimens.itemSpacing * 0.8f)
     ) {
         val teethCount = 24
         val toothWidth = size.width / teethCount
@@ -1307,10 +1300,11 @@ fun ReceiptDashedDividerLine(
     modifier: Modifier = Modifier,
     color: Color = MaterialTheme.colorScheme.outlineVariant
 ) {
+    val dimens = LocalAppDimens.current
     Canvas(
         modifier = modifier
             .fillMaxWidth()
-            .padding(vertical = 8.dp)
+            .padding(vertical = dimens.itemSpacing * 0.65f)
             .height(2.dp)
     ) {
         drawLine(
@@ -1350,6 +1344,7 @@ fun ThemeModeSelectorBar(
     onSelectMode: (com.example.ui.theme.AppThemeMode) -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val dimens = LocalAppDimens.current
     Surface(
         modifier = modifier.fillMaxWidth(),
         shape = RoundedCornerShape(50),
@@ -1358,8 +1353,8 @@ fun ThemeModeSelectorBar(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(4.dp),
-            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                .padding(dimens.horizontalPadding * 0.25f),
+            horizontalArrangement = Arrangement.spacedBy(dimens.horizontalPadding * 0.4f)
         ) {
             com.example.ui.theme.AppThemeMode.entries.forEach { mode ->
                 val isSelected = currentMode == mode
@@ -1379,7 +1374,7 @@ fun ThemeModeSelectorBar(
                         .clip(RoundedCornerShape(50))
                         .background(bgColor)
                         .clickable { onSelectMode(mode) }
-                        .padding(vertical = 8.dp)
+                        .padding(vertical = dimens.itemSpacing * 0.65f)
                         .testTag("theme_mode_${mode.name.lowercase()}"),
                     contentAlignment = Alignment.Center
                 ) {
