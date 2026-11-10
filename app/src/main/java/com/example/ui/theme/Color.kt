@@ -2,7 +2,17 @@ package com.example.ui.theme
 
 import androidx.compose.ui.graphics.Color
 
-// Warm Coral, Sunny Marigold, Mint & Berry Pop on Cream Palette
+// Default Kiwi Green, Warm Coral, Sunny Marigold, Mint & Berry Pop on Cream Palette
+val KiwiPrimaryLight = Color(0xFF65A30D)
+val OnKiwiLight = Color(0xFFFFFFFF)
+val KiwiContainerLight = Color(0xFFECFCCB)
+val OnKiwiContainerLight = Color(0xFF1A2E05)
+
+val KiwiPrimaryDark = Color(0xFFA3E635)
+val OnKiwiDark = Color(0xFF000000)
+val KiwiContainerDark = Color(0xFF1E3308)
+val OnKiwiContainerDark = Color(0xFFECFCCB)
+
 val CoralPrimaryLight = Color(0xFFFF5A5F)
 val OnCoralLight = Color(0xFFFFFFFF)
 val CoralContainerLight = Color(0xFFFFE2E3)

@@ -33,6 +33,7 @@ import com.example.data.repository.OneFamilyRepository
 import com.example.data.sms.RawSmsRow
 import com.example.data.sms.SmsInboxReader
 import com.example.data.sms.TransactionNotificationHelper
+import com.example.ui.components.MonthlyBarGraph
 import com.example.ui.components.formatCompactCurrency
 import com.example.ui.components.formatCurrency
 import com.example.ui.screens.FirstTimeSmsSyncScreen
@@ -48,13 +49,19 @@ import com.example.ui.screens.validateEmailAddress
 import com.example.ui.screens.validateHouseholdJoinCode
 import com.example.ui.screens.validateNonNegativeAmount
 import com.example.ui.screens.validatePositiveAmount
+import com.example.ui.theme.AppPrimaryColorOption
 import com.example.ui.theme.AppThemeMode
+import com.example.ui.theme.KiwiPrimaryDark
+import com.example.ui.theme.KiwiPrimaryLight
 import com.example.ui.theme.OneFamilyTheme
 import com.example.ui.theme.buildResponsiveTypography
+import com.example.ui.theme.resolveAppColorScheme
+import com.example.ui.viewmodel.MonthlySpendBar
 import com.example.ui.viewmodel.OneFamilyDashboardUiState
 import com.example.ui.viewmodel.OneFamilyViewModel
 import com.example.ui.viewmodel.SmsReadPreviewItem
 import com.example.ui.viewmodel.SmsSyncProgressState
+import com.example.ui.viewmodel.YearMonthPeriod
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
@@ -1149,6 +1156,129 @@ class ExampleRobolectricTest {
         composeTestRule.onNodeWithTag("household_tab_list")
             .performScrollToNode(hasTestTag("crashlytics_settings_card"))
         composeTestRule.onNodeWithTag("crashlytics_settings_card").assertExists()
+    }
+
+    @Test
+    fun `test default theme color is kiwi green and supports material 3 dynamic and custom primary colors`() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        LocalAccountSessionManager.ensureInitialized(context)
+
+        // Reset to default Kiwi Green
+        LocalAccountSessionManager.setPrimaryColorOption(context, AppPrimaryColorOption.KIWI_GREEN)
+        assertEquals(AppPrimaryColorOption.KIWI_GREEN, LocalAccountSessionManager.primaryColorOption.value)
+
+        // Verify Kiwi Green color schemes resolve to KiwiPrimaryLight and KiwiPrimaryDark
+        val lightKiwiScheme = resolveAppColorScheme(
+            context = context,
+            darkTheme = false,
+            primaryColorOption = AppPrimaryColorOption.KIWI_GREEN,
+            customPrimaryColorArgb = 0xFF65A30DL
+        )
+        val darkKiwiScheme = resolveAppColorScheme(
+            context = context,
+            darkTheme = true,
+            primaryColorOption = AppPrimaryColorOption.KIWI_GREEN,
+            customPrimaryColorArgb = 0xFF65A30DL
+        )
+        assertEquals(KiwiPrimaryLight, lightKiwiScheme.primary)
+        assertEquals(KiwiPrimaryDark, darkKiwiScheme.primary)
+
+        // Verify custom primary color ARGB resolves to exact chosen primary color
+        val customPurpleArgb = 0xFF9333EAL
+        LocalAccountSessionManager.setCustomPrimaryColor(context, customPurpleArgb)
+        assertEquals(AppPrimaryColorOption.CUSTOM_COLOR, LocalAccountSessionManager.primaryColorOption.value)
+        assertEquals(customPurpleArgb, LocalAccountSessionManager.customPrimaryColorArgb.value)
+
+        val customLightScheme = resolveAppColorScheme(
+            context = context,
+            darkTheme = false,
+            primaryColorOption = AppPrimaryColorOption.CUSTOM_COLOR,
+            customPrimaryColorArgb = customPurpleArgb
+        )
+        assertEquals(androidx.compose.ui.graphics.Color(customPurpleArgb), customLightScheme.primary)
+
+        // Verify Material 3 System Dynamic Color option can be selected via PrimaryColorSelectorBar
+        val uiState = OneFamilyDashboardUiState(
+            isLoading = false,
+            userProfile = UserProfile(uid = "local_user_test", displayName = "Mock User", currencySymbol = "₹"),
+            household = Household(id = "local_household_test", name = "Family Home", currencySymbol = "₹")
+        )
+        composeTestRule.setContent {
+            OneFamilyTheme {
+                HouseholdTabScreen(
+                    uiState = uiState,
+                    currentUserName = "Mock User",
+                    currentUserEmail = "test@onefamily.local",
+                    onUpdateUserName = {},
+                    onUpdatePreferredCurrency = {},
+                    onAddAccountClick = {},
+                    onScanSmsClick = {},
+                    onSignOutClick = {},
+                    onCreateHousehold = { _, _ -> },
+                    onJoinByCode = {},
+                    onInviteByEmail = {},
+                    onAcceptEmailInvite = {}
+                )
+            }
+        }
+        composeTestRule.waitForIdle()
+
+        composeTestRule.onNodeWithTag("household_tab_list")
+            .performScrollToNode(hasTestTag("primary_color_swatch_bar"))
+        composeTestRule.onNodeWithTag("primary_color_swatch_bar").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("primary_color_kiwi_green").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("primary_color_system_dynamic").assertIsDisplayed()
+
+        // Tap Material 3 System Dynamic swatch
+        composeTestRule.onNodeWithTag("primary_color_system_dynamic").performClick()
+        composeTestRule.waitForIdle()
+        assertEquals(AppPrimaryColorOption.SYSTEM_DYNAMIC, LocalAccountSessionManager.primaryColorOption.value)
+
+        // Tap Kiwi Green swatch to restore default
+        composeTestRule.onNodeWithTag("primary_color_kiwi_green").performClick()
+        composeTestRule.waitForIdle()
+        assertEquals(AppPrimaryColorOption.KIWI_GREEN, LocalAccountSessionManager.primaryColorOption.value)
+    }
+
+    @Test
+    fun `test overall budget trend line shows below budget and above budget status`() {
+        val currentPeriod = YearMonthPeriod(2026, 11)
+        val prevPeriod = currentPeriod.previousMonth()
+        val sampleBars = listOf(
+            MonthlySpendBar(period = prevPeriod, label = "Oct", expenseTotal = 32000.0, incomeTotal = 0.0, isSelected = false),
+            MonthlySpendBar(period = currentPeriod, label = "Nov", expenseTotal = 42000.0, incomeTotal = 0.0, isSelected = true)
+        )
+
+        var activeOverallBudget by mutableStateOf(50000.0)
+
+        composeTestRule.setContent {
+            OneFamilyTheme {
+                MonthlyBarGraph(
+                    bars = sampleBars,
+                    currencySymbol = "₹",
+                    overallBudget = activeOverallBudget,
+                    onSelectMonth = {}
+                )
+            }
+        }
+        composeTestRule.waitForIdle()
+
+        // 1. When overall budget (₹50,000) > actual spend (₹42,000), trend line and "Below Budget" status pill are displayed
+        composeTestRule.onNodeWithTag("overall_budget_trend_header").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("overall_budget_status_pill").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("overall_budget_trend_canvas").assertIsDisplayed()
+        composeTestRule.onNodeWithText("▼ ₹8.0k Below Budget").assertIsDisplayed()
+
+        // 2. When overall budget (₹35,000) < actual spend (₹42,000), status pill updates to "Above Budget"
+        activeOverallBudget = 35000.0
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithText("▲ ₹7.0k Above Budget").assertIsDisplayed()
+
+        // 3. When overall budget is 0.0 (not set), trend header and canvas are hidden
+        activeOverallBudget = 0.0
+        composeTestRule.waitForIdle()
+        assertTrue(composeTestRule.onAllNodesWithTag("overall_budget_trend_header").fetchSemanticsNodes().isEmpty())
+        assertTrue(composeTestRule.onAllNodesWithTag("overall_budget_trend_canvas").fetchSemanticsNodes().isEmpty())
     }
 }
 

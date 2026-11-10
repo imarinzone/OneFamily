@@ -111,6 +111,7 @@ import com.example.ui.components.ExpenseTransactionItemCard
 import com.example.ui.components.FinanceWallpaperPreviewBanner
 import com.example.ui.components.MonthlyBarGraph
 import com.example.ui.components.MonthlyBudgetPulseCard
+import com.example.ui.components.PrimaryColorSelectorBar
 import com.example.ui.components.ReceiptDashedDividerLine
 import com.example.ui.components.ReceiptTicketCard
 import com.example.ui.components.ScopeSwitcherBar
@@ -246,6 +247,7 @@ fun HomeTabScreen(
                 currencySymbol = currency,
                 periodLabel = uiState.periodLabel,
                 household = uiState.household,
+                monthlyTrendBars = uiState.monthlyTrendBars,
                 onEditBudgetClick = onEditMonthlyBudget
             )
         }
@@ -688,6 +690,7 @@ fun AnalyticsTabScreen(
                         MonthlyBarGraph(
                             bars = uiState.monthlyTrendBars,
                             currencySymbol = currency,
+                            overallBudget = uiState.activeMonthlyBudget,
                             onSelectMonth = { onSelectPeriod(it) },
                             onStepMonth = onStepMonth
                         )
@@ -1122,6 +1125,16 @@ fun BudgetsTabScreen(
                                 }
                             }
                         }
+
+                        if (uiState.activeMonthlyBudget > 0.0 && uiState.monthlyTrendBars.isNotEmpty()) {
+                            ReceiptDashedDividerLine()
+                            MonthlyBarGraph(
+                                bars = uiState.monthlyTrendBars,
+                                currencySymbol = currency,
+                                overallBudget = uiState.activeMonthlyBudget,
+                                onSelectMonth = {}
+                            )
+                        }
                     }
                 }
             }
@@ -1324,6 +1337,8 @@ fun HouseholdTabScreen(
     val context = LocalContext.current
     val clipboardManager = LocalClipboardManager.current
     val currentThemeMode by LocalAccountSessionManager.themeMode.collectAsStateWithLifecycle()
+    val currentPrimaryOption by LocalAccountSessionManager.primaryColorOption.collectAsStateWithLifecycle()
+    val customPrimaryColorArgb by LocalAccountSessionManager.customPrimaryColorArgb.collectAsStateWithLifecycle()
     val wallpaperSettings by LocalAccountSessionManager.wallpaperSettings.collectAsStateWithLifecycle()
     val fcmPushSettings by LocalAccountSessionManager.fcmPushSettings.collectAsStateWithLifecycle()
     val crashlyticsSettings by LocalAccountSessionManager.crashlyticsSettings.collectAsStateWithLifecycle()
@@ -1729,6 +1744,14 @@ fun HouseholdTabScreen(
                     ThemeModeSelectorBar(
                         currentMode = currentThemeMode,
                         onSelectMode = { LocalAccountSessionManager.setThemeMode(context, it) }
+                    )
+
+                    // Primary Theme Color Selector (Kiwi Green default, Material 3 Dynamic Color, Presets, or Custom Color)
+                    PrimaryColorSelectorBar(
+                        selectedOption = currentPrimaryOption,
+                        customPrimaryColorArgb = customPrimaryColorArgb,
+                        onSelectOption = { LocalAccountSessionManager.setPrimaryColorOption(context, it) },
+                        onSelectCustomColorArgb = { LocalAccountSessionManager.setCustomPrimaryColor(context, it) }
                     )
 
                     ReceiptDashedDividerLine()

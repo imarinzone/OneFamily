@@ -27,6 +27,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.map
+import com.example.ui.theme.AppPrimaryColorOption
 import com.example.ui.theme.AppThemeMode
 import org.json.JSONArray
 import org.json.JSONObject
@@ -43,6 +44,8 @@ object LocalAccountSessionManager {
     private const val KEY_ACTIVE_USER = "active_local_user_json"
     private const val KEY_CREDENTIALS_MAP = "registered_credentials_json"
     private const val KEY_THEME_MODE = "app_theme_mode"
+    private const val KEY_PRIMARY_COLOR_OPTION = "app_primary_color_option"
+    private const val KEY_CUSTOM_PRIMARY_COLOR_ARGB = "app_custom_primary_color_argb"
     private const val KEY_WALLPAPER_SETTINGS = "wallpaper_settings_json"
     private const val KEY_FCM_SETTINGS = "fcm_push_settings_json"
     private const val KEY_CRASHLYTICS_SETTINGS = "crashlytics_settings_json"
@@ -59,6 +62,12 @@ object LocalAccountSessionManager {
 
     private val _themeMode = MutableStateFlow(AppThemeMode.SYSTEM)
     val themeMode: StateFlow<AppThemeMode> = _themeMode.asStateFlow()
+
+    private val _primaryColorOption = MutableStateFlow(AppPrimaryColorOption.KIWI_GREEN)
+    val primaryColorOption: StateFlow<AppPrimaryColorOption> = _primaryColorOption.asStateFlow()
+
+    private val _customPrimaryColorArgb = MutableStateFlow(0xFF65A30DL)
+    val customPrimaryColorArgb: StateFlow<Long> = _customPrimaryColorArgb.asStateFlow()
 
     private val _wallpaperSettings = MutableStateFlow(WallpaperSettings())
     val wallpaperSettings: StateFlow<WallpaperSettings> = _wallpaperSettings.asStateFlow()
@@ -93,6 +102,11 @@ object LocalAccountSessionManager {
             val savedTheme = prefs.getString(KEY_THEME_MODE, AppThemeMode.SYSTEM.name)
             _themeMode.value = runCatching { AppThemeMode.valueOf(savedTheme ?: "SYSTEM") }
                 .getOrDefault(AppThemeMode.SYSTEM)
+            val savedPrimaryOption = prefs.getString(KEY_PRIMARY_COLOR_OPTION, AppPrimaryColorOption.KIWI_GREEN.name)
+            _primaryColorOption.value = runCatching {
+                AppPrimaryColorOption.valueOf(savedPrimaryOption ?: AppPrimaryColorOption.KIWI_GREEN.name)
+            }.getOrDefault(AppPrimaryColorOption.KIWI_GREEN)
+            _customPrimaryColorArgb.value = prefs.getLong(KEY_CUSTOM_PRIMARY_COLOR_ARGB, 0xFF65A30DL)
             _wallpaperSettings.value = decodeWallpaperSettings(prefs.getString(KEY_WALLPAPER_SETTINGS, null))
             _fcmPushSettings.value = decodeFcmSettings(prefs.getString(KEY_FCM_SETTINGS, null))
             _crashlyticsSettings.value = decodeCrashlyticsSettings(prefs.getString(KEY_CRASHLYTICS_SETTINGS, null))
@@ -349,6 +363,23 @@ object LocalAccountSessionManager {
         ensureInitialized(context)
         _themeMode.value = mode
         prefs(context).edit().putString(KEY_THEME_MODE, mode.name).apply()
+    }
+
+    fun setPrimaryColorOption(context: Context, option: AppPrimaryColorOption) {
+        ensureInitialized(context)
+        _primaryColorOption.value = option
+        prefs(context).edit().putString(KEY_PRIMARY_COLOR_OPTION, option.name).apply()
+    }
+
+    fun setCustomPrimaryColor(context: Context, colorArgb: Long) {
+        ensureInitialized(context)
+        val normalizedArgb = colorArgb or 0xFF000000L
+        _customPrimaryColorArgb.value = normalizedArgb
+        _primaryColorOption.value = AppPrimaryColorOption.CUSTOM_COLOR
+        prefs(context).edit()
+            .putLong(KEY_CUSTOM_PRIMARY_COLOR_ARGB, normalizedArgb)
+            .putString(KEY_PRIMARY_COLOR_OPTION, AppPrimaryColorOption.CUSTOM_COLOR.name)
+            .apply()
     }
 
     fun cycleThemeMode(context: Context): AppThemeMode {

@@ -12,6 +12,7 @@ import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -41,7 +42,10 @@ import androidx.compose.material.icons.automirrored.filled.ReceiptLong
 import androidx.compose.material.icons.automirrored.filled.TrendingUp
 import androidx.compose.material.icons.filled.AccountBalance
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.CalendarMonth
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Colorize
 import androidx.compose.material.icons.filled.CreditCard
 import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.Delete
@@ -58,6 +62,7 @@ import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material.icons.filled.Payments
 import androidx.compose.material.icons.filled.QrCode2
 import androidx.compose.material.icons.filled.ShoppingBag
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -69,6 +74,8 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -91,7 +98,9 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.rotate
@@ -116,6 +125,7 @@ import com.example.data.model.WallpaperColorAccent
 import com.example.data.model.WallpaperDensity
 import com.example.data.model.WallpaperPatternStyle
 import com.example.data.model.WallpaperSettings
+import com.example.ui.theme.AppPrimaryColorOption
 import com.example.ui.theme.BudgetDangerCoral
 import com.example.ui.theme.BudgetSafeGreen
 import com.example.ui.theme.BudgetWarnAmber
@@ -631,6 +641,7 @@ fun MonthlyBudgetPulseCard(
     currencySymbol: String,
     periodLabel: String,
     household: Household?,
+    monthlyTrendBars: List<MonthlySpendBar> = emptyList(),
     onEditBudgetClick: () -> Unit
 ) {
     val dimens = LocalAppDimens.current
@@ -754,20 +765,159 @@ fun MonthlyBudgetPulseCard(
             if (hasAssignedBudget) {
                 Spacer(modifier = Modifier.height(dimens.itemSpacing))
 
+                val isAboveBudget = totalSpent > monthlyBudget
+                val diffAmount = kotlin.math.abs(monthlyBudget - totalSpent)
+                val statusPillLabel = if (isAboveBudget) {
+                    "▲ ${formatCurrency(diffAmount, currencySymbol)} above"
+                } else {
+                    "▼ ${formatCurrency(diffAmount, currencySymbol)} below"
+                }
+
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(dimens.horizontalPadding * 0.6f)
                 ) {
-                    val leftAmount = (monthlyBudget - totalSpent).coerceAtLeast(0.0)
                     MetricMiniPill(
-                        modifier = Modifier.weight(1f),
-                        text = "${formatCurrency(leftAmount, currencySymbol)} left",
-                        accentColor = statusColor
+                        modifier = Modifier
+                            .weight(1f)
+                            .testTag("home_budget_status_pill"),
+                        text = statusPillLabel,
+                        accentColor = if (isAboveBudget) BudgetDangerCoral else BudgetSafeGreen
                     )
                     MetricMiniPill(
                         modifier = Modifier.weight(1f),
                         text = "${formatCurrency(dailySafeSpend, currencySymbol)}/d",
                         accentColor = MaterialTheme.colorScheme.primary
+                    )
+                }
+
+                if (monthlyTrendBars.isNotEmpty()) {
+                    Spacer(modifier = Modifier.height(dimens.itemSpacing * 0.85f))
+                    HomeBudgetTrendMiniStrip(
+                        bars = monthlyTrendBars,
+                        overallBudget = monthlyBudget,
+                        currencySymbol = currencySymbol
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun HomeBudgetTrendMiniStrip(
+    bars: List<MonthlySpendBar>,
+    overallBudget: Double,
+    currencySymbol: String
+) {
+    val dimens = LocalAppDimens.current
+    val maxRef = maxOf(
+        bars.maxOfOrNull { it.expenseTotal } ?: 1.0,
+        overallBudget * 1.15,
+        1.0
+    )
+    val selectedBar = bars.firstOrNull { it.isSelected } ?: bars.lastOrNull()
+    val selectedActual = selectedBar?.expenseTotal ?: 0.0
+    val isSelectedAbove = selectedActual > overallBudget
+    val primaryColor = MaterialTheme.colorScheme.primary
+    val surfaceColor = MaterialTheme.colorScheme.surface
+    val outlineColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("home_budget_trend_line_section"),
+        shape = RoundedCornerShape(dimens.smallCornerRadius),
+        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.78f)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(
+                    horizontal = dimens.horizontalPadding * 0.75f,
+                    vertical = dimens.itemSpacing * 0.6f
+                )
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "Budget ${formatCompactCurrency(overallBudget, currencySymbol)}",
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Text(
+                    text = if (isSelectedAbove) "▲ Above Budget" else "▼ Below Budget",
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.ExtraBold,
+                    color = if (isSelectedAbove) BudgetDangerCoral else BudgetSafeGreen
+                )
+            }
+            Spacer(modifier = Modifier.height(dimens.itemSpacing * 0.35f))
+            Canvas(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(34.dp)
+                    .testTag("home_budget_trend_canvas")
+            ) {
+                val topPad = 5.dp.toPx()
+                val bottomPad = 5.dp.toPx()
+                val usableH = (size.height - topPad - bottomPad).coerceAtLeast(8f)
+                val budgetFraction = (overallBudget / maxRef).toFloat().coerceIn(0.06f, 0.96f)
+                val budgetY = size.height - bottomPad - usableH * budgetFraction
+
+                // Dashed horizontal overall budget threshold line
+                drawLine(
+                    color = outlineColor,
+                    start = Offset(0f, budgetY),
+                    end = Offset(size.width, budgetY),
+                    strokeWidth = 1.8.dp.toPx(),
+                    pathEffect = PathEffect.dashPathEffect(floatArrayOf(10f, 7f), 0f)
+                )
+
+                val count = bars.size.coerceAtLeast(1)
+                val slotW = size.width / count
+                val points = bars.mapIndexed { idx, bar ->
+                    val frac = (bar.expenseTotal / maxRef).toFloat().coerceIn(0.04f, 1f)
+                    val x = slotW * (idx + 0.5f)
+                    val y = size.height - bottomPad - usableH * frac
+                    Offset(x, y)
+                }
+
+                if (points.size >= 2) {
+                    val path = Path().apply {
+                        moveTo(points.first().x, points.first().y)
+                        for (i in 1 until points.size) {
+                            lineTo(points[i].x, points[i].y)
+                        }
+                    }
+                    drawPath(
+                        path = path,
+                        color = primaryColor,
+                        style = Stroke(
+                            width = 2.2.dp.toPx(),
+                            cap = StrokeCap.Round,
+                            join = StrokeJoin.Round
+                        )
+                    )
+                }
+
+                points.forEachIndexed { idx, pt ->
+                    val bar = bars[idx]
+                    val nodeColor = if (bar.expenseTotal > overallBudget) BudgetDangerCoral else BudgetSafeGreen
+                    val radius = if (bar.isSelected) 4.8.dp.toPx() else 3.4.dp.toPx()
+                    drawCircle(
+                        color = surfaceColor,
+                        radius = radius + 1.5.dp.toPx(),
+                        center = pt
+                    )
+                    drawCircle(
+                        color = nodeColor,
+                        radius = radius,
+                        center = pt
                     )
                 }
             }
@@ -810,98 +960,262 @@ private fun MetricMiniPill(
 fun MonthlyBarGraph(
     bars: List<MonthlySpendBar>,
     currencySymbol: String,
+    overallBudget: Double = 0.0,
     onSelectMonth: (YearMonthPeriod) -> Unit,
     onStepMonth: ((Int) -> Unit)? = null
 ) {
     val dimens = LocalAppDimens.current
+    val hasOverallBudget = overallBudget > 0.0
     val maxExpense = bars.maxOfOrNull { it.expenseTotal }?.coerceAtLeast(1.0) ?: 1.0
+    val maxReference = if (hasOverallBudget) {
+        maxOf(maxExpense, overallBudget * 1.15, 1.0)
+    } else {
+        maxExpense
+    }
     var dragAccum by remember { mutableFloatStateOf(0f) }
 
-    BoxWithConstraints(
-        modifier = Modifier
-            .fillMaxWidth()
-            .pointerInput(bars) {
-                detectHorizontalDragGestures(
-                    onDragStart = { dragAccum = 0f },
-                    onHorizontalDrag = { change, dragAmount ->
-                        change.consume()
-                        dragAccum += dragAmount
-                    },
-                    onDragEnd = {
-                        val selectedBar = bars.firstOrNull { it.isSelected } ?: bars.lastOrNull()
-                        val threshold = size.width * 0.14f
-                        if (dragAccum > threshold) {
-                            if (onStepMonth != null) {
-                                onStepMonth(-1)
-                            } else if (selectedBar != null) {
-                                onSelectMonth(selectedBar.period.previousMonth())
-                            }
-                        } else if (dragAccum < -threshold) {
-                            if (onStepMonth != null) {
-                                onStepMonth(1)
-                            } else if (selectedBar != null) {
-                                onSelectMonth(selectedBar.period.nextMonth())
-                            }
-                        }
-                        dragAccum = 0f
-                    }
-                )
-            }
+    val selectedBar = bars.firstOrNull { it.isSelected } ?: bars.lastOrNull()
+    val selectedSpend = selectedBar?.expenseTotal ?: 0.0
+    val isSelectedAboveBudget = hasOverallBudget && selectedSpend > overallBudget
+    val budgetDiff = kotlin.math.abs(overallBudget - selectedSpend)
+    val primaryColor = MaterialTheme.colorScheme.primary
+    val surfaceColor = MaterialTheme.colorScheme.surface
+    val budgetLineColor = MaterialTheme.colorScheme.onSurfaceVariant
+
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(dimens.itemSpacing * 0.45f)
     ) {
-        val barWidth = (maxWidth / (bars.size.coerceAtLeast(1) * 2.2f)).coerceIn(18.dp, 36.dp)
-        val maxBarHeight = dimens.barChartHeight * 0.58f
-
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(dimens.barChartHeight)
-                .padding(top = dimens.itemSpacing * 0.5f),
-            horizontalArrangement = Arrangement.SpaceEvenly,
-            verticalAlignment = Alignment.Bottom
-        ) {
-            bars.forEach { bar ->
-                val heightFraction = (bar.expenseTotal / maxExpense).toFloat().coerceIn(0.08f, 1f)
-                val barColor = if (bar.isSelected) {
-                    MaterialTheme.colorScheme.primary
-                } else {
-                    MaterialTheme.colorScheme.secondary.copy(alpha = 0.55f)
-                }
-
-                Column(
-                    modifier = Modifier
-                        .weight(1f)
-                        .clip(RoundedCornerShape(dimens.smallCornerRadius * 0.8f))
-                        .clickable { onSelectMonth(bar.period) }
-                        .padding(
-                            horizontal = dimens.horizontalPadding * 0.2f,
-                            vertical = dimens.itemSpacing * 0.3f
-                        ),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.Bottom
+        if (hasOverallBudget) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("overall_budget_trend_header"),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Surface(
+                    shape = RoundedCornerShape(50),
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.72f)
                 ) {
                     Text(
-                        text = if (bar.expenseTotal > 0) formatCompactCurrency(bar.expenseTotal, currencySymbol) else "-",
+                        text = "- - Budget ${formatCompactCurrency(overallBudget, currencySymbol)}",
                         style = MaterialTheme.typography.labelSmall,
-                        color = if (bar.isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                        fontWeight = if (bar.isSelected) FontWeight.Bold else FontWeight.Normal,
-                        maxLines = 1
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(
+                            horizontal = dimens.horizontalPadding * 0.65f,
+                            vertical = dimens.itemSpacing * 0.3f
+                        )
                     )
-                    Spacer(modifier = Modifier.height(dimens.itemSpacing * 0.45f))
-                    Box(
-                        modifier = Modifier
-                            .width(barWidth)
-                            .height((maxBarHeight * heightFraction).coerceAtLeast(8.dp))
-                            .clip(RoundedCornerShape(50))
-                            .background(barColor)
-                    )
-                    Spacer(modifier = Modifier.height(dimens.itemSpacing * 0.45f))
+                }
+
+                val badgeColor = if (isSelectedAboveBudget) BudgetDangerCoral else BudgetSafeGreen
+                val statusLabel = if (isSelectedAboveBudget) {
+                    "▲ ${formatCompactCurrency(budgetDiff, currencySymbol)} Above Budget"
+                } else {
+                    "▼ ${formatCompactCurrency(budgetDiff, currencySymbol)} Below Budget"
+                }
+                Surface(
+                    shape = RoundedCornerShape(50),
+                    color = badgeColor.copy(alpha = 0.15f),
+                    modifier = Modifier.testTag("overall_budget_status_pill")
+                ) {
                     Text(
-                        text = bar.label,
-                        style = MaterialTheme.typography.labelMedium,
-                        fontWeight = if (bar.isSelected) FontWeight.Bold else FontWeight.Normal,
-                        color = if (bar.isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                        textAlign = TextAlign.Center
+                        text = statusLabel,
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.ExtraBold,
+                        color = badgeColor,
+                        modifier = Modifier.padding(
+                            horizontal = dimens.horizontalPadding * 0.7f,
+                            vertical = dimens.itemSpacing * 0.3f
+                        )
                     )
+                }
+            }
+        }
+
+        BoxWithConstraints(
+            modifier = Modifier
+                .fillMaxWidth()
+                .pointerInput(bars) {
+                    detectHorizontalDragGestures(
+                        onDragStart = { dragAccum = 0f },
+                        onHorizontalDrag = { change, dragAmount ->
+                            change.consume()
+                            dragAccum += dragAmount
+                        },
+                        onDragEnd = {
+                            val currentSelected = bars.firstOrNull { it.isSelected } ?: bars.lastOrNull()
+                            val threshold = size.width * 0.14f
+                            if (dragAccum > threshold) {
+                                if (onStepMonth != null) {
+                                    onStepMonth(-1)
+                                } else if (currentSelected != null) {
+                                    onSelectMonth(currentSelected.period.previousMonth())
+                                }
+                            } else if (dragAccum < -threshold) {
+                                if (onStepMonth != null) {
+                                    onStepMonth(1)
+                                } else if (currentSelected != null) {
+                                    onSelectMonth(currentSelected.period.nextMonth())
+                                }
+                            }
+                            dragAccum = 0f
+                        }
+                    )
+                }
+        ) {
+            val barWidth = (maxWidth / (bars.size.coerceAtLeast(1) * 2.2f)).coerceIn(18.dp, 36.dp)
+            val maxBarHeight = dimens.barChartHeight * 0.58f
+
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(dimens.barChartHeight)
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(top = dimens.itemSpacing * 0.5f),
+                    horizontalArrangement = Arrangement.SpaceEvenly,
+                    verticalAlignment = Alignment.Bottom
+                ) {
+                    bars.forEach { bar ->
+                        val heightFraction = (bar.expenseTotal / maxReference).toFloat().coerceIn(0.08f, 1f)
+                        val isBarAboveBudget = hasOverallBudget && bar.expenseTotal > overallBudget
+                        val barColor = when {
+                            hasOverallBudget && bar.isSelected -> if (isBarAboveBudget) BudgetDangerCoral else BudgetSafeGreen
+                            hasOverallBudget -> if (isBarAboveBudget) {
+                                BudgetDangerCoral.copy(alpha = 0.62f)
+                            } else {
+                                BudgetSafeGreen.copy(alpha = 0.58f)
+                            }
+                            bar.isSelected -> MaterialTheme.colorScheme.primary
+                            else -> MaterialTheme.colorScheme.secondary.copy(alpha = 0.55f)
+                        }
+                        val amountText = if (bar.expenseTotal > 0) {
+                            val arrow = if (hasOverallBudget) {
+                                if (isBarAboveBudget) "▲" else "▼"
+                            } else {
+                                ""
+                            }
+                            "$arrow${formatCompactCurrency(bar.expenseTotal, currencySymbol)}"
+                        } else {
+                            "-"
+                        }
+
+                        Column(
+                            modifier = Modifier
+                                .weight(1f)
+                                .clip(RoundedCornerShape(dimens.smallCornerRadius * 0.8f))
+                                .clickable { onSelectMonth(bar.period) }
+                                .padding(
+                                    horizontal = dimens.horizontalPadding * 0.15f,
+                                    vertical = dimens.itemSpacing * 0.3f
+                                ),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.Bottom
+                        ) {
+                            Text(
+                                text = amountText,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = when {
+                                    hasOverallBudget && bar.expenseTotal > 0 -> if (isBarAboveBudget) BudgetDangerCoral else BudgetSafeGreen
+                                    bar.isSelected -> MaterialTheme.colorScheme.primary
+                                    else -> MaterialTheme.colorScheme.onSurfaceVariant
+                                },
+                                fontWeight = if (bar.isSelected || hasOverallBudget) FontWeight.Bold else FontWeight.Normal,
+                                maxLines = 1
+                            )
+                            Spacer(modifier = Modifier.height(dimens.itemSpacing * 0.45f))
+                            Box(
+                                modifier = Modifier
+                                    .width(barWidth)
+                                    .height((maxBarHeight * heightFraction).coerceAtLeast(8.dp))
+                                    .clip(RoundedCornerShape(50))
+                                    .background(barColor)
+                            )
+                            Spacer(modifier = Modifier.height(dimens.itemSpacing * 0.45f))
+                            Text(
+                                text = bar.label,
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = if (bar.isSelected) FontWeight.Bold else FontWeight.Normal,
+                                color = if (bar.isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                textAlign = TextAlign.Center
+                            )
+                        }
+                    }
+                }
+
+                // Overlay Canvas for Overall Budget Reference Line & Actual Spend Trend Line
+                if (hasOverallBudget && bars.isNotEmpty()) {
+                    Canvas(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .testTag("overall_budget_trend_canvas")
+                    ) {
+                        val bottomLabelReservePx = (dimens.itemSpacing * 1.1f + 18.dp).toPx()
+                        val maxBarAreaPx = maxBarHeight.toPx()
+                        val barBottomY = (size.height - bottomLabelReservePx).coerceAtLeast(maxBarAreaPx)
+
+                        val budgetFraction = (overallBudget / maxReference).toFloat().coerceIn(0.08f, 1f)
+                        val budgetY = (barBottomY - maxBarAreaPx * budgetFraction).coerceIn(8.dp.toPx(), barBottomY - 4.dp.toPx())
+
+                        // 1. Horizontal Dashed Overall Budget Threshold Line
+                        drawLine(
+                            color = budgetLineColor.copy(alpha = 0.78f),
+                            start = Offset(4.dp.toPx(), budgetY),
+                            end = Offset(size.width - 4.dp.toPx(), budgetY),
+                            strokeWidth = 2.dp.toPx(),
+                            pathEffect = PathEffect.dashPathEffect(floatArrayOf(12f, 8f), 0f)
+                        )
+
+                        // 2. Actual Spend Trend Line connecting each month's spend
+                        val slotWidth = size.width / bars.size.coerceAtLeast(1)
+                        val trendPoints = bars.mapIndexed { index, bar ->
+                            val frac = (bar.expenseTotal / maxReference).toFloat().coerceIn(0.08f, 1f)
+                            val cx = slotWidth * (index + 0.5f)
+                            val cy = (barBottomY - maxBarAreaPx * frac).coerceIn(6.dp.toPx(), barBottomY - 4.dp.toPx())
+                            Offset(cx, cy)
+                        }
+
+                        if (trendPoints.size >= 2) {
+                            val trendPath = Path().apply {
+                                moveTo(trendPoints.first().x, trendPoints.first().y)
+                                for (i in 1 until trendPoints.size) {
+                                    lineTo(trendPoints[i].x, trendPoints[i].y)
+                                }
+                            }
+                            drawPath(
+                                path = trendPath,
+                                color = primaryColor,
+                                style = Stroke(
+                                    width = 2.5.dp.toPx(),
+                                    cap = StrokeCap.Round,
+                                    join = StrokeJoin.Round
+                                )
+                            )
+                        }
+
+                        // 3. Trend Nodes colored by whether actual spend was Below or Above overall budget
+                        trendPoints.forEachIndexed { index, point ->
+                            val bar = bars[index]
+                            val isAbove = bar.expenseTotal > overallBudget
+                            val nodeColor = if (isAbove) BudgetDangerCoral else BudgetSafeGreen
+                            val nodeRadius = if (bar.isSelected) 5.5.dp.toPx() else 4.dp.toPx()
+                            drawCircle(
+                                color = surfaceColor,
+                                radius = nodeRadius + 1.8.dp.toPx(),
+                                center = point
+                            )
+                            drawCircle(
+                                color = nodeColor,
+                                radius = nodeRadius,
+                                center = point
+                            )
+                        }
+                    }
                 }
             }
         }
@@ -1491,6 +1805,7 @@ fun ThemeModeSelectorBar(
     modifier: Modifier = Modifier
 ) {
     val dimens = LocalAppDimens.current
+    val activePrimary = MaterialTheme.colorScheme.primary
     Surface(
         modifier = modifier
             .fillMaxWidth()
@@ -1545,7 +1860,7 @@ fun ThemeModeSelectorBar(
 
                         when (mode) {
                             com.example.ui.theme.AppThemeMode.SYSTEM -> {
-                                // Dual-tone split swatch: Warm Cream (Light) + AMOLED Black (Dark)
+                                // Dual-tone split swatch: Warm Cream (Light) + AMOLED Black (Dark) + Active Primary Dot
                                 drawArc(
                                     color = Color(0xFFFAF6F0),
                                     startAngle = 90f,
@@ -1563,31 +1878,31 @@ fun ThemeModeSelectorBar(
                                     size = Size(radius * 2f, radius * 2f)
                                 )
                                 drawCircle(
-                                    color = Color(0xFFFF5A5F),
+                                    color = activePrimary,
                                     radius = radius * 0.42f,
                                     center = centerOffset
                                 )
                             }
                             com.example.ui.theme.AppThemeMode.LIGHT -> {
-                                // Warm Cream & Coral Light Swatch
+                                // Warm Cream & Active Primary Light Swatch
                                 drawCircle(
                                     color = Color(0xFFFAF6F0),
                                     radius = radius,
                                     center = centerOffset
                                 )
                                 drawCircle(
-                                    color = Color(0xFFFFB703),
+                                    color = activePrimary.copy(alpha = 0.35f),
                                     radius = radius * 0.62f,
                                     center = centerOffset
                                 )
                                 drawCircle(
-                                    color = Color(0xFFFF5A5F),
+                                    color = activePrimary,
                                     radius = radius * 0.36f,
                                     center = centerOffset
                                 )
                             }
                             com.example.ui.theme.AppThemeMode.DARK -> {
-                                // Pure AMOLED Black & Neon Accent Dark Swatch
+                                // Pure AMOLED Black & Active Primary Dark Swatch
                                 drawCircle(
                                     color = Color(0xFF000000),
                                     radius = radius,
@@ -1599,7 +1914,7 @@ fun ThemeModeSelectorBar(
                                     center = centerOffset
                                 )
                                 drawCircle(
-                                    color = Color(0xFF06D6A0),
+                                    color = activePrimary,
                                     radius = radius * 0.36f,
                                     center = centerOffset
                                 )
@@ -1618,6 +1933,347 @@ fun ThemeModeSelectorBar(
             }
         }
     }
+}
+
+/**
+ * Color-only Primary Theme Color Selector (`PrimaryColorSelectorBar`):
+ * - Lets the user choose:
+ *   1. Material 3 System Dynamic Color (`SYSTEM_DYNAMIC`)
+ *   2. Kiwi Green (`KIWI_GREEN`, the app's default theme color)
+ *   3. Curated preset primary colors (`CORAL_POP`, `OCEAN_BLUE`, `ROYAL_BERRY`, `EMERALD_TEAL`, `SUNNY_AMBER`, `ROSE_PINK`)
+ *   4. Any custom primary color (`CUSTOM_COLOR`) via an interactive color picker modal (`CustomPrimaryColorPickerDialog`).
+ * - Uses pure color swatches and icons without text labels on the selector bar.
+ */
+@Composable
+fun PrimaryColorSelectorBar(
+    selectedOption: AppPrimaryColorOption,
+    customPrimaryColorArgb: Long,
+    onSelectOption: (AppPrimaryColorOption) -> Unit,
+    onSelectCustomColorArgb: (Long) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val dimens = LocalAppDimens.current
+    var showCustomColorDialog by rememberSaveable { mutableStateOf(false) }
+
+    val orderedOptions = remember {
+        listOf(
+            AppPrimaryColorOption.KIWI_GREEN,
+            AppPrimaryColorOption.SYSTEM_DYNAMIC,
+            AppPrimaryColorOption.CORAL_POP,
+            AppPrimaryColorOption.OCEAN_BLUE,
+            AppPrimaryColorOption.ROYAL_BERRY,
+            AppPrimaryColorOption.EMERALD_TEAL,
+            AppPrimaryColorOption.SUNNY_AMBER,
+            AppPrimaryColorOption.ROSE_PINK,
+            AppPrimaryColorOption.CUSTOM_COLOR
+        )
+    }
+
+    Surface(
+        modifier = modifier
+            .fillMaxWidth()
+            .testTag("primary_color_swatch_bar"),
+        shape = RoundedCornerShape(50),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.65f)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState())
+                .padding(
+                    horizontal = dimens.horizontalPadding * 0.55f,
+                    vertical = dimens.itemSpacing * 0.55f
+                ),
+            horizontalArrangement = Arrangement.spacedBy(dimens.horizontalPadding * 0.45f),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            orderedOptions.forEach { option ->
+                val isSelected = selectedOption == option
+                val swatchTag = when (option) {
+                    AppPrimaryColorOption.CUSTOM_COLOR -> "primary_color_custom_picker"
+                    else -> "primary_color_${option.name.lowercase()}"
+                }
+                val swatchColor = when (option) {
+                    AppPrimaryColorOption.CUSTOM_COLOR -> Color(customPrimaryColorArgb or 0xFF000000L)
+                    else -> option.lightPrimary
+                }
+
+                Box(
+                    modifier = Modifier
+                        .size(44.dp)
+                        .clip(CircleShape)
+                        .clickable {
+                            if (option == AppPrimaryColorOption.CUSTOM_COLOR) {
+                                showCustomColorDialog = true
+                            } else {
+                                onSelectOption(option)
+                            }
+                        }
+                        .testTag(swatchTag),
+                    contentAlignment = Alignment.Center
+                ) {
+                    if (option == AppPrimaryColorOption.SYSTEM_DYNAMIC) {
+                        // Material 3 Dynamic Color 4-quadrant adaptive palette wheel
+                        Canvas(modifier = Modifier.fillMaxSize()) {
+                            val r = size.minDimension / 2f
+                            val c = Offset(size.width / 2f, size.height / 2f)
+                            val arcSize = Size(r * 2f, r * 2f)
+                            val topLeft = Offset(c.x - r, c.y - r)
+                            drawArc(color = Color(0xFF65A30D), startAngle = 180f, sweepAngle = 90f, useCenter = true, topLeft = topLeft, size = arcSize)
+                            drawArc(color = Color(0xFF0284C7), startAngle = 270f, sweepAngle = 90f, useCenter = true, topLeft = topLeft, size = arcSize)
+                            drawArc(color = Color(0xFF7C3AED), startAngle = 0f, sweepAngle = 90f, useCenter = true, topLeft = topLeft, size = arcSize)
+                            drawArc(color = Color(0xFFD97706), startAngle = 90f, sweepAngle = 90f, useCenter = true, topLeft = topLeft, size = arcSize)
+                        }
+                    } else if (option == AppPrimaryColorOption.CUSTOM_COLOR) {
+                        // Rainbow ring + custom selected center
+                        Canvas(modifier = Modifier.fillMaxSize()) {
+                            val r = size.minDimension / 2f
+                            val c = Offset(size.width / 2f, size.height / 2f)
+                            drawCircle(
+                                brush = Brush.sweepGradient(
+                                    listOf(
+                                        Color(0xFF65A30D),
+                                        Color(0xFF0284C7),
+                                        Color(0xFF7C3AED),
+                                        Color(0xFFDB2777),
+                                        Color(0xFFFF5A5F),
+                                        Color(0xFFF59E0B),
+                                        Color(0xFF65A30D)
+                                    )
+                                ),
+                                radius = r,
+                                center = c
+                            )
+                            drawCircle(
+                                color = swatchColor,
+                                radius = r * 0.68f,
+                                center = c
+                            )
+                        }
+                    } else {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .background(swatchColor, CircleShape)
+                        )
+                    }
+
+                    // Selection & Icon Overlay
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .border(
+                                width = if (isSelected) 3.dp else 1.dp,
+                                color = if (isSelected) {
+                                    MaterialTheme.colorScheme.onSurface
+                                } else {
+                                    MaterialTheme.colorScheme.outline.copy(alpha = 0.35f)
+                                },
+                                shape = CircleShape
+                            ),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        when {
+                            isSelected -> {
+                                Icon(
+                                    imageVector = Icons.Default.Check,
+                                    contentDescription = option.name,
+                                    tint = Color.White,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
+                            option == AppPrimaryColorOption.SYSTEM_DYNAMIC -> {
+                                Icon(
+                                    imageVector = Icons.Default.AutoAwesome,
+                                    contentDescription = option.name,
+                                    tint = Color.White,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+                            option == AppPrimaryColorOption.CUSTOM_COLOR -> {
+                                Icon(
+                                    imageVector = Icons.Default.Colorize,
+                                    contentDescription = option.name,
+                                    tint = Color.White,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if (showCustomColorDialog) {
+        CustomPrimaryColorPickerDialog(
+            initialColorArgb = customPrimaryColorArgb,
+            onDismiss = { showCustomColorDialog = false },
+            onConfirmColor = { chosenArgb ->
+                onSelectCustomColorArgb(chosenArgb)
+                showCustomColorDialog = false
+            }
+        )
+    }
+}
+
+private val CUSTOM_COLOR_SPECTRUM_SWATCHES = listOf(
+    0xFF65A30DL, // Kiwi Green
+    0xFF84CC16L, // Fresh Lime
+    0xFF16A34AL, // Forest Green
+    0xFF0D9488L, // Emerald Teal
+    0xFF0284C7L, // Ocean Blue
+    0xFF2563EBL, // Cobalt Blue
+    0xFF4F46E5L, // Royal Indigo
+    0xFF7C3AEDL, // Violet Berry
+    0xFF9333EAL, // Electric Purple
+    0xFFDB2777L, // Rose Pink
+    0xFFE11D48L, // Crimson Ruby
+    0xFFFF5A5FL, // Coral Pop
+    0xFFEA580CL, // Tangerine Orange
+    0xFFD97706L, // Sunny Amber
+    0xFFCA8A04L, // Golden Olive
+    0xFF475569L  // Slate Charcoal
+)
+
+@Composable
+fun CustomPrimaryColorPickerDialog(
+    initialColorArgb: Long,
+    onDismiss: () -> Unit,
+    onConfirmColor: (Long) -> Unit
+) {
+    val cleanInitial = initialColorArgb or 0xFF000000L
+    var red by remember { mutableFloatStateOf(((cleanInitial shr 16) and 0xFF).toFloat()) }
+    var green by remember { mutableFloatStateOf(((cleanInitial shr 8) and 0xFF).toFloat()) }
+    var blue by remember { mutableFloatStateOf((cleanInitial and 0xFF).toFloat()) }
+
+    val currentArgb = (0xFFL shl 24) or
+        ((red.roundToInt().coerceIn(0, 255).toLong()) shl 16) or
+        ((green.roundToInt().coerceIn(0, 255).toLong()) shl 8) or
+        (blue.roundToInt().coerceIn(0, 255).toLong())
+
+    var hexInput by remember(currentArgb) {
+        mutableStateOf(String.format(Locale.US, "#%06X", currentArgb and 0xFFFFFFL))
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        modifier = Modifier.testTag("custom_primary_color_dialog"),
+        title = {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(28.dp)
+                        .clip(CircleShape)
+                        .background(Color(currentArgb))
+                        .border(1.5.dp, MaterialTheme.colorScheme.outline, CircleShape)
+                )
+                Text(
+                    text = hexInput,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+        },
+        text = {
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                // Curated 16-swatch spectrum grid (2 rows of 8)
+                CUSTOM_COLOR_SPECTRUM_SWATCHES.chunked(8).forEach { rowSwatches ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        rowSwatches.forEach { swatchArgb ->
+                            val isMatch = (currentArgb and 0xFFFFFFL) == (swatchArgb and 0xFFFFFFL)
+                            Box(
+                                modifier = Modifier
+                                    .size(32.dp)
+                                    .clip(CircleShape)
+                                    .background(Color(swatchArgb))
+                                    .border(
+                                        width = if (isMatch) 2.5.dp else 1.dp,
+                                        color = if (isMatch) MaterialTheme.colorScheme.onSurface else Color.Transparent,
+                                        shape = CircleShape
+                                    )
+                                    .clickable {
+                                        red = ((swatchArgb shr 16) and 0xFF).toFloat()
+                                        green = ((swatchArgb shr 8) and 0xFF).toFloat()
+                                        blue = (swatchArgb and 0xFF).toFloat()
+                                    }
+                                    .testTag("custom_swatch_${String.format(Locale.US, "%06x", swatchArgb and 0xFFFFFFL)}")
+                            )
+                        }
+                    }
+                }
+
+                // RGB Sliders for any custom primary color
+                Slider(
+                    value = red,
+                    onValueChange = { red = it },
+                    valueRange = 0f..255f,
+                    modifier = Modifier.testTag("custom_color_red_slider")
+                )
+                Slider(
+                    value = green,
+                    onValueChange = { green = it },
+                    valueRange = 0f..255f,
+                    modifier = Modifier.testTag("custom_color_green_slider")
+                )
+                Slider(
+                    value = blue,
+                    onValueChange = { blue = it },
+                    valueRange = 0f..255f,
+                    modifier = Modifier.testTag("custom_color_blue_slider")
+                )
+
+                OutlinedTextField(
+                    value = hexInput,
+                    onValueChange = { raw ->
+                        val cleaned = raw.trim().uppercase(Locale.US)
+                        hexInput = cleaned.take(7)
+                        val hexDigits = cleaned.removePrefix("#")
+                        if (hexDigits.length == 6) {
+                            runCatching {
+                                val parsed = hexDigits.toLong(16)
+                                red = ((parsed shr 16) and 0xFF).toFloat()
+                                green = ((parsed shr 8) and 0xFF).toFloat()
+                                blue = (parsed and 0xFF).toFloat()
+                            }
+                        }
+                    },
+                    singleLine = true,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("custom_color_hex_input")
+                )
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = { onConfirmColor(currentArgb) },
+                modifier = Modifier.testTag("apply_custom_primary_color_button")
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Check,
+                    contentDescription = "Apply Color"
+                )
+            }
+        },
+        dismissButton = {
+            IconButton(onClick = onDismiss) {
+                Icon(
+                    imageVector = Icons.Default.Delete,
+                    contentDescription = "Cancel"
+                )
+            }
+        }
+    )
 }
 
 private val FINANCE_WALLPAPER_EMOJIS = listOf(
