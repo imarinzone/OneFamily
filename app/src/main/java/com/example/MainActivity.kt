@@ -96,6 +96,7 @@ import com.example.ui.screens.AnalyticsTabScreen
 import com.example.ui.screens.BudgetsTabScreen
 import com.example.ui.screens.EditOverallBudgetDialog
 import com.example.ui.screens.EditTransactionDialog
+import com.example.ui.screens.ExportTransactionsCsvDialog
 import com.example.ui.screens.FirstTimeSmsSyncScreen
 import com.example.ui.screens.HomeTabScreen
 import com.example.ui.screens.HouseholdTabScreen
@@ -269,10 +270,35 @@ fun OneFamilyMainShell(
     var showAddTransactionDialog by rememberSaveable { mutableStateOf(false) }
     var showAddAccountDialog by rememberSaveable { mutableStateOf(false) }
     var showEditOverallBudgetDialog by rememberSaveable { mutableStateOf(false) }
+    var showExportCsvDialog by rememberSaveable { mutableStateOf(false) }
+    var pendingCsvExport by remember { mutableStateOf<Triple<String, Int, String>?>(null) }
     var editingCategoryBudget by remember { mutableStateOf<Pair<Boolean, CategorySpendProgress?>>(false to null) }
     var editingTransaction by remember { mutableStateOf<ExpenseTransaction?>(null) }
     var quickCategoryTransaction by remember { mutableStateOf<ExpenseTransaction?>(null) }
     var linkingDuplicateTransaction by remember { mutableStateOf<ExpenseTransaction?>(null) }
+
+    // Zero-permission Storage Access Framework launcher for saving CSV exports
+    val createCsvDocumentLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("text/csv")
+    ) { uri ->
+        val payload = pendingCsvExport
+        pendingCsvExport = null
+        if (uri != null && payload != null) {
+            runCatching {
+                context.contentResolver.openOutputStream(uri)?.use { stream ->
+                    stream.write(payload.first.toByteArray(Charsets.UTF_8))
+                    stream.flush()
+                } ?: error("Unable to open destination file stream.")
+            }.onSuccess {
+                viewModel.notifyCsvExportResult(
+                    exportedCount = payload.second,
+                    periodLabel = payload.third
+                )
+            }.onFailure { err ->
+                viewModel.notifyCsvExportError(err.localizedMessage ?: "Failed to save CSV file.")
+            }
+        }
+    }
 
     // Open EditTransactionDialog automatically when user taps a real-time SMS notification
     LaunchedEffect(deepLinkExpenseId, uiState.personalExpenses, uiState.sharedExpenses) {
@@ -508,6 +534,7 @@ fun OneFamilyMainShell(
                             onSelectSortOrder = { viewModel.selectSortOrder(it) },
                             onClearFilters = { viewModel.clearFilters() },
                             onScanSmsClick = triggerSmsSync,
+                            onExportCsvClick = { showExportCsvDialog = true },
                             onAddTransactionClick = { showAddTransactionDialog = true },
                             onAcceptEmailInvite = { viewModel.acceptEmailInvitation(it) },
                             onEditTransaction = { editingTransaction = it },
@@ -550,6 +577,7 @@ fun OneFamilyMainShell(
                             },
                             onAddAccountClick = { showAddAccountDialog = true },
                             onScanSmsClick = triggerSmsSync,
+                            onExportCsvClick = { showExportCsvDialog = true },
                             onSendTestFcmAlertClick = {
                                 viewModel.sendTestFcmPushAlert(context)
                             },
@@ -736,6 +764,37 @@ fun OneFamilyMainShell(
                     isSharedVisible = true
                 )
                 showAddAccountDialog = false
+            }
+        )
+    }
+
+    if (showExportCsvDialog) {
+        ExportTransactionsCsvDialog(
+            uiState = uiState,
+            onDismiss = { showExportCsvDialog = false },
+            onSaveCsvToFile = { csvContent, suggestedFileName, count, periodLabel ->
+                pendingCsvExport = Triple(csvContent, count, periodLabel)
+                showExportCsvDialog = false
+                runCatching {
+                    createCsvDocumentLauncher.launch(suggestedFileName)
+                }.onFailure { err ->
+                    pendingCsvExport = null
+                    viewModel.notifyCsvExportError(err.localizedMessage ?: "Unable to open file picker.")
+                }
+            },
+            onShareCsv = { csvContent, suggestedFileName, count, periodLabel ->
+                showExportCsvDialog = false
+                runCatching {
+                    val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                        type = "text/csv"
+                        putExtra(Intent.EXTRA_SUBJECT, suggestedFileName)
+                        putExtra(Intent.EXTRA_TEXT, csvContent)
+                    }
+                    context.startActivity(Intent.createChooser(shareIntent, "Export CSV ($periodLabel)"))
+                    viewModel.notifyCsvExportResult(count, periodLabel)
+                }.onFailure { err ->
+                    viewModel.notifyCsvExportError(err.localizedMessage ?: "Unable to share CSV.")
+                }
             }
         )
     }

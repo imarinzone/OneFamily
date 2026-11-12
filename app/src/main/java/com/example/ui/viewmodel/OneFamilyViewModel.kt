@@ -49,12 +49,151 @@ import kotlinx.coroutines.withContext
 
 enum class DateRangePreset(val label: String) {
     MONTH("Current Month"),
-    LAST_7_DAYS("Last 7 Days"),
+    CURRENT_FY("Current FY"),
+    PAST_FY("Past FY"),
+    THIS_YEAR("This Year"),
+    PAST_YEAR("Past Year"),
     LAST_30_DAYS("Last 30 Days"),
     LAST_90_DAYS("Last 3 Months"),
-    THIS_YEAR("This Year"),
+    LAST_7_DAYS("Last 7 Days"),
     ALL_TIME("All Time"),
     CUSTOM("Custom Range")
+}
+
+object DateRangeFilterUtils {
+    /**
+     * Computes inclusive `(startMillis, endMillis)` bounds for a [DateRangePreset], or `null` for [DateRangePreset.ALL_TIME].
+     * Financial Year (FY) follows standard April 1 00:00:00.000 through March 31 23:59:59.999.
+     */
+    fun computeBoundsMillis(
+        preset: DateRangePreset,
+        selectedPeriod: YearMonthPeriod? = YearMonthPeriod.current(),
+        customRange: Pair<Long, Long>? = null,
+        referenceMillis: Long = System.currentTimeMillis()
+    ): Pair<Long, Long>? {
+        val refCal = Calendar.getInstance().apply { timeInMillis = referenceMillis }
+        val currentYear = refCal.get(Calendar.YEAR)
+        val currentMonth = refCal.get(Calendar.MONTH)
+        val currentFyStartYear = if (currentMonth >= Calendar.APRIL) currentYear else currentYear - 1
+
+        fun dayStart(year: Int, month: Int, day: Int): Long {
+            return Calendar.getInstance().apply {
+                set(Calendar.YEAR, year)
+                set(Calendar.MONTH, month)
+                set(Calendar.DAY_OF_MONTH, day)
+                set(Calendar.HOUR_OF_DAY, 0)
+                set(Calendar.MINUTE, 0)
+                set(Calendar.SECOND, 0)
+                set(Calendar.MILLISECOND, 0)
+            }.timeInMillis
+        }
+
+        fun dayEnd(year: Int, month: Int, day: Int): Long {
+            return Calendar.getInstance().apply {
+                set(Calendar.YEAR, year)
+                set(Calendar.MONTH, month)
+                set(Calendar.DAY_OF_MONTH, day)
+                set(Calendar.HOUR_OF_DAY, 23)
+                set(Calendar.MINUTE, 59)
+                set(Calendar.SECOND, 59)
+                set(Calendar.MILLISECOND, 999)
+            }.timeInMillis
+        }
+
+        return when (preset) {
+            DateRangePreset.ALL_TIME -> null
+            DateRangePreset.LAST_7_DAYS -> (referenceMillis - 7L * 86_400_000L) to referenceMillis
+            DateRangePreset.LAST_30_DAYS -> (referenceMillis - 30L * 86_400_000L) to referenceMillis
+            DateRangePreset.LAST_90_DAYS -> (referenceMillis - 90L * 86_400_000L) to referenceMillis
+            DateRangePreset.THIS_YEAR -> dayStart(currentYear, Calendar.JANUARY, 1) to dayEnd(currentYear, Calendar.DECEMBER, 31)
+            DateRangePreset.PAST_YEAR -> {
+                val pastYear = currentYear - 1
+                dayStart(pastYear, Calendar.JANUARY, 1) to dayEnd(pastYear, Calendar.DECEMBER, 31)
+            }
+            DateRangePreset.CURRENT_FY -> {
+                dayStart(currentFyStartYear, Calendar.APRIL, 1) to dayEnd(currentFyStartYear + 1, Calendar.MARCH, 31)
+            }
+            DateRangePreset.PAST_FY -> {
+                val pastFyStart = currentFyStartYear - 1
+                dayStart(pastFyStart, Calendar.APRIL, 1) to dayEnd(currentFyStartYear, Calendar.MARCH, 31)
+            }
+            DateRangePreset.CUSTOM -> customRange?.let { (a, b) -> minOf(a, b) to maxOf(a, b) }
+            DateRangePreset.MONTH -> {
+                val ym = selectedPeriod ?: YearMonthPeriod.fromMillis(referenceMillis)
+                val monthCal = Calendar.getInstance().apply {
+                    set(Calendar.YEAR, ym.year)
+                    set(Calendar.MONTH, ym.month)
+                    set(Calendar.DAY_OF_MONTH, 1)
+                }
+                val maxDay = monthCal.getActualMaximum(Calendar.DAY_OF_MONTH)
+                dayStart(ym.year, ym.month, 1) to dayEnd(ym.year, ym.month, maxDay)
+            }
+        }
+    }
+
+    fun formatPeriodLabel(
+        preset: DateRangePreset,
+        selectedPeriod: YearMonthPeriod? = YearMonthPeriod.current(),
+        customRange: Pair<Long, Long>? = null,
+        referenceMillis: Long = System.currentTimeMillis()
+    ): String {
+        val refCal = Calendar.getInstance().apply { timeInMillis = referenceMillis }
+        val currentYear = refCal.get(Calendar.YEAR)
+        val currentMonth = refCal.get(Calendar.MONTH)
+        val currentFyStartYear = if (currentMonth >= Calendar.APRIL) currentYear else currentYear - 1
+        val shortFmt = SimpleDateFormat("dd MMM yyyy", Locale.getDefault())
+
+        return when (preset) {
+            DateRangePreset.MONTH -> selectedPeriod?.formatDisplay() ?: YearMonthPeriod.fromMillis(referenceMillis).formatDisplay()
+            DateRangePreset.CURRENT_FY -> {
+                val endShort = ((currentFyStartYear + 1) % 100).toString().padStart(2, '0')
+                "FY $currentFyStartYear-$endShort"
+            }
+            DateRangePreset.PAST_FY -> {
+                val pastStart = currentFyStartYear - 1
+                val endShort = (currentFyStartYear % 100).toString().padStart(2, '0')
+                "FY $pastStart-$endShort"
+            }
+            DateRangePreset.THIS_YEAR -> "This Year ($currentYear)"
+            DateRangePreset.PAST_YEAR -> "Past Year (${currentYear - 1})"
+            DateRangePreset.LAST_7_DAYS -> "Last 7 Days"
+            DateRangePreset.LAST_30_DAYS -> "Last 30 Days"
+            DateRangePreset.LAST_90_DAYS -> "Last 3 Months"
+            DateRangePreset.ALL_TIME -> "All Time"
+            DateRangePreset.CUSTOM -> {
+                if (customRange != null) {
+                    "${shortFmt.format(customRange.first)} - ${shortFmt.format(customRange.second)}"
+                } else {
+                    "Custom Range"
+                }
+            }
+        }
+    }
+
+    fun filterTransactionsByPreset(
+        transactions: List<ExpenseTransaction>,
+        preset: DateRangePreset,
+        selectedPeriod: YearMonthPeriod? = YearMonthPeriod.current(),
+        customRange: Pair<Long, Long>? = null,
+        referenceMillis: Long = System.currentTimeMillis()
+    ): List<ExpenseTransaction> {
+        if (preset == DateRangePreset.ALL_TIME) return transactions
+        if (preset == DateRangePreset.MONTH) {
+            val targetMonth = selectedPeriod ?: YearMonthPeriod.fromMillis(referenceMillis)
+            return transactions.filter { tx ->
+                YearMonthPeriod.fromMillis(tx.transactionDateMillis) == targetMonth
+            }
+        }
+        val bounds = computeBoundsMillis(
+            preset = preset,
+            selectedPeriod = selectedPeriod,
+            customRange = customRange,
+            referenceMillis = referenceMillis
+        ) ?: return transactions
+        return transactions.filter { tx ->
+            tx.transactionDateMillis in bounds.first..bounds.second
+        }
+    }
 }
 
 data class YearMonthPeriod(
@@ -456,24 +595,13 @@ class OneFamilyViewModel(
         val customRange = filter.customDateRange
         val nowMillis = System.currentTimeMillis()
         val cal = Calendar.getInstance()
-        val currentYear = cal.get(Calendar.YEAR)
 
-        val shortFmt = SimpleDateFormat("dd MMM", Locale.getDefault())
-        val periodLabel = when (dateRangePreset) {
-            DateRangePreset.MONTH -> selectedPeriod?.formatDisplay() ?: YearMonthPeriod.current().formatDisplay()
-            DateRangePreset.LAST_7_DAYS -> "Last 7 Days"
-            DateRangePreset.LAST_30_DAYS -> "Last 30 Days"
-            DateRangePreset.LAST_90_DAYS -> "Last 3 Months"
-            DateRangePreset.THIS_YEAR -> "This Year ($currentYear)"
-            DateRangePreset.ALL_TIME -> "All Time"
-            DateRangePreset.CUSTOM -> {
-                if (customRange != null) {
-                    "${shortFmt.format(customRange.first)} - ${shortFmt.format(customRange.second)}"
-                } else {
-                    "Custom Range"
-                }
-            }
-        }
+        val periodLabel = DateRangeFilterUtils.formatPeriodLabel(
+            preset = dateRangePreset,
+            selectedPeriod = selectedPeriod,
+            customRange = customRange,
+            referenceMillis = nowMillis
+        )
 
         val nowPeriod = YearMonthPeriod.current()
         val remainingDays = if (dateRangePreset != DateRangePreset.MONTH || selectedPeriod == null || selectedPeriod == nowPeriod) {
@@ -489,41 +617,13 @@ class OneFamilyViewModel(
             targetCal.getActualMaximum(Calendar.DAY_OF_MONTH).coerceAtLeast(1)
         }
 
-        val periodTransactions = when (dateRangePreset) {
-            DateRangePreset.ALL_TIME -> allScopedTransactions
-            DateRangePreset.LAST_7_DAYS -> {
-                val cutoff = nowMillis - 7L * 86_400_000L
-                allScopedTransactions.filter { it.transactionDateMillis >= cutoff }
-            }
-            DateRangePreset.LAST_30_DAYS -> {
-                val cutoff = nowMillis - 30L * 86_400_000L
-                allScopedTransactions.filter { it.transactionDateMillis >= cutoff }
-            }
-            DateRangePreset.LAST_90_DAYS -> {
-                val cutoff = nowMillis - 90L * 86_400_000L
-                allScopedTransactions.filter { it.transactionDateMillis >= cutoff }
-            }
-            DateRangePreset.THIS_YEAR -> {
-                allScopedTransactions.filter { tx ->
-                    YearMonthPeriod.fromMillis(tx.transactionDateMillis).year == currentYear
-                }
-            }
-            DateRangePreset.CUSTOM -> {
-                if (customRange != null) {
-                    allScopedTransactions.filter { tx ->
-                        tx.transactionDateMillis in customRange.first..customRange.second
-                    }
-                } else {
-                    allScopedTransactions
-                }
-            }
-            DateRangePreset.MONTH -> {
-                val targetMonth = selectedPeriod ?: nowPeriod
-                allScopedTransactions.filter { tx ->
-                    YearMonthPeriod.fromMillis(tx.transactionDateMillis) == targetMonth
-                }
-            }
-        }
+        val periodTransactions = DateRangeFilterUtils.filterTransactionsByPreset(
+            transactions = allScopedTransactions,
+            preset = dateRangePreset,
+            selectedPeriod = selectedPeriod,
+            customRange = customRange,
+            referenceMillis = nowMillis
+        )
 
         val periodExpensesOnly = periodTransactions.filter { it.type == "EXPENSE" }
         val periodIncomeOnly = periodTransactions.filter { it.type == "INCOME" }
@@ -549,9 +649,9 @@ class OneFamilyViewModel(
 
         val allAvailableCategories = (
             ExpenseCategories.ALL +
-                filter.customCategories +
-                activeBudgets.map { it.category } +
-                allScopedTransactions.map { it.category }
+                filter.customCategories.map { ExpenseCategories.normalizeCategory(it) } +
+                activeBudgets.map { ExpenseCategories.normalizeCategory(it.category) } +
+                allScopedTransactions.map { ExpenseCategories.normalizeCategory(it.category) }
             )
             .map { it.trim() }
             .filter { it.isNotBlank() }
@@ -559,18 +659,22 @@ class OneFamilyViewModel(
 
         val categoriesInPlay = (
             ExpenseCategories.EXPENSE_ONLY +
-                filter.customCategories +
-                activeBudgets.map { it.category } +
-                periodExpensesOnly.map { it.category }
+                filter.customCategories.map { ExpenseCategories.normalizeCategory(it) } +
+                activeBudgets.map { ExpenseCategories.normalizeCategory(it.category) } +
+                periodExpensesOnly.map { ExpenseCategories.normalizeCategory(it.category) }
             )
             .map { it.trim() }
             .filter { it.isNotBlank() && !it.equals("Salary & Income", ignoreCase = true) }
             .distinctBy { it.lowercase() }
 
         val categoryProgressList = categoriesInPlay.map { category ->
-            val catExpenses = periodExpensesOnly.filter { it.category.equals(category, ignoreCase = true) }
+            val catExpenses = periodExpensesOnly.filter {
+                ExpenseCategories.normalizeCategory(it.category).equals(category, ignoreCase = true)
+            }
             val catSpent = catExpenses.sumOf { it.amount }
-            val budgetDoc = activeBudgets.firstOrNull { it.category.equals(category, ignoreCase = true) }
+            val budgetDoc = activeBudgets.firstOrNull {
+                ExpenseCategories.normalizeCategory(it.category).equals(category, ignoreCase = true)
+            }
             val limit = budgetDoc?.monthlyLimit ?: 0.0
             val alertPct = budgetDoc?.alertThresholdPercent?.toInt() ?: 80
             val memberBreakdown = catExpenses.groupBy { it.userName.ifBlank { "Member" } }
@@ -650,7 +754,11 @@ class OneFamilyViewModel(
                 tx.tags.any { it.contains(filter.query, ignoreCase = true) }
 
             val matchesType = filter.type == "All" || tx.type.equals(filter.type, ignoreCase = true)
-            val matchesCat = filter.category == "All" || tx.category.equals(filter.category, ignoreCase = true)
+            val matchesCat = filter.category == "All" ||
+                ExpenseCategories.normalizeCategory(tx.category).equals(
+                    ExpenseCategories.normalizeCategory(filter.category),
+                    ignoreCase = true
+                )
             val matchesMode = filter.paymentMode == "All" || tx.paymentMode.equals(filter.paymentMode, ignoreCase = true)
             val matchesAcc = filter.account == "All" || tx.accountName.equals(filter.account, ignoreCase = true)
             val matchesTag = filter.tag == "All" || tx.tags.any { it.equals(filter.tag, ignoreCase = true) }
@@ -801,8 +909,8 @@ class OneFamilyViewModel(
     }
 
     fun addCustomCategory(categoryName: String) {
-        val cleaned = categoryName.trim()
-        if (cleaned.isNotBlank()) {
+        val cleaned = ExpenseCategories.normalizeCategory(categoryName)
+        if (cleaned.isNotBlank() && ExpenseCategories.ALL.none { it.equals(cleaned, ignoreCase = true) }) {
             val existing = _customCategories.value
             if (existing.none { it.equals(cleaned, ignoreCase = true) }) {
                 _customCategories.value = existing + cleaned
@@ -819,6 +927,16 @@ class OneFamilyViewModel(
         _tagFilter.value = "All"
         _memberFilter.value = "All"
         _sortOrder.value = "NEWEST"
+        _dateRangePreset.value = DateRangePreset.MONTH
+        _customDateRange.value = null
+    }
+
+    fun notifyCsvExportResult(exportedCount: Int, periodLabel: String) {
+        _statusBanner.value = "Exported $exportedCount transactions ($periodLabel) to CSV."
+    }
+
+    fun notifyCsvExportError(message: String) {
+        _errorMessage.value = message.ifBlank { "Failed to export CSV file." }
     }
 
     fun dismissBanner() {
@@ -830,12 +948,12 @@ class OneFamilyViewModel(
     // --- PARALLEL MULTI-THREADED BATCH SMS INBOX SYNC WITH LIVE ANIMATION & ZERO RACE CONDITIONS ---
 
     private val syncProgressLock = Any()
+    private val smsSyncActiveGuard = java.util.concurrent.atomic.AtomicBoolean(false)
 
     fun resetSmsSyncProgress() {
-        val flags = LocalAccountSessionManager.expertFeatureFlags.value
         _smsSyncProgress.value = SmsSyncProgressState(
-            readerThreadCount = flags.readerThreadCount.coerceAtLeast(SmsInboxReader.MIN_PARALLEL_THREADS),
-            writerThreadCount = flags.writerThreadCount.coerceAtLeast(SmsInboxReader.MIN_PARALLEL_THREADS)
+            readerThreadCount = SmsInboxReader.DEFAULT_PARALLEL_READER_THREADS,
+            writerThreadCount = SmsInboxReader.DEFAULT_PARALLEL_WRITER_THREADS
         )
     }
 
@@ -889,7 +1007,7 @@ class OneFamilyViewModel(
                                 val cur = _smsSyncProgress.value
                                 _smsSyncProgress.value = cur.copy(
                                     savedTransactionsCount = totalSavedNow,
-                                    statusMessage = "Parallel Sync ($effectiveReaderThreads⚡$effectiveWriterThreads): ${cur.readSmsCount}/${cur.totalSmsCount} SMS • $totalSavedNow saved"
+                                    statusMessage = "Syncing SMS: ${cur.readSmsCount}/${cur.totalSmsCount} read • $totalSavedNow saved"
                                 )
                             }
                             if (latestInBatch != null && perBatchDelayMs > 0L) {
@@ -955,7 +1073,7 @@ class OneFamilyViewModel(
                         currentReadingAmount = previewItem?.amount ?: cur.currentReadingAmount,
                         currentReadingCategory = previewItem?.category ?: cur.currentReadingCategory,
                         recentReadTransactions = updatedRecents,
-                        statusMessage = "Parallel Sync ($effectiveReaderThreads⚡$effectiveWriterThreads): $readCount read • $remaining left • ${savedCounter.get()} saved"
+                        statusMessage = "Syncing SMS: $readCount read • $remaining left • ${savedCounter.get()} saved"
                     )
                 }
             }
@@ -1023,13 +1141,12 @@ class OneFamilyViewModel(
         notifyNewest: Boolean = true,
         onComplete: (() -> Unit)? = null
     ) {
-        if (_smsSyncProgress.value.isSyncing) return
+        if (!smsSyncActiveGuard.compareAndSet(false, true)) return
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                val flags = LocalAccountSessionManager.expertFeatureFlags.value
-                val configuredReaders = flags.readerThreadCount.coerceAtLeast(SmsInboxReader.MIN_PARALLEL_THREADS)
-                val configuredWriters = flags.writerThreadCount.coerceAtLeast(SmsInboxReader.MIN_PARALLEL_THREADS)
-                val configuredBatchSize = flags.smsBatchSize.coerceIn(5, 50)
+                val configuredReaders = SmsInboxReader.DEFAULT_PARALLEL_READER_THREADS
+                val configuredWriters = SmsInboxReader.DEFAULT_PARALLEL_WRITER_THREADS
+                val configuredBatchSize = SmsInboxReader.DEFAULT_SMS_BATCH_SIZE
 
                 _smsSyncProgress.value = SmsSyncProgressState(
                     isSyncing = true,
@@ -1041,9 +1158,9 @@ class OneFamilyViewModel(
                     readerThreadCount = configuredReaders,
                     writerThreadCount = configuredWriters,
                     currentReadingTransactionTitle = "Scanning Bank & UPI SMS...",
-                    currentReadingBank = "Multi-Thread Engine",
-                    currentReadingCategory = "General",
-                    statusMessage = "Starting $configuredReaders reader & $configuredWriters writer threads..."
+                    currentReadingBank = "SMS Inbox",
+                    currentReadingCategory = "Unknown",
+                    statusMessage = "Scanning SMS inbox..."
                 )
 
                 // Ensure profile exists before syncing SMS
@@ -1063,12 +1180,12 @@ class OneFamilyViewModel(
                 val stateSignatures = (state.personalExpenses + state.sharedExpenses)
                     .flatMap { tx ->
                         val rawBody = tx.notes.substringAfter("] ", tx.notes).trim()
-                        val contentKey = if (rawBody.isNotBlank() && tx.smsSignature.isNotBlank()) {
-                            SmsInboxReader.buildSmsContentKey(rawBody, tx.transactionDateMillis)
+                        val contentKeys = if (rawBody.isNotBlank() && tx.smsSignature.isNotBlank()) {
+                            SmsInboxReader.buildSmsAdjacentContentKeys(rawBody, tx.transactionDateMillis)
                         } else {
-                            ""
+                            emptyList()
                         }
-                        tx.linkedSmsSignatures + listOf(tx.smsSignature, tx.id, contentKey)
+                        tx.linkedSmsSignatures + listOf(tx.smsSignature, tx.id) + contentKeys
                     }
                     .filter { sig -> sig.isNotBlank() }
                     .flatMap { listOf(it, it.removePrefix("sms_")) }
@@ -1124,7 +1241,9 @@ class OneFamilyViewModel(
                                     title = merchantTitle,
                                     amount = newest.parsed.amount.toDouble(),
                                     currentCategory = newest.suggestedCategory,
-                                    currencySymbol = state.activeCurrencySymbol
+                                    currencySymbol = state.activeCurrencySymbol,
+                                    paymentSummary = "${newest.suggestedAccountName} • ${newest.suggestedPaymentMode}",
+                                    transactionType = if (newest.parsed.type == TransactionType.INCOME) "INCOME" else "EXPENSE"
                                 )
                             }
                         }
@@ -1164,6 +1283,13 @@ class OneFamilyViewModel(
                         }
                     )
                 }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                synchronized(syncProgressLock) {
+                    _smsSyncProgress.value = _smsSyncProgress.value.copy(
+                        isSyncing = false
+                    )
+                }
+                throw e
             } catch (e: Exception) {
                 if (!silentIfEmpty) {
                     _errorMessage.value = e.localizedMessage ?: "Failed to sync SMS receipts."
@@ -1176,6 +1302,7 @@ class OneFamilyViewModel(
                     )
                 }
             } finally {
+                smsSyncActiveGuard.set(false)
                 if (onComplete != null) {
                     withContext(Dispatchers.Main) {
                         onComplete()
@@ -1276,7 +1403,9 @@ class OneFamilyViewModel(
                         title = merchantTitle,
                         amount = parsed.amount.toDouble(),
                         currentCategory = category,
-                        currencySymbol = state.activeCurrencySymbol
+                        currencySymbol = state.activeCurrencySymbol,
+                        paymentSummary = "${candidate.suggestedAccountName} • ${candidate.suggestedPaymentMode}",
+                        transactionType = if (isIncome) "INCOME" else "EXPENSE"
                     )
                 }
             }.onFailure { err ->
@@ -1359,7 +1488,9 @@ class OneFamilyViewModel(
                         title = title.ifBlank { category },
                         amount = amount,
                         currentCategory = category,
-                        currencySymbol = currency
+                        currencySymbol = currency,
+                        paymentSummary = "$accountName • $paymentMode",
+                        transactionType = type
                     )
                     if (shareFlag && state.household != null) {
                         TransactionNotificationHelper.showFamilyTransactionPushNotification(

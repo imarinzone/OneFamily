@@ -28,36 +28,35 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.tasks.await
 
-class OneFamilyRepository(private val dbProvider: () -> FirebaseFirestore) {
+class OneFamilyRepository(
+    private val dbProvider: () -> FirebaseFirestore,
+    private val allowLocalMode: Boolean = true
+) {
 
-    private val batchImportMutex = Mutex()
-    private val firestoreAccountTimestampMap = java.util.concurrent.ConcurrentHashMap<String, Long>()
-
-    constructor(db: FirebaseFirestore) : this({ db })
+    constructor(db: FirebaseFirestore) : this({ db }, allowLocalMode = false)
 
     constructor(context: Context) : this({
         FirebaseFirestore.getInstance(
             context.applicationContext.getString(R.string.firestore_database_id)
         )
-    }) {
+    }, allowLocalMode = true) {
         LocalAccountSessionManager.ensureInitialized(context.applicationContext)
     }
 
     private val db: FirebaseFirestore
         get() = dbProvider()
 
-    private val inFlightSignatures = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
-
     private val currentFirebaseUser
         get() = runCatching { Firebase.auth.currentUser }.getOrNull()
 
     private fun isLocalMode(userIdHint: String? = null): Boolean {
+        if (!allowLocalMode) return false
         if (userIdHint != null) {
             if (userIdHint.startsWith("local_user_")) return true
             if (currentFirebaseUser != null && currentFirebaseUser?.uid == userIdHint) return false
         }
         if (currentFirebaseUser != null) return false
-        return true
+        return LocalAccountSessionManager.getCurrentUser() != null
     }
 
     private fun requireLocalUserId(): String {
@@ -557,8 +556,9 @@ class OneFamilyRepository(private val dbProvider: () -> FirebaseFirestore) {
         return db.collection("users").document(userId).collection("personal_expenses")
             .snapshots()
             .map { snapshot ->
-                snapshot.toObjects(ExpenseTransaction::class.java, DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
+                val rawList = snapshot.toObjects(ExpenseTransaction::class.java, DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
                     .sortedByDescending { it.transactionDateMillis }
+                LocalAccountDataStore.deduplicateSmsExpenses(rawList)
             }
             .catch { error ->
                 logAndRethrow(error, OperationType.LIST, path)
@@ -574,8 +574,9 @@ class OneFamilyRepository(private val dbProvider: () -> FirebaseFirestore) {
             .whereArrayContains("memberUids", userId)
             .snapshots()
             .map { snapshot ->
-                snapshot.toObjects(ExpenseTransaction::class.java, DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
+                val rawList = snapshot.toObjects(ExpenseTransaction::class.java, DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
                     .sortedByDescending { it.transactionDateMillis }
+                LocalAccountDataStore.deduplicateSmsExpenses(rawList)
             }
             .catch { error ->
                 logAndRethrow(error, OperationType.LIST, path)
@@ -595,6 +596,7 @@ class OneFamilyRepository(private val dbProvider: () -> FirebaseFirestore) {
         notes: String,
         isShared: Boolean,
         smsSignature: String = "",
+        linkedSmsSignatures: List<String> = emptyList(),
         referenceNumber: String = "",
         transactionDateMillis: Long = System.currentTimeMillis(),
         customDocId: String? = null
@@ -620,72 +622,105 @@ class OneFamilyRepository(private val dbProvider: () -> FirebaseFirestore) {
                 customDocId = customDocId
             )
         }
-        val uid = requireUserId()
-        val effectiveShared = isShared && household != null
-        val targetHouseholdId = if (effectiveShared) household!!.id else ""
-        val memberUids = if (effectiveShared) {
-            (household!!.memberUids + uid).distinct().take(20)
+        val writeBlock: suspend () -> String = writeBlock@{
+            val uid = requireUserId()
+            val effectiveShared = isShared && household != null
+            val targetHouseholdId = if (effectiveShared) household!!.id else ""
+            val memberUids = if (effectiveShared) {
+                (household!!.memberUids + uid).distinct().take(20)
+            } else {
+                listOf(uid)
+            }
+
+            val collectionRef = if (effectiveShared) {
+                db.collection("households").document(targetHouseholdId).collection("shared_expenses")
+            } else {
+                db.collection("users").document(uid).collection("personal_expenses")
+            }
+
+            val effectiveDocId = when {
+                !customDocId.isNullOrBlank() -> customDocId
+                smsSignature.isNotBlank() -> "sms_${smsSignature.removePrefix("sms_")}"
+                else -> ""
+            }
+
+            if (smsSignature.isNotBlank()) {
+                val existingSigs = getAllExistingSmsSignatures(household?.id)
+                val cleanSig = smsSignature.removePrefix("sms_")
+                val rawBody = com.example.data.sms.SmsInboxReader.extractRawSmsBodyFromNotes(notes)
+                val adjacentKeys = if (rawBody.isNotBlank()) {
+                    com.example.data.sms.SmsInboxReader.buildSmsAdjacentContentKeys(rawBody, transactionDateMillis)
+                } else {
+                    emptyList()
+                }
+                if (smsSignature in existingSigs ||
+                    cleanSig in existingSigs ||
+                    adjacentKeys.any { it in existingSigs }
+                ) {
+                    return@writeBlock effectiveDocId.ifBlank { "sms_$cleanSig" }
+                }
+            }
+
+            val docRef = if (effectiveDocId.isNotBlank()) {
+                collectionRef.document(effectiveDocId)
+            } else {
+                collectionRef.document()
+            }
+
+            val cleanTags = tags.map { it.trim().removePrefix("#") }
+                .filter { it.isNotBlank() }
+                .distinct()
+                .take(10)
+                .map { it.take(40) }
+
+            val cleanLinkedSigs = linkedSmsSignatures
+                .map { it.trim().take(200) }
+                .filter { it.isNotBlank() }
+                .distinct()
+                .take(20)
+
+            val payload = mapOf(
+                "userId" to uid,
+                "userName" to userName.ifBlank { "Me" }.take(100),
+                "householdId" to targetHouseholdId,
+                "title" to title.trim().ifBlank { category }.take(150),
+                "amount" to amount.coerceAtLeast(0.01),
+                "type" to if (type == "INCOME") "INCOME" else "EXPENSE",
+                "category" to com.example.data.model.ExpenseCategories.normalizeCategory(category),
+                "accountName" to accountName.ifBlank { "Cash" }.take(100),
+                "paymentMode" to if (paymentMode in setOf("UPI", "BANK", "CARD", "WALLET", "CASH")) paymentMode else "UPI",
+                "tags" to cleanTags,
+                "notes" to notes.trim().take(500),
+                "visibility" to if (effectiveShared) "SHARED" else "PERSONAL",
+                "smsSignature" to smsSignature.take(200),
+                "linkedSmsSignatures" to cleanLinkedSigs,
+                "referenceNumber" to referenceNumber.take(100),
+                "transactionDateMillis" to transactionDateMillis,
+                "memberUids" to memberUids,
+                "createdAt" to FieldValue.serverTimestamp(),
+                "updatedAt" to FieldValue.serverTimestamp()
+            )
+
+            try {
+                docRef.set(payload).await()
+                docRef.id
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                handleFirestoreError(e, OperationType.CREATE, docRef.path)
+                throw e
+            }
+        }
+
+        if (smsSignature.isNotBlank()) {
+            batchImportMutex.withLock { writeBlock() }
         } else {
-            listOf(uid)
-        }
-
-        val collectionRef = if (effectiveShared) {
-            db.collection("households").document(targetHouseholdId).collection("shared_expenses")
-        } else {
-            db.collection("users").document(uid).collection("personal_expenses")
-        }
-
-        val effectiveDocId = when {
-            !customDocId.isNullOrBlank() -> customDocId
-            smsSignature.isNotBlank() -> "sms_${smsSignature.removePrefix("sms_")}"
-            else -> ""
-        }
-        val docRef = if (effectiveDocId.isNotBlank()) {
-            collectionRef.document(effectiveDocId)
-        } else {
-            collectionRef.document()
-        }
-
-        val cleanTags = tags.map { it.trim().removePrefix("#") }
-            .filter { it.isNotBlank() }
-            .distinct()
-            .take(10)
-            .map { it.take(40) }
-
-        val payload = mapOf(
-            "userId" to uid,
-            "userName" to userName.ifBlank { "Me" }.take(100),
-            "householdId" to targetHouseholdId,
-            "title" to title.trim().ifBlank { category }.take(150),
-            "amount" to amount.coerceAtLeast(0.01),
-            "type" to if (type == "INCOME") "INCOME" else "EXPENSE",
-            "category" to category.ifBlank { "General" }.take(60),
-            "accountName" to accountName.ifBlank { "Cash" }.take(100),
-            "paymentMode" to if (paymentMode in setOf("UPI", "BANK", "CARD", "WALLET", "CASH")) paymentMode else "UPI",
-            "tags" to cleanTags,
-            "notes" to notes.trim().take(500),
-            "visibility" to if (effectiveShared) "SHARED" else "PERSONAL",
-            "smsSignature" to smsSignature.take(200),
-            "referenceNumber" to referenceNumber.take(100),
-            "transactionDateMillis" to transactionDateMillis,
-            "memberUids" to memberUids,
-            "createdAt" to FieldValue.serverTimestamp(),
-            "updatedAt" to FieldValue.serverTimestamp()
-        )
-
-        try {
-            docRef.set(payload).await()
-            docRef.id
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            handleFirestoreError(e, OperationType.CREATE, docRef.path)
-            throw e
+            writeBlock()
         }
     }
 
     /**
-     * Returns all existing SMS signatures, linked duplicate signatures, and SMS content keys
+     * Returns all existing SMS signatures, linked duplicate signatures, and adjacent SMS content keys
      * across both Personal and Shared Household collections so no SMS is ever imported twice.
      */
     suspend fun getAllExistingSmsSignatures(householdId: String? = null): Set<String> {
@@ -698,9 +733,13 @@ class OneFamilyRepository(private val dbProvider: () -> FirebaseFirestore) {
 
         val signatures = mutableSetOf<String>()
         fun extractDocSignatures(doc: DocumentSnapshot) {
-            doc.getString("smsSignature")?.takeIf { it.isNotBlank() }?.let { sig ->
-                signatures.add(sig)
-                signatures.add(sig.removePrefix("sms_"))
+            val primarySig = doc.getString("smsSignature").orEmpty()
+            if (primarySig.isNotBlank()) {
+                signatures.add(primarySig)
+                signatures.add(primarySig.removePrefix("sms_"))
+                LocalAccountDataStore.getSmsRecordBySignature(primarySig)?.let { rec ->
+                    signatures.addAll(com.example.data.sms.SmsInboxReader.buildSmsAdjacentContentKeys(rec.body, rec.timestamp))
+                }
             }
             signatures.add(doc.id)
             signatures.add(doc.id.removePrefix("sms_"))
@@ -710,13 +749,16 @@ class OneFamilyRepository(private val dbProvider: () -> FirebaseFirestore) {
                 if (lSig.isNotBlank()) {
                     signatures.add(lSig)
                     signatures.add(lSig.removePrefix("sms_"))
+                    LocalAccountDataStore.getSmsRecordBySignature(lSig)?.let { rec ->
+                        signatures.addAll(com.example.data.sms.SmsInboxReader.buildSmsAdjacentContentKeys(rec.body, rec.timestamp))
+                    }
                 }
             }
             val notes = doc.getString("notes").orEmpty()
             val txMillis = doc.getLong("transactionDateMillis") ?: 0L
-            val rawBody = notes.substringAfter("] ", notes).trim()
+            val rawBody = com.example.data.sms.SmsInboxReader.extractRawSmsBodyFromNotes(notes)
             if (rawBody.isNotBlank() && txMillis > 0L) {
-                signatures.add(com.example.data.sms.SmsInboxReader.buildSmsContentKey(rawBody, txMillis))
+                signatures.addAll(com.example.data.sms.SmsInboxReader.buildSmsAdjacentContentKeys(rawBody, txMillis))
             }
         }
 
@@ -780,25 +822,45 @@ class OneFamilyRepository(private val dbProvider: () -> FirebaseFirestore) {
 
             // Query existing SMS signatures from personal & shared collections so we never overwrite or duplicate existing/edited SMS receipts
             val existingServerSignatures = getAllExistingSmsSignatures(household?.id).toMutableSet()
+            val batchBodyTimestamps = mutableMapOf<String, MutableList<Long>>()
+            val reservedInFlightKeys = mutableListOf<String>()
 
-            // Sort oldest to newest and deduplicate by signature and SMS content key
+            // Sort oldest to newest and deduplicate by signature, adjacent SMS content keys, and sliding 10-minute body window
             val sortedCandidates = buildList {
                 for (cand in candidates.sortedBy { it.parsed.timestamp }) {
                     val contentKey = com.example.data.sms.SmsInboxReader.buildSmsContentKey(
                         body = cand.parsed.smsBody,
                         timestamp = cand.parsed.timestamp
                     )
+                    val adjacentKeys = com.example.data.sms.SmsInboxReader.buildSmsAdjacentContentKeys(
+                        body = cand.parsed.smsBody,
+                        timestamp = cand.parsed.timestamp
+                    )
                     val rawSig = cand.id.removePrefix("sms_")
-                    if (cand.id !in existingServerSignatures &&
-                        rawSig !in existingServerSignatures &&
-                        contentKey !in existingServerSignatures &&
-                        inFlightSignatures.add(cand.id) &&
-                        inFlightSignatures.add(rawSig) &&
-                        inFlightSignatures.add(contentKey)
+                    val normBody = com.example.data.sms.SmsInboxReader.normalizeSmsBody(cand.parsed.smsBody)
+                    val txTypeStr = if (cand.parsed.type == TransactionType.INCOME) "INCOME" else "EXPENSE"
+                    val bodyIdentityKey = if (normBody.length >= 15) {
+                        "$txTypeStr|${String.format(java.util.Locale.US, "%.2f", cand.parsed.amount.toDouble())}|$normBody"
+                    } else {
+                        ""
+                    }
+
+                    val seenInSlidingWindow = bodyIdentityKey.isNotEmpty() &&
+                        batchBodyTimestamps[bodyIdentityKey]?.any { prevTs ->
+                            kotlin.math.abs(cand.parsed.timestamp - prevTs) <= com.example.data.sms.SmsInboxReader.SLIDING_DEDUP_WINDOW_MS
+                        } == true
+
+                    val keysToClaim = (listOf(cand.id, rawSig, contentKey) + adjacentKeys).distinct()
+                    if (!seenInSlidingWindow &&
+                        keysToClaim.none { it in existingServerSignatures } &&
+                        keysToClaim.none { it in inFlightSignatures }
                     ) {
-                        existingServerSignatures.add(cand.id)
-                        existingServerSignatures.add(rawSig)
-                        existingServerSignatures.add(contentKey)
+                        inFlightSignatures.addAll(keysToClaim)
+                        reservedInFlightKeys.addAll(keysToClaim)
+                        existingServerSignatures.addAll(keysToClaim)
+                        if (bodyIdentityKey.isNotEmpty()) {
+                            batchBodyTimestamps.getOrPut(bodyIdentityKey) { mutableListOf() }.add(cand.parsed.timestamp)
+                        }
                         add(cand)
                     }
                 }
@@ -808,72 +870,81 @@ class OneFamilyRepository(private val dbProvider: () -> FirebaseFirestore) {
             var importedCount = 0
             val accountsToUpsert = mutableMapOf<String, SmsCandidate>()
 
-            for (chunk in sortedCandidates.chunked(350)) {
-                val batch = db.batch()
-                for (candidate in chunk) {
-                    val parsed = candidate.parsed
-                    val isIncome = parsed.type == TransactionType.INCOME
-                    val category = candidate.suggestedCategory.ifBlank { "General" }.take(60)
-                    val merchantTitle = (parsed.merchant?.takeIf { it.isNotBlank() }
-                        ?: "${parsed.bankName} ${parsed.type.name.lowercase().replaceFirstChar { it.uppercase() }}").take(150)
+            try {
+                for (chunk in sortedCandidates.chunked(350)) {
+                    val batch = db.batch()
+                    for (candidate in chunk) {
+                        val parsed = candidate.parsed
+                        val isIncome = parsed.type == TransactionType.INCOME
+                        val category = com.example.data.model.ExpenseCategories.normalizeCategory(candidate.suggestedCategory)
+                        val merchantTitle = (parsed.merchant?.takeIf { it.isNotBlank() }
+                            ?: "${parsed.bankName} ${parsed.type.name.lowercase().replaceFirstChar { it.uppercase() }}").take(150)
 
-                    val docId = "sms_${candidate.id}"
-                    val docRef = collectionRef.document(docId)
-                    val tags = listOf("sms-auto", parsed.bankName.lowercase().replace(" ", "-").take(35))
-                        .filter { it.isNotBlank() }
-                        .distinct()
+                        val docId = "sms_${candidate.id}"
+                        val docRef = collectionRef.document(docId)
+                        val tags = listOf("sms-auto", parsed.bankName.lowercase().replace(" ", "-").take(35))
+                            .filter { it.isNotBlank() }
+                            .distinct()
 
-                    val paymentMode = if (candidate.suggestedPaymentMode in setOf("UPI", "BANK", "CARD", "WALLET", "CASH")) {
-                        candidate.suggestedPaymentMode
-                    } else {
-                        "UPI"
-                    }
+                        val paymentMode = if (candidate.suggestedPaymentMode in setOf("UPI", "BANK", "CARD", "WALLET", "CASH")) {
+                            candidate.suggestedPaymentMode
+                        } else {
+                            "UPI"
+                        }
 
-                    LocalAccountDataStore.cacheSmsMessage(
-                        signature = candidate.id,
-                        sender = parsed.sender,
-                        body = parsed.smsBody,
-                        timestamp = parsed.timestamp
-                    )
+                        LocalAccountDataStore.cacheSmsMessage(
+                            signature = candidate.id,
+                            sender = parsed.sender,
+                            body = parsed.smsBody,
+                            timestamp = parsed.timestamp
+                        )
 
-                    val payload = mapOf(
-                        "userId" to uid,
-                        "userName" to userName.ifBlank { "Me" }.take(100),
-                        "householdId" to targetHouseholdId,
-                        "title" to merchantTitle,
-                        "amount" to parsed.amount.toDouble().coerceAtLeast(0.01),
-                        "type" to if (isIncome) "INCOME" else "EXPENSE",
-                        "category" to category,
-                        "accountName" to candidate.suggestedAccountName.ifBlank { parsed.bankName }.take(100),
-                        "paymentMode" to paymentMode,
-                        "tags" to tags,
-                        "notes" to "[${parsed.sender}] ${parsed.smsBody}".take(500),
-                        "visibility" to if (effectiveShared) "SHARED" else "PERSONAL",
-                        "smsSignature" to candidate.id.take(200),
-                        "referenceNumber" to parsed.reference.orEmpty().take(100),
-                        "transactionDateMillis" to parsed.timestamp.coerceAtLeast(1L),
-                        "memberUids" to memberUids,
-                        "createdAt" to FieldValue.serverTimestamp(),
-                        "updatedAt" to FieldValue.serverTimestamp()
-                    )
-                    batch.set(docRef, payload)
-                    importedCount++
+                        val payload = mapOf(
+                            "userId" to uid,
+                            "userName" to userName.ifBlank { "Me" }.take(100),
+                            "householdId" to targetHouseholdId,
+                            "title" to merchantTitle,
+                            "amount" to parsed.amount.toDouble().coerceAtLeast(0.01),
+                            "type" to if (isIncome) "INCOME" else "EXPENSE",
+                            "category" to category,
+                            "accountName" to candidate.suggestedAccountName.ifBlank { parsed.bankName }.take(100),
+                            "paymentMode" to paymentMode,
+                            "tags" to tags,
+                            "notes" to "[${parsed.sender}] ${parsed.smsBody}".take(500),
+                            "visibility" to if (effectiveShared) "SHARED" else "PERSONAL",
+                            "smsSignature" to candidate.id.take(200),
+                            "linkedSmsSignatures" to emptyList<String>(),
+                            "referenceNumber" to parsed.reference.orEmpty().take(100),
+                            "transactionDateMillis" to parsed.timestamp.coerceAtLeast(1L),
+                            "memberUids" to memberUids,
+                            "createdAt" to FieldValue.serverTimestamp(),
+                            "updatedAt" to FieldValue.serverTimestamp()
+                        )
+                        batch.set(docRef, payload)
+                        importedCount++
 
-                    if (parsed.balance != null || parsed.creditLimit != null || parsed.accountNumber != null) {
-                        val existingAccCand = accountsToUpsert[candidate.suggestedAccountName]
-                        if (existingAccCand == null || parsed.timestamp >= existingAccCand.parsed.timestamp) {
-                            accountsToUpsert[candidate.suggestedAccountName] = candidate
+                        if (parsed.balance != null || parsed.creditLimit != null || parsed.accountNumber != null) {
+                            val existingAccCand = accountsToUpsert[candidate.suggestedAccountName]
+                            if (existingAccCand == null || parsed.timestamp >= existingAccCand.parsed.timestamp) {
+                                accountsToUpsert[candidate.suggestedAccountName] = candidate
+                            }
                         }
                     }
+                    try {
+                        batch.commit().await()
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        handleFirestoreError(e, OperationType.WRITE, collectionRef.path)
+                        throw e
+                    }
                 }
-                try {
-                    batch.commit().await()
-                } catch (e: CancellationException) {
-                    throw e
-                } catch (e: Exception) {
-                    handleFirestoreError(e, OperationType.WRITE, collectionRef.path)
-                    throw e
-                }
+            } catch (e: Throwable) {
+                inFlightSignatures.removeAll(reservedInFlightKeys.toSet())
+                throw e
+            } finally {
+                // Once committed to Firestore (or rolled back above), server queries observe it directly
+                inFlightSignatures.removeAll(reservedInFlightKeys.toSet())
             }
 
             // Upsert discovered accounts with latest balance/limit
@@ -952,25 +1023,62 @@ class OneFamilyRepository(private val dbProvider: () -> FirebaseFirestore) {
         val validMode = if (paymentMode in setOf("UPI", "BANK", "CARD", "WALLET", "CASH")) paymentMode else "UPI"
         val validType = if (type == "INCOME") "INCOME" else "EXPENSE"
 
-        // If moving between PERSONAL and SHARED collections, create in target and delete from source
+        // If moving between PERSONAL and SHARED collections, atomically write to target and delete from source preserving ID & linked signatures
         if (wantShared != wasShared) {
-            addExpense(
-                userName = existing.userName.ifBlank { "Me" },
-                household = household,
-                title = title,
-                amount = amount,
-                type = validType,
-                category = category,
-                accountName = accountName,
-                paymentMode = validMode,
-                tags = cleanTags,
-                notes = notes,
-                isShared = wantShared,
-                smsSignature = existing.smsSignature,
-                referenceNumber = existing.referenceNumber,
-                transactionDateMillis = transactionDateMillis
-            ).getOrThrow()
-            deleteExpense(existing).getOrThrow()
+            val targetHouseholdId = if (wantShared) household!!.id else ""
+            val memberUids = if (wantShared) (household!!.memberUids + uid).distinct().take(20) else listOf(uid)
+            val docId = existing.id.ifBlank { UUID.randomUUID().toString().take(16) }
+            val sourceDocRef = if (wasShared) {
+                db.collection("households").document(existing.householdId)
+                    .collection("shared_expenses").document(existing.id)
+            } else {
+                db.collection("users").document(uid)
+                    .collection("personal_expenses").document(existing.id)
+            }
+            val targetDocRef = if (wantShared) {
+                db.collection("households").document(targetHouseholdId)
+                    .collection("shared_expenses").document(docId)
+            } else {
+                db.collection("users").document(uid)
+                    .collection("personal_expenses").document(docId)
+            }
+            val cleanLinkedSigs = existing.linkedSmsSignatures
+                .map { it.trim().take(200) }
+                .filter { it.isNotBlank() }
+                .distinct()
+                .take(20)
+            val movePayload = mapOf(
+                "userId" to existing.userId.ifBlank { uid },
+                "userName" to existing.userName.ifBlank { "Me" }.take(100),
+                "householdId" to targetHouseholdId,
+                "title" to title.trim().ifBlank { category }.take(150),
+                "amount" to amount.coerceAtLeast(0.01),
+                "type" to validType,
+                "category" to com.example.data.model.ExpenseCategories.normalizeCategory(category),
+                "accountName" to accountName.trim().ifBlank { "Cash" }.take(100),
+                "paymentMode" to validMode,
+                "tags" to cleanTags,
+                "notes" to notes.trim().take(500),
+                "visibility" to if (wantShared) "SHARED" else "PERSONAL",
+                "smsSignature" to existing.smsSignature.take(200),
+                "linkedSmsSignatures" to cleanLinkedSigs,
+                "referenceNumber" to existing.referenceNumber.take(100),
+                "transactionDateMillis" to transactionDateMillis.coerceAtLeast(1L),
+                "memberUids" to memberUids,
+                "createdAt" to (existing.createdAt ?: FieldValue.serverTimestamp()),
+                "updatedAt" to FieldValue.serverTimestamp()
+            )
+            try {
+                val moveBatch = db.batch()
+                moveBatch.set(targetDocRef, movePayload)
+                moveBatch.delete(sourceDocRef)
+                moveBatch.commit().await()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                handleFirestoreError(e, OperationType.WRITE, targetDocRef.path)
+                throw e
+            }
             return@runCatching
         }
 
@@ -986,7 +1094,7 @@ class OneFamilyRepository(private val dbProvider: () -> FirebaseFirestore) {
             "title" to title.trim().ifBlank { category }.take(150),
             "amount" to amount.coerceAtLeast(0.01),
             "type" to validType,
-            "category" to category.trim().ifBlank { "General" }.take(60),
+            "category" to com.example.data.model.ExpenseCategories.normalizeCategory(category),
             "accountName" to accountName.trim().ifBlank { "Cash" }.take(100),
             "paymentMode" to validMode,
             "tags" to cleanTags,
@@ -1030,7 +1138,7 @@ class OneFamilyRepository(private val dbProvider: () -> FirebaseFirestore) {
         try {
             docRef.update(
                 mapOf(
-                    "category" to newCategory.trim().ifBlank { "General" }.take(60),
+                    "category" to com.example.data.model.ExpenseCategories.normalizeCategory(newCategory),
                     "updatedAt" to FieldValue.serverTimestamp()
                 )
             ).await()
@@ -1051,27 +1159,68 @@ class OneFamilyRepository(private val dbProvider: () -> FirebaseFirestore) {
             LocalAccountDataStore.toggleExpensePrivacy(uid, expense, household)
             return@runCatching
         }
-        requireUserId()
+        val uid = requireUserId()
         val movingToShared = expense.visibility == "PERSONAL"
+        val targetHouseholdId = if (movingToShared) household.id else ""
+        val memberUids = if (movingToShared) (household.memberUids + uid).distinct().take(20) else listOf(uid)
+        val docId = expense.id.ifBlank { UUID.randomUUID().toString().take(16) }
 
-        addExpense(
-            userName = expense.userName,
-            household = household,
-            title = expense.title,
-            amount = expense.amount,
-            type = expense.type,
-            category = expense.category,
-            accountName = expense.accountName,
-            paymentMode = expense.paymentMode,
-            tags = expense.tags,
-            notes = expense.notes,
-            isShared = movingToShared,
-            smsSignature = expense.smsSignature,
-            referenceNumber = expense.referenceNumber,
-            transactionDateMillis = expense.transactionDateMillis
-        ).getOrThrow()
-
-        deleteExpense(expense).getOrThrow()
+        val sourceDocRef = if (!movingToShared && expense.householdId.isNotBlank()) {
+            db.collection("households").document(expense.householdId)
+                .collection("shared_expenses").document(expense.id)
+        } else {
+            db.collection("users").document(uid)
+                .collection("personal_expenses").document(expense.id)
+        }
+        val targetDocRef = if (movingToShared) {
+            db.collection("households").document(household.id)
+                .collection("shared_expenses").document(docId)
+        } else {
+            db.collection("users").document(uid)
+                .collection("personal_expenses").document(docId)
+        }
+        val cleanTags = expense.tags.map { it.trim().removePrefix("#") }
+            .filter { it.isNotBlank() }
+            .distinct()
+            .take(10)
+            .map { it.take(40) }
+        val cleanLinkedSigs = expense.linkedSmsSignatures
+            .map { it.trim().take(200) }
+            .filter { it.isNotBlank() }
+            .distinct()
+            .take(20)
+        val movePayload = mapOf(
+            "userId" to expense.userId.ifBlank { uid },
+            "userName" to expense.userName.ifBlank { "Me" }.take(100),
+            "householdId" to targetHouseholdId,
+            "title" to expense.title.trim().ifBlank { expense.category }.take(150),
+            "amount" to expense.amount.coerceAtLeast(0.01),
+            "type" to if (expense.type == "INCOME") "INCOME" else "EXPENSE",
+            "category" to com.example.data.model.ExpenseCategories.normalizeCategory(expense.category),
+            "accountName" to expense.accountName.ifBlank { "Cash" }.take(100),
+            "paymentMode" to if (expense.paymentMode in setOf("UPI", "BANK", "CARD", "WALLET", "CASH")) expense.paymentMode else "UPI",
+            "tags" to cleanTags,
+            "notes" to expense.notes.trim().take(500),
+            "visibility" to if (movingToShared) "SHARED" else "PERSONAL",
+            "smsSignature" to expense.smsSignature.take(200),
+            "linkedSmsSignatures" to cleanLinkedSigs,
+            "referenceNumber" to expense.referenceNumber.take(100),
+            "transactionDateMillis" to expense.transactionDateMillis.coerceAtLeast(1L),
+            "memberUids" to memberUids,
+            "createdAt" to (expense.createdAt ?: FieldValue.serverTimestamp()),
+            "updatedAt" to FieldValue.serverTimestamp()
+        )
+        try {
+            val moveBatch = db.batch()
+            moveBatch.set(targetDocRef, movePayload)
+            moveBatch.delete(sourceDocRef)
+            moveBatch.commit().await()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.WRITE, targetDocRef.path)
+            throw e
+        }
     }
 
     suspend fun deleteExpense(expense: ExpenseTransaction): Result<Unit> = runCatching {
@@ -1122,6 +1271,11 @@ class OneFamilyRepository(private val dbProvider: () -> FirebaseFirestore) {
             .distinct()
             .take(10)
             .map { it.take(40) }
+        val cleanLinkedSigs = expense.linkedSmsSignatures
+            .map { it.trim().take(200) }
+            .filter { it.isNotBlank() }
+            .distinct()
+            .take(20)
         val payload = mapOf(
             "userId" to expense.userId.ifBlank { uid },
             "userName" to expense.userName.ifBlank { "Me" }.take(100),
@@ -1129,13 +1283,14 @@ class OneFamilyRepository(private val dbProvider: () -> FirebaseFirestore) {
             "title" to expense.title.trim().ifBlank { expense.category }.take(150),
             "amount" to expense.amount.coerceAtLeast(0.01),
             "type" to if (expense.type == "INCOME") "INCOME" else "EXPENSE",
-            "category" to expense.category.ifBlank { "General" }.take(60),
+            "category" to com.example.data.model.ExpenseCategories.normalizeCategory(expense.category),
             "accountName" to expense.accountName.ifBlank { "Cash" }.take(100),
             "paymentMode" to if (expense.paymentMode in setOf("UPI", "BANK", "CARD", "WALLET", "CASH")) expense.paymentMode else "UPI",
             "tags" to cleanTags,
             "notes" to expense.notes.trim().take(500),
             "visibility" to if (isShared) "SHARED" else "PERSONAL",
             "smsSignature" to expense.smsSignature.take(200),
+            "linkedSmsSignatures" to cleanLinkedSigs,
             "referenceNumber" to expense.referenceNumber.take(100),
             "transactionDateMillis" to expense.transactionDateMillis.coerceAtLeast(1L),
             "memberUids" to expense.memberUids.ifEmpty { listOf(uid) }.distinct().take(20),
@@ -1442,5 +1597,11 @@ class OneFamilyRepository(private val dbProvider: () -> FirebaseFirestore) {
         val exceptionToLog = firestoreError ?: (error as? Exception) ?: RuntimeException(error)
         handleFirestoreError(exceptionToLog, op, path)
         throw error
+    }
+
+    companion object {
+        private val batchImportMutex = Mutex()
+        private val inFlightSignatures = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+        private val firestoreAccountTimestampMap = java.util.concurrent.ConcurrentHashMap<String, Long>()
     }
 }

@@ -68,19 +68,26 @@ val ReceiptPaperBorder = Color(0xFFEAE2D3)
 val ReceiptInkColor = Color(0xFF231F20)
 val ReceiptMutedInk = Color(0xFF756B63)
 
-// Punchy Category Color Helper
-fun categoryAccentColor(category: String): Color {
-    val lower = category.lowercase()
+// Punchy Category Color Helper (distinct accent color per canonical category)
+fun categoryAccentColorArgb(category: String): Int {
+    val lower = category.trim().lowercase()
     return when {
-        lower.contains("grocer") -> Color(0xFF06D6A0) // Fresh Mint
-        lower.contains("food") || lower.contains("dining") -> Color(0xFFFF5A5F) // Warm Coral
-        lower.contains("rent") || lower.contains("housing") -> Color(0xFF8338EC) // Berry Pop
-        lower.contains("bill") || lower.contains("util") -> Color(0xFFFFB703) // Sunny Marigold
-        lower.contains("fuel") || lower.contains("travel") -> Color(0xFF118AB2) // Ocean Pop
-        lower.contains("shop") -> Color(0xFFEC4899) // Pink Pop
-        lower.contains("health") -> Color(0xFF10B981) // Emerald Mint
-        lower.contains("entertain") -> Color(0xFFF97316) // Tangerine
-        lower.contains("invest") || lower.contains("salary") || lower.contains("income") -> Color(0xFF06D6A0)
-        else -> Color(0xFF8338EC)
+        lower.isBlank() || lower == "unknown" || lower == "general" || lower == "uncategorized" -> 0xFF64748B.toInt() // Slate Unknown
+        lower.contains("grocer") -> 0xFF06D6A0.toInt() // Fresh Mint
+        lower.contains("food") || lower.contains("dining") -> 0xFFFF5A5F.toInt() // Warm Coral
+        lower.contains("rent") || lower.contains("housing") -> 0xFF8338EC.toInt() // Berry Pop
+        lower.contains("bill") || lower.contains("util") -> 0xFFFFB703.toInt() // Sunny Marigold
+        lower.contains("fuel") || lower.contains("travel") || lower.contains("transport") -> 0xFF118AB2.toInt() // Ocean Pop
+        lower.contains("shop") -> 0xFFEC4899.toInt() // Pink Pop
+        lower.contains("health") || lower.contains("medical") || lower.contains("fitness") -> 0xFF10B981.toInt() // Emerald Mint
+        lower.contains("entertain") -> 0xFFF97316.toInt() // Tangerine
+        lower.contains("invest") -> 0xFF2563EB.toInt() // Royal Blue
+        lower.contains("salary") || lower.contains("income") -> 0xFF16A34A.toInt() // Income Leaf Green
+        else -> 0xFF0EA5E9.toInt() // Sky Cyan for custom categories
     }
 }
+
+fun categoryAccentColor(category: String): Color {
+    return Color(categoryAccentColorArgb(category))
+}
+

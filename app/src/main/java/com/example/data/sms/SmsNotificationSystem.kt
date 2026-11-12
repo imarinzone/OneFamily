@@ -9,18 +9,25 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.database.ContentObserver
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.Paint
 import android.net.Uri
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.provider.Telephony
+import androidx.annotation.DrawableRes
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
+import androidx.core.graphics.drawable.DrawableCompat
 import com.example.MainActivity
 import com.example.R
 import com.example.data.local.LocalAccountSessionManager
+import com.example.data.model.ExpenseCategories
 import com.example.data.repository.OneFamilyRepository
+import com.example.ui.theme.categoryAccentColorArgb
 import com.google.firebase.Firebase
 import com.google.firebase.auth.auth
 import com.ritesh.parser.core.TransactionType
@@ -49,6 +56,7 @@ object TransactionNotificationHelper {
     private val incomingSmsMutex = Mutex()
     private val notifiedSignatures: MutableSet<String> =
         Collections.synchronizedSet(mutableSetOf<String>())
+    private val notifiedBodyTimestamps = java.util.concurrent.ConcurrentHashMap<String, Long>()
     private val notifiedBudgetKeys: MutableSet<String> =
         Collections.synchronizedSet(mutableSetOf<String>())
 
@@ -85,6 +93,61 @@ object TransactionNotificationHelper {
         }
     }
 
+    @DrawableRes
+    fun categoryNotificationIconRes(category: String): Int {
+        val normalized = ExpenseCategories.normalizeCategory(category).lowercase()
+        return when {
+            normalized == "unknown" -> R.drawable.ic_cat_unknown
+            normalized.contains("grocer") -> R.drawable.ic_cat_groceries
+            normalized.contains("food") || normalized.contains("dining") -> R.drawable.ic_cat_food
+            normalized.contains("rent") || normalized.contains("housing") -> R.drawable.ic_cat_housing
+            normalized.contains("bill") || normalized.contains("util") -> R.drawable.ic_cat_utilities
+            normalized.contains("fuel") || normalized.contains("travel") -> R.drawable.ic_cat_travel
+            normalized.contains("shop") -> R.drawable.ic_cat_shopping
+            normalized.contains("health") || normalized.contains("fitness") -> R.drawable.ic_cat_health
+            normalized.contains("entertain") -> R.drawable.ic_cat_entertainment
+            normalized.contains("invest") -> R.drawable.ic_cat_investments
+            normalized.contains("salary") || normalized.contains("income") -> R.drawable.ic_cat_income
+            else -> R.drawable.ic_cat_custom
+        }
+    }
+
+    fun buildCategoryLargeIconBitmap(context: Context, category: String): Bitmap? {
+        return runCatching {
+            val sizePx = (48f * context.resources.displayMetrics.density).toInt().coerceIn(48, 192)
+            val bitmap = Bitmap.createBitmap(sizePx, sizePx, Bitmap.Config.ARGB_8888)
+            val canvas = Canvas(bitmap)
+            val accentColor = categoryAccentColorArgb(category)
+
+            val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = accentColor
+                style = Paint.Style.FILL
+            }
+            val radius = sizePx / 2f
+            canvas.drawCircle(radius, radius, radius, bgPaint)
+
+            val rawDrawable = ContextCompat.getDrawable(context, categoryNotificationIconRes(category))
+            if (rawDrawable != null) {
+                val wrapped = DrawableCompat.wrap(rawDrawable.mutate())
+                DrawableCompat.setTint(wrapped, android.graphics.Color.WHITE)
+                val pad = (sizePx * 0.24f).toInt()
+                wrapped.setBounds(pad, pad, sizePx - pad, sizePx - pad)
+                wrapped.draw(canvas)
+            }
+            bitmap
+        }.getOrNull()
+    }
+
+    private fun sanitizeSummaryField(raw: String, fallback: String): String {
+        val singleLine = raw
+            .lineSequence()
+            .firstOrNull()
+            .orEmpty()
+            .replace(Regex("\\s+"), " ")
+            .trim()
+        return singleLine.ifBlank { fallback }.take(60)
+    }
+
     fun showNewTransactionNotification(
         context: Context,
         expenseId: String,
@@ -93,7 +156,9 @@ object TransactionNotificationHelper {
         title: String,
         amount: Double,
         currentCategory: String,
-        currencySymbol: String = "₹"
+        currencySymbol: String = "₹",
+        paymentSummary: String = "",
+        transactionType: String = "EXPENSE"
     ) {
         ensureChannel(context)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -105,9 +170,16 @@ object TransactionNotificationHelper {
         }
 
         val notificationId = expenseId.hashCode()
+        val cleanCategory = ExpenseCategories.normalizeCategory(currentCategory)
+        val cleanMerchant = sanitizeSummaryField(title, cleanCategory)
         val formattedAmt = NumberFormat.getNumberInstance(Locale.forLanguageTag("en-IN")).apply {
             maximumFractionDigits = if (amount % 1.0 == 0.0) 0 else 2
         }.format(amount)
+        val amountDisplay = if (transactionType.equals("INCOME", ignoreCase = true)) {
+            "+$currencySymbol$formattedAmt"
+        } else {
+            "$currencySymbol$formattedAmt"
+        }
 
         // Tap notification -> Open MainActivity directly into the Edit Transaction / Category dialog
         val openEditIntent = Intent(context, MainActivity::class.java).apply {
@@ -129,19 +201,37 @@ object TransactionNotificationHelper {
             "Shopping",
             "Bills & Utilities",
             "Fuel & Travel"
-        ).filterNot { it.equals(currentCategory, ignoreCase = true) }.take(3)
+        ).filterNot { it.equals(cleanCategory, ignoreCase = true) }.take(3)
 
-        val scopeLabel = if (visibility == "SHARED" && householdId.isNotBlank()) "Household Shared" else "Personal"
+        val scopeShort = if (visibility == "SHARED" && householdId.isNotBlank()) "Household" else "Personal"
+        val cleanPayment = sanitizeSummaryField(paymentSummary, "")
+        val collapsedSummary = buildString {
+            append(cleanCategory)
+            if (cleanPayment.isNotBlank()) {
+                append(" • ")
+                append(cleanPayment)
+            }
+            append(" • ")
+            append(scopeShort)
+        }
+        val expandedSummary = buildString {
+            append("Merchant: ").append(cleanMerchant)
+            append("\nCategory: ").append(cleanCategory)
+            append(" • Amount: ").append(amountDisplay)
+            if (cleanPayment.isNotBlank()) {
+                append("\nAccount: ").append(cleanPayment).append(" (").append(scopeShort).append(")")
+            } else {
+                append(" (").append(scopeShort).append(")")
+            }
+        }
 
         val builder = NotificationCompat.Builder(context, CHANNEL_ID)
-            .setSmallIcon(R.drawable.ic_notification_receipt)
-            .setContentTitle("$currencySymbol$formattedAmt • $title")
-            .setContentText("New SMS Transaction • Category: $currentCategory ($scopeLabel)")
-            .setStyle(
-                NotificationCompat.BigTextStyle().bigText(
-                    "New SMS Transaction Detected\nCategory: $currentCategory ($scopeLabel)\nTap notification to edit details, or tap a button below to change category:"
-                )
-            )
+            .setSmallIcon(categoryNotificationIconRes(cleanCategory))
+            .setLargeIcon(buildCategoryLargeIconBitmap(context, cleanCategory))
+            .setColor(categoryAccentColorArgb(cleanCategory))
+            .setContentTitle("$cleanMerchant • $amountDisplay")
+            .setContentText(collapsedSummary)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(expandedSummary))
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setCategory(NotificationCompat.CATEGORY_MESSAGE)
             .setAutoCancel(true)
@@ -154,8 +244,8 @@ object TransactionNotificationHelper {
                 putExtra(EXTRA_EDIT_VISIBILITY, visibility)
                 putExtra(EXTRA_NEW_CATEGORY, targetCategory)
                 putExtra(EXTRA_NOTIFICATION_ID, notificationId)
-                putExtra(extraTitle, title)
-                putExtra(extraAmount, "$currencySymbol$formattedAmt")
+                putExtra(extraTitle, cleanMerchant)
+                putExtra(extraAmount, amountDisplay)
             }
             val actionPendingIntent = PendingIntent.getBroadcast(
                 context,
@@ -198,6 +288,8 @@ object TransactionNotificationHelper {
             if (!granted) return
         }
 
+        val cleanCategory = ExpenseCategories.normalizeCategory(category)
+        val cleanMerchant = sanitizeSummaryField(title, cleanCategory)
         val formattedAmt = NumberFormat.getNumberInstance(Locale.forLanguageTag("en-IN")).apply {
             maximumFractionDigits = if (amount % 1.0 == 0.0) 0 else 2
         }.format(amount)
@@ -216,18 +308,18 @@ object TransactionNotificationHelper {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
-        val cleanHousehold = householdName.ifBlank { "Family Home" }
-        val cleanMember = memberName.ifBlank { "Family Member" }
+        val cleanHousehold = sanitizeSummaryField(householdName, "Family Home")
+        val cleanMember = sanitizeSummaryField(memberName, "Family Member")
+        val summaryLine = "$cleanCategory • $cleanMember ($cleanHousehold)"
+        val expandedSummary = "Merchant: $cleanMerchant\nCategory: $cleanCategory • Amount: $currencySymbol$formattedAmt\nBy: $cleanMember ($cleanHousehold)"
 
         val builder = NotificationCompat.Builder(context, CHANNEL_ID_FCM_FAMILY)
-            .setSmallIcon(R.drawable.ic_notification_receipt)
-            .setContentTitle("FCM • $cleanMember logged $currencySymbol$formattedAmt")
-            .setContentText("$title • $category ($cleanHousehold)")
-            .setStyle(
-                NotificationCompat.BigTextStyle().bigText(
-                    "$cleanMember added a shared transaction in $cleanHousehold:\n$title — $currencySymbol$formattedAmt ($category)\nTap to inspect or edit receipt."
-                )
-            )
+            .setSmallIcon(categoryNotificationIconRes(cleanCategory))
+            .setLargeIcon(buildCategoryLargeIconBitmap(context, cleanCategory))
+            .setColor(categoryAccentColorArgb(cleanCategory))
+            .setContentTitle("$cleanMerchant • $currencySymbol$formattedAmt")
+            .setContentText(summaryLine)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(expandedSummary))
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setCategory(NotificationCompat.CATEGORY_SOCIAL)
             .setAutoCancel(true)
@@ -278,15 +370,11 @@ object TransactionNotificationHelper {
         val spentStr = "$currencySymbol${numFmt.format(spentAmount)}"
         val limitStr = "$currencySymbol${numFmt.format(limitAmount)}"
         val headline = if (usedPercent >= 100) {
-            "FCM Budget Exceeded • $categoryOrScopeName ($usedPercent%)"
+            "$categoryOrScopeName • Budget Exceeded ($usedPercent%)"
         } else {
-            "FCM Budget Alert • $categoryOrScopeName at $usedPercent%"
+            "$categoryOrScopeName • $usedPercent% Budget Used"
         }
-        val bodyText = if (usedPercent >= 100) {
-            "Spent $spentStr of $limitStr monthly limit in $categoryOrScopeName. Consider reviewing recent family expenses."
-        } else {
-            "Spent $spentStr of $limitStr ($usedPercent% used, alert threshold $thresholdPercent%)."
-        }
+        val bodyText = "$spentStr of $limitStr monthly limit"
 
         val openAppIntent = Intent(context, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
@@ -300,7 +388,9 @@ object TransactionNotificationHelper {
         )
 
         val builder = NotificationCompat.Builder(context, CHANNEL_ID_FCM_BUDGET)
-            .setSmallIcon(R.drawable.ic_notification_receipt)
+            .setSmallIcon(categoryNotificationIconRes(categoryOrScopeName))
+            .setLargeIcon(buildCategoryLargeIconBitmap(context, categoryOrScopeName))
+            .setColor(categoryAccentColorArgb(categoryOrScopeName))
             .setContentTitle(headline)
             .setContentText(bodyText)
             .setStyle(NotificationCompat.BigTextStyle().bigText(bodyText))
@@ -323,19 +413,43 @@ object TransactionNotificationHelper {
         context: Context,
         candidate: SmsCandidate
     ) = incomingSmsMutex.withLock {
-        val contentKey = SmsInboxReader.buildSmsContentKey(
-            body = candidate.parsed.smsBody,
-            timestamp = candidate.parsed.timestamp
-        )
-        if (candidate.id in notifiedSignatures || contentKey in notifiedSignatures) return@withLock
-        notifiedSignatures.add(candidate.id)
-        notifiedSignatures.add(contentKey)
-
         val appContext = context.applicationContext
         LocalAccountSessionManager.ensureInitialized(appContext)
         val firebaseUser = runCatching { Firebase.auth.currentUser }.getOrNull()
         val localUser = LocalAccountSessionManager.getCurrentUser(appContext)
-        if (firebaseUser == null && localUser == null) return@withLock
+        val activeUid = firebaseUser?.uid ?: localUser?.uid
+        if (activeUid.isNullOrBlank()) return@withLock
+
+        val contentKey = SmsInboxReader.buildSmsContentKey(
+            body = candidate.parsed.smsBody,
+            timestamp = candidate.parsed.timestamp
+        )
+        val adjacentKeys = SmsInboxReader.buildSmsAdjacentContentKeys(
+            body = candidate.parsed.smsBody,
+            timestamp = candidate.parsed.timestamp
+        )
+        val scopedSig = "$activeUid|${candidate.id}"
+        val scopedContentKey = "$activeUid|$contentKey"
+        val scopedAdjacentKeys = adjacentKeys.map { "$activeUid|$it" }
+
+        val normalizedBody = SmsInboxReader.normalizeSmsBody(candidate.parsed.smsBody)
+        val bodyIdentityKey = if (normalizedBody.length >= 15) {
+            "$activeUid|${candidate.parsed.type.name}|${String.format(Locale.US, "%.2f", candidate.parsed.amount.toDouble())}|$normalizedBody"
+        } else {
+            ""
+        }
+
+        if (scopedSig in notifiedSignatures ||
+            scopedContentKey in notifiedSignatures ||
+            scopedAdjacentKeys.any { it in notifiedSignatures }
+        ) return@withLock
+
+        if (bodyIdentityKey.isNotEmpty()) {
+            val prevTs = notifiedBodyTimestamps[bodyIdentityKey]
+            if (prevTs != null && kotlin.math.abs(candidate.parsed.timestamp - prevTs) <= SmsInboxReader.SLIDING_DEDUP_WINDOW_MS) {
+                return@withLock
+            }
+        }
 
         try {
             val repo = OneFamilyRepository(appContext)
@@ -344,10 +458,26 @@ object TransactionNotificationHelper {
                 repo.getHouseholdOnce(it)
             }
 
-            // Check if this SMS (or its content key / linked signature) already exists in the ledger
+            // Check if this SMS (or its adjacent content key / linked signature) already exists in the ledger
             val existingSignatures = repo.getAllExistingSmsSignatures(household?.id)
-            if (candidate.id in existingSignatures || contentKey in existingSignatures) {
+            if (candidate.id in existingSignatures ||
+                contentKey in existingSignatures ||
+                adjacentKeys.any { it in existingSignatures }
+            ) {
+                notifiedSignatures.add(scopedSig)
+                notifiedSignatures.add(scopedContentKey)
+                notifiedSignatures.addAll(scopedAdjacentKeys)
+                if (bodyIdentityKey.isNotEmpty()) {
+                    notifiedBodyTimestamps[bodyIdentityKey] = candidate.parsed.timestamp
+                }
                 return@withLock
+            }
+
+            notifiedSignatures.add(scopedSig)
+            notifiedSignatures.add(scopedContentKey)
+            notifiedSignatures.addAll(scopedAdjacentKeys)
+            if (bodyIdentityKey.isNotEmpty()) {
+                notifiedBodyTimestamps[bodyIdentityKey] = candidate.parsed.timestamp
             }
 
             val parsed = candidate.parsed
@@ -378,6 +508,13 @@ object TransactionNotificationHelper {
             )
 
             val expenseIdToNotify = savedResult.getOrDefault(docId)
+            val paymentSummary = buildString {
+                if (candidate.suggestedAccountName.isNotBlank()) append(candidate.suggestedAccountName)
+                if (candidate.suggestedPaymentMode.isNotBlank()) {
+                    if (isNotEmpty()) append(" • ")
+                    append(candidate.suggestedPaymentMode)
+                }
+            }
             showNewTransactionNotification(
                 context = appContext,
                 expenseId = expenseIdToNotify,
@@ -386,7 +523,9 @@ object TransactionNotificationHelper {
                 title = merchantTitle,
                 amount = parsed.amount.toDouble(),
                 currentCategory = candidate.suggestedCategory,
-                currencySymbol = currencySymbol
+                currencySymbol = currencySymbol,
+                paymentSummary = paymentSummary,
+                transactionType = if (isIncome) "INCOME" else "EXPENSE"
             )
 
             if (household != null) {
@@ -447,10 +586,13 @@ class NotificationCategoryActionReceiver : BroadcastReceiver() {
                 if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
                     ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
                 ) {
+                    val normalizedNew = ExpenseCategories.normalizeCategory(newCategory)
                     val updatedBuilder = NotificationCompat.Builder(context, TransactionNotificationHelper.CHANNEL_ID)
-                        .setSmallIcon(R.drawable.ic_notification_receipt)
-                        .setContentTitle("$amountText • $title")
-                        .setContentText("Category updated to $newCategory ✓")
+                        .setSmallIcon(TransactionNotificationHelper.categoryNotificationIconRes(normalizedNew))
+                        .setLargeIcon(TransactionNotificationHelper.buildCategoryLargeIconBitmap(context, normalizedNew))
+                        .setColor(categoryAccentColorArgb(normalizedNew))
+                        .setContentTitle("$title • $amountText")
+                        .setContentText("Category: $normalizedNew ✓")
                         .setPriority(NotificationCompat.PRIORITY_DEFAULT)
                         .setAutoCancel(true)
                         .setTimeoutAfter(4000L)

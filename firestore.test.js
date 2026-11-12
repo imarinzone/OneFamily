@@ -190,3 +190,58 @@ test("Shadow update test: rejecting unexpected ghost fields on UserProfile", asy
     })
   );
 });
+
+test("SMS deduplication signatures: linkedSmsSignatures allowed on create/update and bounded to <= 20 items", async () => {
+  const aliceDb = testEnv.authenticatedContext(ALICE_UID).firestore();
+  const now = new Date(Date.now() - 1000);
+
+  await assertSucceeds(
+    aliceDb
+      .collection("users")
+      .doc(ALICE_UID)
+      .collection("personal_expenses")
+      .doc("sms_exp_1")
+      .set({
+        userId: ALICE_UID,
+        userName: "Alice",
+        title: "Blue Bottle Cafe",
+        amount: 1850,
+        type: "EXPENSE",
+        category: "Food & Dining",
+        accountName: "HDFC Bank ••4821",
+        paymentMode: "UPI",
+        visibility: "PERSONAL",
+        smsSignature: "sms_sig_primary_1",
+        linkedSmsSignatures: [],
+        transactionDateMillis: 1730000000000,
+        createdAt: now,
+        updatedAt: now,
+      })
+  );
+
+  await assertSucceeds(
+    aliceDb
+      .collection("users")
+      .doc(ALICE_UID)
+      .collection("personal_expenses")
+      .doc("sms_exp_1")
+      .update({
+        linkedSmsSignatures: ["sms_sig_dup_2"],
+        updatedAt: new Date(Date.now() - 500),
+      })
+  );
+
+  const oversizedSignatures = Array.from({ length: 21 }, (_, idx) => `sig_${idx}`);
+  await assertFails(
+    aliceDb
+      .collection("users")
+      .doc(ALICE_UID)
+      .collection("personal_expenses")
+      .doc("sms_exp_1")
+      .update({
+        linkedSmsSignatures: oversizedSignatures,
+        updatedAt: new Date(Date.now() - 250),
+      })
+  );
+});
+

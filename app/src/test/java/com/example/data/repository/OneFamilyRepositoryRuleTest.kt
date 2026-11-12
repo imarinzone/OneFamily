@@ -158,8 +158,112 @@ class OneFamilyRepositoryRuleTest : FirestoreEmulatorTestBase() {
         assertEquals("Food & Dining", BankParserFactory.inferCategory(sbiParsed))
     }
 
+    @Test
+    fun smsDeduplication_and_linkDuplicate_preservesLinkedSignaturesAcrossPrivacyMoves() = runBlocking {
+        val aliceUid = signInTestUser("alice_sms_dedup@test.com")
+        val repo = OneFamilyRepository(firestore)
+
+        val household = withTimeout(DEFAULT_TIMEOUT_MS) {
+            repo.ensureUserProfile("Alice", "alice_sms_dedup@test.com").getOrThrow()
+            repo.createHousehold(
+                name = "Dedup Family",
+                monthlyBudgetLimit = 60000.0,
+                currencySymbol = "₹",
+                userDisplayName = "Alice",
+                userEmail = "alice_sms_dedup@test.com"
+            ).getOrThrow()
+        }
+
+        // Cross-bucket boundary timestamps: 599,500ms (bucket 0/1) vs 601,000ms (bucket 1/2)
+        val base10MinBoundary = 1_730_000_400_000L // exact multiple of 600_000L (10m) and 300_000L (5m)
+        val tsBeforeBoundary = base10MinBoundary - 500L
+        val tsAfterBoundary = base10MinBoundary + 1_000L
+
+        val smsBody = "Rs. 1,420.00 debited from A/c XX4821 on 05-11-26 to VPA swiggy@icici (UPI Ref 776655443322)."
+        val parsedA = BankParserFactory.parseSms(smsBody, "VM-HDFCBK", tsBeforeBoundary)!!
+        val candidateA = com.example.data.sms.SmsCandidate(
+            id = parsedA.generateTransactionId(),
+            parsed = parsedA,
+            suggestedCategory = BankParserFactory.inferCategory(parsedA),
+            suggestedAccountName = BankParserFactory.formatAccountDisplayName(parsedA),
+            suggestedPaymentMode = BankParserFactory.inferPaymentMode(parsedA),
+            isSharedByDefault = true
+        )
+        val parsedB = BankParserFactory.parseSms(smsBody, "AD-HDFCBK", tsAfterBoundary)!!
+        val candidateBCrossBoundaryDup = com.example.data.sms.SmsCandidate(
+            id = parsedB.generateTransactionId(),
+            parsed = parsedB,
+            suggestedCategory = BankParserFactory.inferCategory(parsedB),
+            suggestedAccountName = BankParserFactory.formatAccountDisplayName(parsedB),
+            suggestedPaymentMode = BankParserFactory.inferPaymentMode(parsedB),
+            isSharedByDefault = true
+        )
+
+        val importedCount = withTimeout(DEFAULT_TIMEOUT_MS) {
+            repo.batchImportSmsCandidates(
+                candidates = listOf(candidateA, candidateBCrossBoundaryDup),
+                userName = "Alice",
+                household = household,
+                shareByDefault = true
+            ).getOrThrow()
+        }
+        assertEquals("Cross-boundary identical SMS should import exactly once", 1, importedCount)
+
+        // Separate UPI app alert with different wording -> imported so user can link it, then preserved across Personal <-> Shared move
+        val upiBody = "You paid Rs. 1,420.00 to Swiggy via UPI Ref 776655443322 from HDFC Bank XX4821."
+        val parsedUpi = BankParserFactory.parseSms(upiBody, "AX-GPAY", tsAfterBoundary + 8_000L)!!
+        val upiCandidate = com.example.data.sms.SmsCandidate(
+            id = parsedUpi.generateTransactionId(),
+            parsed = parsedUpi,
+            suggestedCategory = BankParserFactory.inferCategory(parsedUpi),
+            suggestedAccountName = BankParserFactory.formatAccountDisplayName(parsedUpi),
+            suggestedPaymentMode = BankParserFactory.inferPaymentMode(parsedUpi),
+            isSharedByDefault = true
+        )
+        withTimeout(DEFAULT_TIMEOUT_MS) {
+            repo.batchImportSmsCandidates(
+                candidates = listOf(upiCandidate),
+                userName = "Alice",
+                household = household,
+                shareByDefault = true
+            ).getOrThrow()
+        }
+
+        val sharedBeforeLink = withTimeout(FLOW_TIMEOUT_MS) {
+            repo.observeSharedExpenses(household.id, aliceUid).first { it.size == 2 }
+        }
+        val primary = sharedBeforeLink.first { it.smsSignature == candidateA.id }
+        val secondary = sharedBeforeLink.first { it.smsSignature == upiCandidate.id }
+
+        val merged = withTimeout(DEFAULT_TIMEOUT_MS) {
+            repo.linkDuplicateTransaction(primary, secondary).getOrThrow()
+        }
+        assertTrue(merged.linkedSmsSignatures.contains(upiCandidate.id))
+
+        // Move SHARED -> PERSONAL atomically and verify linkedSmsSignatures persists and blocks re-import
+        withTimeout(DEFAULT_TIMEOUT_MS) {
+            repo.toggleExpensePrivacy(merged, household).getOrThrow()
+        }
+        val personalList = withTimeout(FLOW_TIMEOUT_MS) {
+            repo.observePersonalExpenses(aliceUid).first { list -> list.any { it.id == merged.id } }
+        }
+        val movedPersonal = personalList.first { it.id == merged.id }
+        assertTrue(movedPersonal.linkedSmsSignatures.contains(upiCandidate.id))
+
+        val reimportAfterMove = withTimeout(DEFAULT_TIMEOUT_MS) {
+            repo.batchImportSmsCandidates(
+                candidates = listOf(upiCandidate, candidateBCrossBoundaryDup),
+                userName = "Alice",
+                household = household,
+                shareByDefault = true
+            ).getOrThrow()
+        }
+        assertEquals(0, reimportAfterMove)
+    }
+
     private companion object {
         const val DEFAULT_TIMEOUT_MS = 5000L
         const val FLOW_TIMEOUT_MS = 4000L
     }
 }
+

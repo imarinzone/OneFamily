@@ -8,95 +8,132 @@ import androidx.compose.ui.unit.sp
 
 val GoogleDefaultFontFamily = FontFamily.Default
 
+private fun guardedTextStyle(
+    fontWeight: FontWeight,
+    baseFontSizeSp: Float,
+    baseLineHeightSp: Float,
+    scale: Float,
+    baseLetterSpacingSp: Float = 0f
+): TextStyle {
+    val computedFontSize = (baseFontSizeSp * scale).let {
+        if (it.isFinite() && it > 0f) it.coerceIn(9f, 52f) else baseFontSizeSp
+    }
+    val minSafeLineHeight = computedFontSize * 1.25f
+    val computedLineHeight = (baseLineHeightSp * scale).let {
+        if (it.isFinite() && it >= minSafeLineHeight) it else minSafeLineHeight
+    }
+    val computedLetterSpacing = (baseLetterSpacingSp * scale).let {
+        if (it.isFinite()) it.coerceIn(-1.5f, 1.5f) else 0f
+    }
+    return TextStyle(
+        fontFamily = GoogleDefaultFontFamily,
+        fontWeight = fontWeight,
+        fontSize = computedFontSize.sp,
+        lineHeight = computedLineHeight.sp,
+        letterSpacing = computedLetterSpacing.sp
+    )
+}
+
 /**
  * Dynamically scales all typography sizes relative to the phone's screen dimensions (`scale`)
- * using Google default system fonts (`FontFamily.Default`).
+ * and OS accessibility `fontScale` using Google default system fonts (`FontFamily.Default`).
+ * Always enforces finite, bounded scale values and safe line heights unconditionally.
  */
-fun buildResponsiveTypography(scale: Float = 1f): Typography {
-    val s = scale.coerceIn(0.82f, 1.30f)
+fun buildResponsiveTypography(
+    scale: Float = 1f,
+    fontScale: Float = 1f
+): Typography {
+    val safeScale = if (scale.isFinite() && scale > 0f) scale.coerceIn(0.82f, 1.30f) else 1f
+    val safeFontScale = if (fontScale.isFinite() && fontScale > 0f) fontScale.coerceIn(0.75f, 2.50f) else 1f
+    val effectiveScale = if (safeScale * safeFontScale > 1.55f) {
+        (1.55f / safeFontScale).coerceIn(0.82f, 1.22f)
+    } else {
+        safeScale
+    }
+
     return Typography(
-        displayLarge = TextStyle(
-            fontFamily = GoogleDefaultFontFamily,
+        displayLarge = guardedTextStyle(
             fontWeight = FontWeight.Bold,
-            fontSize = (38f * s).sp,
-            lineHeight = (44f * s).sp,
-            letterSpacing = (-0.5f * s).sp
+            baseFontSizeSp = 38f,
+            baseLineHeightSp = 48f,
+            scale = effectiveScale,
+            baseLetterSpacingSp = -0.5f
         ),
-        displayMedium = TextStyle(
-            fontFamily = GoogleDefaultFontFamily,
+        displayMedium = guardedTextStyle(
             fontWeight = FontWeight.Bold,
-            fontSize = (30f * s).sp,
-            lineHeight = (36f * s).sp,
-            letterSpacing = (-0.25f * s).sp
+            baseFontSizeSp = 30f,
+            baseLineHeightSp = 38f,
+            scale = effectiveScale,
+            baseLetterSpacingSp = -0.25f
         ),
-        headlineLarge = TextStyle(
-            fontFamily = GoogleDefaultFontFamily,
+        headlineLarge = guardedTextStyle(
             fontWeight = FontWeight.Bold,
-            fontSize = (24f * s).sp,
-            lineHeight = (30f * s).sp
+            baseFontSizeSp = 24f,
+            baseLineHeightSp = 31f,
+            scale = effectiveScale
         ),
-        headlineMedium = TextStyle(
-            fontFamily = GoogleDefaultFontFamily,
+        headlineMedium = guardedTextStyle(
             fontWeight = FontWeight.SemiBold,
-            fontSize = (20f * s).sp,
-            lineHeight = (26f * s).sp
+            baseFontSizeSp = 20f,
+            baseLineHeightSp = 26f,
+            scale = effectiveScale
         ),
-        titleLarge = TextStyle(
-            fontFamily = GoogleDefaultFontFamily,
+        titleLarge = guardedTextStyle(
             fontWeight = FontWeight.SemiBold,
-            fontSize = (18f * s).sp,
-            lineHeight = (24f * s).sp
+            baseFontSizeSp = 18f,
+            baseLineHeightSp = 24f,
+            scale = effectiveScale
         ),
-        titleMedium = TextStyle(
-            fontFamily = GoogleDefaultFontFamily,
+        titleMedium = guardedTextStyle(
             fontWeight = FontWeight.SemiBold,
-            fontSize = (15.5f * s).sp,
-            lineHeight = (21f * s).sp,
-            letterSpacing = (0.1f * s).sp
+            baseFontSizeSp = 15.5f,
+            baseLineHeightSp = 21f,
+            scale = effectiveScale,
+            baseLetterSpacingSp = 0.1f
         ),
-        titleSmall = TextStyle(
-            fontFamily = GoogleDefaultFontFamily,
+        titleSmall = guardedTextStyle(
             fontWeight = FontWeight.Medium,
-            fontSize = (13.5f * s).sp,
-            lineHeight = (19f * s).sp
+            baseFontSizeSp = 13.5f,
+            baseLineHeightSp = 19f,
+            scale = effectiveScale
         ),
-        bodyLarge = TextStyle(
-            fontFamily = GoogleDefaultFontFamily,
+        bodyLarge = guardedTextStyle(
             fontWeight = FontWeight.Normal,
-            fontSize = (15.5f * s).sp,
-            lineHeight = (22f * s).sp
+            baseFontSizeSp = 15.5f,
+            baseLineHeightSp = 22f,
+            scale = effectiveScale
         ),
-        bodyMedium = TextStyle(
-            fontFamily = GoogleDefaultFontFamily,
+        bodyMedium = guardedTextStyle(
             fontWeight = FontWeight.Normal,
-            fontSize = (13.5f * s).sp,
-            lineHeight = (19f * s).sp
+            baseFontSizeSp = 13.5f,
+            baseLineHeightSp = 19f,
+            scale = effectiveScale
         ),
-        bodySmall = TextStyle(
-            fontFamily = GoogleDefaultFontFamily,
+        bodySmall = guardedTextStyle(
             fontWeight = FontWeight.Normal,
-            fontSize = (12f * s).sp,
-            lineHeight = (16f * s).sp
+            baseFontSizeSp = 12f,
+            baseLineHeightSp = 16f,
+            scale = effectiveScale
         ),
-        labelLarge = TextStyle(
-            fontFamily = GoogleDefaultFontFamily,
+        labelLarge = guardedTextStyle(
             fontWeight = FontWeight.SemiBold,
-            fontSize = (13.5f * s).sp,
-            lineHeight = (19f * s).sp
+            baseFontSizeSp = 13.5f,
+            baseLineHeightSp = 19f,
+            scale = effectiveScale
         ),
-        labelMedium = TextStyle(
-            fontFamily = GoogleDefaultFontFamily,
+        labelMedium = guardedTextStyle(
             fontWeight = FontWeight.Medium,
-            fontSize = (12f * s).sp,
-            lineHeight = (16f * s).sp
+            baseFontSizeSp = 12f,
+            baseLineHeightSp = 16f,
+            scale = effectiveScale
         ),
-        labelSmall = TextStyle(
-            fontFamily = GoogleDefaultFontFamily,
+        labelSmall = guardedTextStyle(
             fontWeight = FontWeight.Medium,
-            fontSize = (10.8f * s).sp,
-            lineHeight = (14.5f * s).sp
+            baseFontSizeSp = 10.8f,
+            baseLineHeightSp = 14.5f,
+            scale = effectiveScale
         )
     )
 }
 
-val Typography = buildResponsiveTypography(1f)
+val Typography = buildResponsiveTypography(1f, 1f)

@@ -328,14 +328,8 @@ fun OneFamilyTheme(
     val rawWidthScale = screenWidthDp / 390f
     val rawHeightScale = screenHeightDp / 844f
     val fontScale = configuration.fontScale.let { if (it.isFinite() && it > 0f) it else 1f }
-    val widthScale = if (rawWidthScale.isFinite()) rawWidthScale.coerceIn(0.82f, 1.30f) else 1f
-    val heightScale = if (rawHeightScale.isFinite()) rawHeightScale.coerceIn(0.82f, 1.30f) else 1f
-    // Guard against extreme OS font scale + screen scale combinations causing text clipping or OOM
-    val guardedTypographyScale = if (widthScale * fontScale > 1.55f) {
-        (1.55f / fontScale).coerceIn(0.82f, 1.22f)
-    } else {
-        widthScale
-    }
+    val widthScale = if (rawWidthScale.isFinite() && rawWidthScale > 0f) rawWidthScale.coerceIn(0.82f, 1.30f) else 1f
+    val heightScale = if (rawHeightScale.isFinite() && rawHeightScale > 0f) rawHeightScale.coerceIn(0.82f, 1.30f) else 1f
 
     val appDimens = remember(screenWidthDp, screenHeightDp) {
         val sw = screenWidthDp.dp
@@ -361,8 +355,8 @@ fun OneFamilyTheme(
         )
     }
 
-    val responsiveTypography = remember(guardedTypographyScale) {
-        runCatching { buildResponsiveTypography(guardedTypographyScale) }
+    val responsiveTypography = remember(widthScale, fontScale) {
+        runCatching { buildResponsiveTypography(scale = widthScale, fontScale = fontScale) }
             .getOrElse { Typography }
     }
 

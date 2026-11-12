@@ -121,19 +121,11 @@ object LocalAccountSessionManager {
         val deviceLabel = "${Build.MANUFACTURER} ${Build.MODEL} (SDK ${Build.VERSION.SDK_INT})"
         return listOf(
             StabilityDiagnosticEntry(
-                id = "diag_init_sms_guard",
-                timestampMillis = System.currentTimeMillis() - 120_000L,
-                subsystem = "SMS_AUTO_SYNC",
-                severity = "INFO",
-                message = "Parallel 6-reader / 6-writer batch SMS sync guard active.",
-                deviceModel = deviceLabel
-            ),
-            StabilityDiagnosticEntry(
-                id = "diag_init_typo_guard",
+                id = "diag_init_runtime",
                 timestampMillis = System.currentTimeMillis() - 60_000L,
-                subsystem = "RESPONSIVE_TYPOGRAPHY",
+                subsystem = "RUNTIME_HEALTH",
                 severity = "INFO",
-                message = "Relative screen typography scaling verified with safe font bounds.",
+                message = "Crashlytics runtime diagnostics initialized.",
                 deviceModel = deviceLabel
             )
         )
@@ -197,8 +189,6 @@ object LocalAccountSessionManager {
         _crashlyticsSettings.value = settings
         val obj = JSONObject().apply {
             put("crashReportingEnabled", settings.crashReportingEnabled)
-            put("smsSyncGuardEnabled", settings.smsSyncGuardEnabled)
-            put("typographyGuardEnabled", settings.typographyGuardEnabled)
         }
         prefs(context).edit().putString(KEY_CRASHLYTICS_SETTINGS, obj.toString()).apply()
     }
@@ -209,22 +199,11 @@ object LocalAccountSessionManager {
 
     fun setExpertFeatureFlags(context: Context, settings: ExpertFeatureFlagsSettings) {
         ensureInitialized(context)
-        val clamped = settings.copy(
-            readerThreadCount = settings.readerThreadCount.coerceIn(5, 12),
-            writerThreadCount = settings.writerThreadCount.coerceIn(5, 12),
-            smsBatchSize = settings.smsBatchSize.coerceIn(5, 50)
-        )
-        _expertFeatureFlags.value = clamped
+        _expertFeatureFlags.value = settings
         val obj = JSONObject().apply {
-            put("expertModeEnabled", clamped.expertModeEnabled)
-            put("crashAnalyticsFeatureEnabled", clamped.crashAnalyticsFeatureEnabled)
-            put("fcmPushDiagnosticsEnabled", clamped.fcmPushDiagnosticsEnabled)
-            put("parallelSmsEngineTuningEnabled", clamped.parallelSmsEngineTuningEnabled)
-            put("strictDuplicateLinkerEnabled", clamped.strictDuplicateLinkerEnabled)
-            put("rawSmsDebugInspectorEnabled", clamped.rawSmsDebugInspectorEnabled)
-            put("readerThreadCount", clamped.readerThreadCount)
-            put("writerThreadCount", clamped.writerThreadCount)
-            put("smsBatchSize", clamped.smsBatchSize)
+            put("expertModeEnabled", settings.expertModeEnabled)
+            put("crashAnalyticsFeatureEnabled", settings.crashAnalyticsFeatureEnabled)
+            put("fcmPushDiagnosticsEnabled", settings.fcmPushDiagnosticsEnabled)
         }
         prefs(context).edit().putString(KEY_EXPERT_FEATURE_FLAGS, obj.toString()).apply()
     }
@@ -312,9 +291,7 @@ object LocalAccountSessionManager {
         return runCatching {
             val o = JSONObject(raw)
             CrashlyticsSettings(
-                crashReportingEnabled = o.optBoolean("crashReportingEnabled", true),
-                smsSyncGuardEnabled = o.optBoolean("smsSyncGuardEnabled", true),
-                typographyGuardEnabled = o.optBoolean("typographyGuardEnabled", true)
+                crashReportingEnabled = o.optBoolean("crashReportingEnabled", true)
             )
         }.getOrDefault(CrashlyticsSettings())
     }
@@ -326,13 +303,7 @@ object LocalAccountSessionManager {
             ExpertFeatureFlagsSettings(
                 expertModeEnabled = o.optBoolean("expertModeEnabled", false),
                 crashAnalyticsFeatureEnabled = o.optBoolean("crashAnalyticsFeatureEnabled", true),
-                fcmPushDiagnosticsEnabled = o.optBoolean("fcmPushDiagnosticsEnabled", true),
-                parallelSmsEngineTuningEnabled = o.optBoolean("parallelSmsEngineTuningEnabled", true),
-                strictDuplicateLinkerEnabled = o.optBoolean("strictDuplicateLinkerEnabled", true),
-                rawSmsDebugInspectorEnabled = o.optBoolean("rawSmsDebugInspectorEnabled", true),
-                readerThreadCount = o.optInt("readerThreadCount", 6).coerceIn(5, 12),
-                writerThreadCount = o.optInt("writerThreadCount", 6).coerceIn(5, 12),
-                smsBatchSize = o.optInt("smsBatchSize", 12).coerceIn(5, 50)
+                fcmPushDiagnosticsEnabled = o.optBoolean("fcmPushDiagnosticsEnabled", true)
             )
         }.getOrDefault(ExpertFeatureFlagsSettings())
     }
@@ -630,18 +601,32 @@ object LocalAccountDataStore {
         }
     }
 
+    fun getSmsRecordBySignature(signature: String): SmsRawRecord? {
+        val clean = signature.trim().removePrefix("sms_")
+        if (clean.isBlank()) return null
+        val map = smsRawMapFlow.value
+        return map[signature.trim()] ?: map[clean]
+    }
+
     fun getAllExistingSmsSignatures(uid: String): Set<String> = synchronized(storeLock) {
         if (uid.isBlank()) return emptySet()
+        val map = smsRawMapFlow.value
         expensesFlow.value
             .filter { it.userId == uid || (it.memberUids.contains(uid) && (uid == LocalAccountSessionManager.DEFAULT_TEST_UID || it.userId != LocalAccountSessionManager.DEFAULT_TEST_UID)) }
             .flatMap { tx ->
-                val rawBody = tx.notes.substringAfter("] ", tx.notes).trim()
-                val contentKey = if (rawBody.isNotBlank() && tx.smsSignature.isNotBlank()) {
-                    com.example.data.sms.SmsInboxReader.buildSmsContentKey(rawBody, tx.transactionDateMillis)
+                val rawBody = com.example.data.sms.SmsInboxReader.extractRawSmsBodyFromNotes(tx.notes)
+                val notesKeys = if (rawBody.isNotBlank() && tx.smsSignature.isNotBlank()) {
+                    com.example.data.sms.SmsInboxReader.buildSmsAdjacentContentKeys(rawBody, tx.transactionDateMillis)
                 } else {
-                    ""
+                    emptyList()
                 }
-                tx.linkedSmsSignatures + listOf(tx.smsSignature, tx.id, contentKey)
+                val cachedKeys = (listOf(tx.smsSignature) + tx.linkedSmsSignatures)
+                    .filter { it.isNotBlank() }
+                    .mapNotNull { sig -> map[sig] ?: map[sig.removePrefix("sms_")] }
+                    .flatMap { rec ->
+                        com.example.data.sms.SmsInboxReader.buildSmsAdjacentContentKeys(rec.body, rec.timestamp)
+                    }
+                tx.linkedSmsSignatures + listOf(tx.smsSignature, tx.id) + notesKeys + cachedKeys
             }
             .filter { it.isNotBlank() }
             .flatMap { listOf(it, it.removePrefix("sms_")) }
@@ -649,14 +634,15 @@ object LocalAccountDataStore {
     }
 
     /**
-     * Ensures the exact same SMS message (same smsSignature, or identical normalized SMS body +
-     * amount + type within a 10-minute window) never produces duplicate transactions in the ledger.
+     * Ensures the exact same SMS message (same smsSignature, linked duplicate signature, or
+     * identical normalized SMS body + amount + type within a true 10-minute sliding window,
+     * with zero fixed-bucket boundary splits) never produces duplicate transactions in the ledger.
      */
     fun deduplicateSmsExpenses(list: List<ExpenseTransaction>): List<ExpenseTransaction> {
         if (list.size <= 1) return list
         val result = mutableListOf<ExpenseTransaction>()
         val seenSignatures = mutableSetOf<String>()
-        val seenContentFingerprints = mutableSetOf<String>()
+        val seenSlidingBodyTimestamps = mutableMapOf<String, MutableList<Long>>()
 
         // Synthetic mock entries are preserved only for the demo Test User; real users never get synthetic entries
         val cleaned = list.filter {
@@ -664,22 +650,37 @@ object LocalAccountDataStore {
                 (!it.id.startsWith("mock_tx_") && !it.id.startsWith("demo_"))
         }
 
+        // Pre-seed all linkedSmsSignatures from kept primary transactions so linked duplicates never resurface
+        cleaned.forEach { tx ->
+            tx.linkedSmsSignatures.forEach { linked ->
+                val cleanLinked = linked.trim().removePrefix("sms_")
+                if (cleanLinked.isNotBlank()) {
+                    seenSignatures.add(cleanLinked)
+                }
+            }
+        }
+
         for (tx in cleaned) {
             val sig = tx.smsSignature.trim().removePrefix("sms_")
+            val cleanDocId = tx.id.trim().removePrefix("sms_")
             if (sig.isNotBlank()) {
-                if (!seenSignatures.add(sig)) continue
-                tx.linkedSmsSignatures.forEach { linked ->
-                    seenSignatures.add(linked.trim().removePrefix("sms_"))
-                }
-                val rawSmsText = tx.notes.substringAfter("] ", tx.notes)
-                    .trim()
-                    .replace(Regex("\\s+"), " ")
-                    .lowercase()
+                if (sig in seenSignatures || cleanDocId in seenSignatures) continue
+                val rawSmsText = com.example.data.sms.SmsInboxReader.normalizeSmsBody(
+                    com.example.data.sms.SmsInboxReader.extractRawSmsBodyFromNotes(tx.notes)
+                )
                 if (rawSmsText.length >= 15) {
-                    val bucket = tx.transactionDateMillis / 600_000L
-                    val fp = "${tx.userId}|${tx.type}|${"%.2f".format(tx.amount)}|$bucket|$rawSmsText"
-                    if (!seenContentFingerprints.add(fp)) continue
+                    val fpKey = "${tx.userId}|${tx.type}|${String.format(java.util.Locale.US, "%.2f", tx.amount)}|$rawSmsText"
+                    val timestamps = seenSlidingBodyTimestamps[fpKey]
+                    if (timestamps != null && timestamps.any { prevTs ->
+                            kotlin.math.abs(tx.transactionDateMillis - prevTs) <= com.example.data.sms.SmsInboxReader.SLIDING_DEDUP_WINDOW_MS
+                        }
+                    ) {
+                        continue
+                    }
+                    seenSlidingBodyTimestamps.getOrPut(fpKey) { mutableListOf() }.add(tx.transactionDateMillis)
                 }
+                seenSignatures.add(sig)
+                if (cleanDocId.isNotBlank()) seenSignatures.add(cleanDocId)
             }
             result.add(tx)
         }
@@ -721,7 +722,7 @@ object LocalAccountDataStore {
             smsRawMapFlow.value[sig]?.let { return it }
         }
         // Fallback if the raw SMS was stored in notes
-        val notes = tx.notes.trim()
+        val notes = tx.notes.substringBefore("\n[Linked Duplicate:").substringBefore("[Linked Duplicate:").trim()
         if (notes.startsWith("[") && notes.contains("] ")) {
             val sender = notes.substringAfter("[").substringBefore("]")
             val body = notes.substringAfter("] ").trim()
@@ -845,33 +846,33 @@ object LocalAccountDataStore {
 
             val mockDefs = listOf(
                 // Month 0 (Current Month)
-                MockItemDef(0, 1, 10, "Infosys Tech Ltd Salary", 85000.0, "INCOME", "Salary", "HDFC Salary A/c", "BANK", true, "VM-HDFCBK", "Rs. 85,000.00 credited to your A/c XX4321 on 01-11-2026 by INFOSYS TECH LTD SALARY NEFT Ref 9911223344. Avl Bal: Rs. 1,02,450.00.", "9911223344"),
+                MockItemDef(0, 1, 10, "Infosys Tech Ltd Salary", 85000.0, "INCOME", "Salary & Income", "HDFC Salary A/c", "BANK", true, "VM-HDFCBK", "Rs. 85,000.00 credited to your A/c XX4321 on 01-11-2026 by INFOSYS TECH LTD SALARY NEFT Ref 9911223344. Avl Bal: Rs. 1,02,450.00.", "9911223344"),
                 MockItemDef(0, 3, 11, "Apartment Rent", 24000.0, "EXPENSE", "Rent & Housing", "HDFC Salary A/c", "BANK", true, "VM-HDFCBK", "Rs. 24,000.00 debited from A/c XX4321 on 03-11-2026 to LANDLORD RENT via NEFT Ref 7766554433. Avl Bal: Rs. 78,450.00.", "7766554433"),
                 MockItemDef(0, 5, 16, "Nature's Basket Groceries", 3450.0, "EXPENSE", "Groceries", "HDFC Salary A/c", "UPI", true, "VM-HDFCBK", "Rs. 3,450.00 debited from A/c XX4321 on 05-11-2026 at Nature's Basket via UPI Ref 8877665544. Avl Bal: Rs. 75,000.00.", "8877665544"),
                 MockItemDef(0, 7, 9, "Blue Tokai Coffee Roasters", 380.0, "EXPENSE", "Food & Dining", "ICICI Savings A/c", "UPI", false, "VM-ICICIB", "Rs. 380.00 debited from A/c XX9012 on 07-11-2026 at Blue Tokai Coffee via UPI Ref 3344556677. Avl Bal: Rs. 35,220.00.", "3344556677"),
-                MockItemDef(0, 9, 14, "Shell Petrol Pump", 2800.0, "EXPENSE", "Transportation", "Axis Neo Credit Card", "CARD", true, "AX-AXISBK", "Alert: Rs. 2,800.00 spent on Axis Card 7788 at Shell Petrol Pump on 09-11-2026. Avail Limit: Rs. 1,47,200.00.", "TX778809"),
-                MockItemDef(0, 11, 18, "Apollo Pharmacy", 850.0, "EXPENSE", "Health & Medical", "HDFC Salary A/c", "UPI", true, "VM-HDFCBK", "Rs. 850.00 debited from A/c XX4321 on 11-11-2026 at Apollo Pharmacy via UPI Ref 1122334455. Avl Bal: Rs. 74,150.00.", "1122334455"),
+                MockItemDef(0, 9, 14, "Shell Petrol Pump", 2800.0, "EXPENSE", "Fuel & Travel", "Axis Neo Credit Card", "CARD", true, "AX-AXISBK", "Alert: Rs. 2,800.00 spent on Axis Card 7788 at Shell Petrol Pump on 09-11-2026. Avail Limit: Rs. 1,47,200.00.", "TX778809"),
+                MockItemDef(0, 11, 18, "Apollo Pharmacy", 850.0, "EXPENSE", "Health & Fitness", "HDFC Salary A/c", "UPI", true, "VM-HDFCBK", "Rs. 850.00 debited from A/c XX4321 on 11-11-2026 at Apollo Pharmacy via UPI Ref 1122334455. Avl Bal: Rs. 74,150.00.", "1122334455"),
                 MockItemDef(0, 13, 20, "Swiggy Gourmet Dinner", 1240.0, "EXPENSE", "Food & Dining", "HDFC Salary A/c", "UPI", true, "VM-HDFCBK", "Rs. 1,240.00 debited from A/c XX4321 on 13-11-2026 at Swiggy via UPI Ref 4433221100. Avl Bal: Rs. 72,910.00.", "4433221100"),
-                MockItemDef(0, 15, 12, "Tata Power Electricity Bill", 2100.0, "EXPENSE", "Utilities", "ICICI Savings A/c", "UPI", true, "VM-ICICIB", "Rs. 2,100.00 debited from A/c XX9012 on 15-11-2026 to Tata Power Electricity Bill via UPI Ref 5566778899. Avl Bal: Rs. 33,120.00.", "5566778899"),
+                MockItemDef(0, 15, 12, "Tata Power Electricity Bill", 2100.0, "EXPENSE", "Bills & Utilities", "ICICI Savings A/c", "UPI", true, "VM-ICICIB", "Rs. 2,100.00 debited from A/c XX9012 on 15-11-2026 to Tata Power Electricity Bill via UPI Ref 5566778899. Avl Bal: Rs. 33,120.00.", "5566778899"),
                 MockItemDef(0, 17, 17, "Zara Clothing & Apparel", 4500.0, "EXPENSE", "Shopping", "Axis Neo Credit Card", "CARD", false, "AX-AXISBK", "Alert: Rs. 4,500.00 spent on Axis Card 7788 at Zara Clothing on 17-11-2026. Avail Limit: Rs. 1,42,700.00.", "TX778817"),
                 MockItemDef(0, 19, 15, "Local Bakery Treat", 450.0, "EXPENSE", "Food & Dining", "Cash Pocket", "CASH", false, "Cash", "Cash payment of Rs. 450.00 at Local Bakery.", "CSH019"),
 
                 // Month -1 (Previous Month)
-                MockItemDef(-1, 1, 10, "Infosys Tech Ltd Salary", 85000.0, "INCOME", "Salary", "HDFC Salary A/c", "BANK", true, "VM-HDFCBK", "Rs. 85,000.00 credited to your A/c XX4321 on 01-10-2026 by INFOSYS TECH LTD SALARY NEFT Ref 9900112233. Avl Bal: Rs. 98,200.00.", "9900112233"),
+                MockItemDef(-1, 1, 10, "Infosys Tech Ltd Salary", 85000.0, "INCOME", "Salary & Income", "HDFC Salary A/c", "BANK", true, "VM-HDFCBK", "Rs. 85,000.00 credited to your A/c XX4321 on 01-10-2026 by INFOSYS TECH LTD SALARY NEFT Ref 9900112233. Avl Bal: Rs. 98,200.00.", "9900112233"),
                 MockItemDef(-1, 3, 11, "Apartment Rent", 24000.0, "EXPENSE", "Rent & Housing", "HDFC Salary A/c", "BANK", true, "VM-HDFCBK", "Rs. 24,000.00 debited from A/c XX4321 on 03-10-2026 to LANDLORD RENT via NEFT Ref 7755443322. Avl Bal: Rs. 74,200.00.", "7755443322"),
                 MockItemDef(-1, 6, 17, "BigBasket Monthly Grocery", 4200.0, "EXPENSE", "Groceries", "HDFC Salary A/c", "UPI", true, "VM-HDFCBK", "Rs. 4,200.00 debited from A/c XX4321 on 06-10-2026 at BigBasket via UPI Ref 8844332211. Avl Bal: Rs. 70,000.00.", "8844332211"),
                 MockItemDef(-1, 8, 9, "Starbucks Coffee", 450.0, "EXPENSE", "Food & Dining", "ICICI Savings A/c", "UPI", false, "VM-ICICIB", "Rs. 450.00 debited from A/c XX9012 on 08-10-2026 at Starbucks via UPI Ref 3322110099. Avl Bal: Rs. 36,000.00.", "3322110099"),
-                MockItemDef(-1, 12, 14, "HPCL Fuel Station", 2500.0, "EXPENSE", "Transportation", "Axis Neo Credit Card", "CARD", true, "AX-AXISBK", "Alert: Rs. 2,500.00 spent on Axis Card 7788 at HPCL Fuel Station on 12-10-2026. Avail Limit: Rs. 1,47,500.00.", "TX778812"),
+                MockItemDef(-1, 12, 14, "HPCL Fuel Station", 2500.0, "EXPENSE", "Fuel & Travel", "Axis Neo Credit Card", "CARD", true, "AX-AXISBK", "Alert: Rs. 2,500.00 spent on Axis Card 7788 at HPCL Fuel Station on 12-10-2026. Avail Limit: Rs. 1,47,500.00.", "TX778812"),
                 MockItemDef(-1, 15, 20, "Swiggy Weekend Family Meal", 1650.0, "EXPENSE", "Food & Dining", "HDFC Salary A/c", "UPI", true, "VM-HDFCBK", "Rs. 1,650.00 debited from A/c XX4321 on 15-10-2026 at Swiggy via UPI Ref 4411009988. Avl Bal: Rs. 68,350.00.", "4411009988"),
-                MockItemDef(-1, 18, 12, "Airtel Fiber Broadband Bill", 1180.0, "EXPENSE", "Utilities", "ICICI Savings A/c", "UPI", true, "VM-ICICIB", "Rs. 1,180.00 debited from A/c XX9012 on 18-10-2026 to Airtel Fiber Bill via UPI Ref 5544332211. Avl Bal: Rs. 34,820.00.", "5544332211"),
+                MockItemDef(-1, 18, 12, "Airtel Fiber Broadband Bill", 1180.0, "EXPENSE", "Bills & Utilities", "ICICI Savings A/c", "UPI", true, "VM-ICICIB", "Rs. 1,180.00 debited from A/c XX9012 on 18-10-2026 to Airtel Fiber Bill via UPI Ref 5544332211. Avl Bal: Rs. 34,820.00.", "5544332211"),
                 MockItemDef(-1, 22, 19, "PVR Cinemas Movie Tickets", 1400.0, "EXPENSE", "Entertainment", "Axis Neo Credit Card", "CARD", false, "AX-AXISBK", "Alert: Rs. 1,400.00 spent on Axis Card 7788 at PVR Cinemas on 22-10-2026. Avail Limit: Rs. 1,46,100.00.", "TX778822"),
 
                 // Month -2 (Two Months Ago)
-                MockItemDef(-2, 1, 10, "Infosys Tech Ltd Salary", 85000.0, "INCOME", "Salary", "HDFC Salary A/c", "BANK", true, "VM-HDFCBK", "Rs. 85,000.00 credited to your A/c XX4321 on 01-09-2026 by INFOSYS TECH LTD SALARY NEFT Ref 9988776655. Avl Bal: Rs. 92,000.00.", "9988776655"),
+                MockItemDef(-2, 1, 10, "Infosys Tech Ltd Salary", 85000.0, "INCOME", "Salary & Income", "HDFC Salary A/c", "BANK", true, "VM-HDFCBK", "Rs. 85,000.00 credited to your A/c XX4321 on 01-09-2026 by INFOSYS TECH LTD SALARY NEFT Ref 9988776655. Avl Bal: Rs. 92,000.00.", "9988776655"),
                 MockItemDef(-2, 3, 11, "Apartment Rent", 24000.0, "EXPENSE", "Rent & Housing", "HDFC Salary A/c", "BANK", true, "VM-HDFCBK", "Rs. 24,000.00 debited from A/c XX4321 on 03-09-2026 to LANDLORD RENT via NEFT Ref 7744332211. Avl Bal: Rs. 68,000.00.", "7744332211"),
                 MockItemDef(-2, 7, 16, "Spencer's Retail Groceries", 3900.0, "EXPENSE", "Groceries", "HDFC Salary A/c", "UPI", true, "VM-HDFCBK", "Rs. 3,900.00 debited from A/c XX4321 on 07-09-2026 at Spencers Retail via UPI Ref 8833221100. Avl Bal: Rs. 64,100.00.", "8833221100"),
-                MockItemDef(-2, 11, 13, "City Fuel Station", 2400.0, "EXPENSE", "Transportation", "Axis Neo Credit Card", "CARD", true, "AX-AXISBK", "Alert: Rs. 2,400.00 spent on Axis Card 7788 at City Fuel Station on 11-09-2026. Avail Limit: Rs. 1,47,600.00.", "TX778811"),
-                MockItemDef(-2, 16, 11, "Family Dental Clinic", 1500.0, "EXPENSE", "Health & Medical", "HDFC Salary A/c", "UPI", true, "VM-HDFCBK", "Rs. 1,500.00 debited from A/c XX4321 on 16-09-2026 at Dental Care via UPI Ref 1100998877. Avl Bal: Rs. 62,600.00.", "1100998877"),
+                MockItemDef(-2, 11, 13, "City Fuel Station", 2400.0, "EXPENSE", "Fuel & Travel", "Axis Neo Credit Card", "CARD", true, "AX-AXISBK", "Alert: Rs. 2,400.00 spent on Axis Card 7788 at City Fuel Station on 11-09-2026. Avail Limit: Rs. 1,47,600.00.", "TX778811"),
+                MockItemDef(-2, 16, 11, "Family Dental Clinic", 1500.0, "EXPENSE", "Health & Fitness", "HDFC Salary A/c", "UPI", true, "VM-HDFCBK", "Rs. 1,500.00 debited from A/c XX4321 on 16-09-2026 at Dental Care via UPI Ref 1100998877. Avl Bal: Rs. 62,600.00.", "1100998877"),
                 MockItemDef(-2, 20, 20, "Barbeque Nation Family Dinner", 2800.0, "EXPENSE", "Food & Dining", "HDFC Salary A/c", "CARD", true, "VM-HDFCBK", "Rs. 2,800.00 spent on HDFC Debit Card XX4321 at Barbeque Nation on 20-09-2026. Avl Bal: Rs. 59,800.00.", "TX432120")
             )
 
@@ -1338,7 +1339,7 @@ object LocalAccountDataStore {
             title = title.trim().ifBlank { category }.take(150),
             amount = amount.coerceAtLeast(0.01),
             type = if (type == "INCOME") "INCOME" else "EXPENSE",
-            category = category.ifBlank { "General" }.take(60),
+            category = com.example.data.model.ExpenseCategories.normalizeCategory(category),
             accountName = accountName.ifBlank { "Cash" }.take(100),
             paymentMode = if (paymentMode in setOf("UPI", "BANK", "CARD", "WALLET", "CASH")) paymentMode else "UPI",
             tags = cleanTags,
@@ -1382,6 +1383,18 @@ object LocalAccountDataStore {
         val sortedCandidates = candidates.sortedBy { it.parsed.timestamp }
         val currentMap = expensesFlow.value.associateBy { it.id }.toMutableMap()
         val alreadyLinkedSignatures = getAllExistingSmsSignatures(uid).toMutableSet()
+        val existingBodyTimestamps = mutableMapOf<String, MutableList<Long>>()
+        expensesFlow.value
+            .filter { it.userId == uid && it.smsSignature.isNotBlank() }
+            .forEach { existingTx ->
+                val normBody = com.example.data.sms.SmsInboxReader.normalizeSmsBody(
+                    com.example.data.sms.SmsInboxReader.extractRawSmsBodyFromNotes(existingTx.notes)
+                )
+                if (normBody.length >= 15) {
+                    val key = "${existingTx.type}|${String.format(java.util.Locale.US, "%.2f", existingTx.amount)}|$normBody"
+                    existingBodyTimestamps.getOrPut(key) { mutableListOf() }.add(existingTx.transactionDateMillis)
+                }
+            }
         val accountsToUpsert = mutableMapOf<String, SmsCandidate>()
         val rawMapUpdates = smsRawMapFlow.value.toMutableMap()
         var importedCount = 0
@@ -1391,12 +1404,36 @@ object LocalAccountDataStore {
                 body = candidate.parsed.smsBody,
                 timestamp = candidate.parsed.timestamp
             )
-            if (candidate.id in alreadyLinkedSignatures || contentKey in alreadyLinkedSignatures) continue
+            val adjacentKeys = com.example.data.sms.SmsInboxReader.buildSmsAdjacentContentKeys(
+                body = candidate.parsed.smsBody,
+                timestamp = candidate.parsed.timestamp
+            )
+            val normBody = com.example.data.sms.SmsInboxReader.normalizeSmsBody(candidate.parsed.smsBody)
+            val txTypeStr = if (candidate.parsed.type == TransactionType.INCOME) "INCOME" else "EXPENSE"
+            val bodyKey = if (normBody.length >= 15) {
+                "$txTypeStr|${String.format(java.util.Locale.US, "%.2f", candidate.parsed.amount.toDouble())}|$normBody"
+            } else {
+                ""
+            }
+            if (candidate.id in alreadyLinkedSignatures ||
+                contentKey in alreadyLinkedSignatures ||
+                adjacentKeys.any { it in alreadyLinkedSignatures }
+            ) continue
+            if (bodyKey.isNotEmpty() &&
+                existingBodyTimestamps[bodyKey]?.any { prevTs ->
+                    kotlin.math.abs(candidate.parsed.timestamp - prevTs) <= com.example.data.sms.SmsInboxReader.SLIDING_DEDUP_WINDOW_MS
+                } == true
+            ) continue
+
             alreadyLinkedSignatures.add(candidate.id)
             alreadyLinkedSignatures.add(contentKey)
+            alreadyLinkedSignatures.addAll(adjacentKeys)
+            if (bodyKey.isNotEmpty()) {
+                existingBodyTimestamps.getOrPut(bodyKey) { mutableListOf() }.add(candidate.parsed.timestamp)
+            }
             val parsed = candidate.parsed
             val isIncome = parsed.type == TransactionType.INCOME
-            val category = candidate.suggestedCategory.ifBlank { "General" }.take(60)
+            val category = com.example.data.model.ExpenseCategories.normalizeCategory(candidate.suggestedCategory)
             val merchantTitle = (parsed.merchant?.takeIf { it.isNotBlank() }
                 ?: "${parsed.bankName} ${parsed.type.name.lowercase().replaceFirstChar { it.uppercase() }}").take(150)
             val docId = "sms_${candidate.id}"
@@ -1508,7 +1545,7 @@ object LocalAccountDataStore {
             title = title.trim().ifBlank { category }.take(150),
             amount = amount.coerceAtLeast(0.01),
             type = validType,
-            category = category.trim().ifBlank { "General" }.take(60),
+            category = com.example.data.model.ExpenseCategories.normalizeCategory(category),
             accountName = accountName.trim().ifBlank { "Cash" }.take(100),
             paymentMode = validMode,
             tags = cleanTags,
@@ -1528,7 +1565,7 @@ object LocalAccountDataStore {
         val updatedList = expensesFlow.value.map { tx ->
             if (tx.id == expenseId) {
                 tx.copy(
-                    category = newCategory.trim().ifBlank { "General" }.take(60),
+                    category = com.example.data.model.ExpenseCategories.normalizeCategory(newCategory),
                     updatedAt = Timestamp.now()
                 )
             } else {
@@ -1639,7 +1676,8 @@ object LocalAccountDataStore {
         household: Household?
     ): String = synchronized(storeLock) {
         val effectiveShared = isShared && household != null
-        val sanitizedId = category.lowercase().replace(Regex("[^a-z0-9]+"), "_").trim('_').ifBlank { "general" }
+        val normalizedCat = com.example.data.model.ExpenseCategories.normalizeCategory(category)
+        val sanitizedId = normalizedCat.lowercase().replace(Regex("[^a-z0-9]+"), "_").trim('_').ifBlank { "unknown" }
         val docId = if (effectiveShared) "sh_${household!!.id}_$sanitizedId" else "pe_${uid}_$sanitizedId"
         if (monthlyLimit <= 0.0) {
             deleteCategoryBudget(docId)
@@ -1651,7 +1689,7 @@ object LocalAccountDataStore {
             id = docId,
             userId = uid,
             householdId = if (effectiveShared) household!!.id else "",
-            category = category.take(60),
+            category = normalizedCat,
             monthlyLimit = monthlyLimit.coerceAtLeast(0.0),
             alertThresholdPercent = alertThresholdPercent.coerceIn(1, 100).toLong(),
             memberUids = memberUids,
@@ -1899,7 +1937,7 @@ object LocalAccountDataStore {
                         title = o.optString("title", ""),
                         amount = o.optDouble("amount", 0.0),
                         type = o.optString("type", "EXPENSE"),
-                        category = o.optString("category", "General"),
+                        category = com.example.data.model.ExpenseCategories.normalizeCategory(o.optString("category", "Unknown")),
                         accountName = o.optString("accountName", "Cash"),
                         paymentMode = o.optString("paymentMode", "UPI"),
                         tags = tags,
@@ -1953,7 +1991,7 @@ object LocalAccountDataStore {
                         id = o.optString("id", ""),
                         userId = o.optString("userId", ""),
                         householdId = o.optString("householdId", ""),
-                        category = o.optString("category", "General"),
+                        category = com.example.data.model.ExpenseCategories.normalizeCategory(o.optString("category", "Unknown")),
                         monthlyLimit = o.optDouble("monthlyLimit", 5000.0),
                         alertThresholdPercent = o.optLong("alertThresholdPercent", 80L),
                         memberUids = memberUids,

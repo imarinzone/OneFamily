@@ -1,10 +1,17 @@
 package com.example.ui.screens
 
+import android.os.Build
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -12,16 +19,21 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -34,6 +46,7 @@ import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DeleteOutline
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Groups
@@ -42,6 +55,7 @@ import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Message
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -65,6 +79,7 @@ import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.material3.rememberTimePickerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -77,7 +92,10 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -85,11 +103,14 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import com.example.data.export.CsvExportScope
+import com.example.data.export.CsvTransactionExporter
 import com.example.data.local.LocalAccountDataStore
 import com.example.data.local.SmsRawRecord
 import com.example.data.model.ExpenseCategories
 import com.example.data.model.ExpenseTransaction
 import com.example.data.model.FinancialAccount
+import com.example.ui.components.CustomDateRangePickerModal
 import com.example.ui.components.ReceiptDashedDividerLine
 import com.example.ui.components.ReceiptTicketCard
 import com.example.ui.components.ThemeModeSelectorBar
@@ -102,6 +123,9 @@ import com.example.ui.theme.LocalAppDimens
 import com.example.ui.theme.PersonalBadgeTeal
 import com.example.ui.theme.categoryAccentColor
 import com.example.ui.viewmodel.CategorySpendProgress
+import com.example.ui.viewmodel.DateRangeFilterUtils
+import com.example.ui.viewmodel.DateRangePreset
+import com.example.ui.viewmodel.OneFamilyDashboardUiState
 import com.example.ui.viewmodel.SmsSyncProgressState
 import java.text.SimpleDateFormat
 import java.util.Calendar
@@ -623,16 +647,27 @@ private fun InteractiveReceiptSheet(
                                     .clip(RoundedCornerShape(50))
                                     .clickable { category = cat }
                             ) {
-                                Text(
-                                    text = cat,
-                                    style = MaterialTheme.typography.labelSmall,
-                                    fontWeight = FontWeight.Bold,
-                                    color = if (isSelected) Color.White else chipAccent,
+                                Row(
                                     modifier = Modifier.padding(
-                                        horizontal = dimens.horizontalPadding * 0.75f,
-                                        vertical = dimens.itemSpacing * 0.5f
+                                        horizontal = dimens.horizontalPadding * 0.7f,
+                                        vertical = dimens.itemSpacing * 0.45f
+                                    ),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = categoryIcon(cat),
+                                        contentDescription = null,
+                                        tint = if (isSelected) Color.White else chipAccent,
+                                        modifier = Modifier.size(dimens.rowIconSize * 0.65f)
                                     )
-                                )
+                                    Text(
+                                        text = cat,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.Bold,
+                                        color = if (isSelected) Color.White else chipAccent
+                                    )
+                                }
                             }
                         }
                     }
@@ -1293,6 +1328,13 @@ fun AddCategoryBudgetDialog(
                                 category = cat
                                 customCategory = ""
                             },
+                            leadingIcon = {
+                                Icon(
+                                    imageVector = categoryIcon(cat),
+                                    contentDescription = null,
+                                    modifier = Modifier.size(dimens.rowIconSize * 0.68f)
+                                )
+                            },
                             label = { Text(cat, style = MaterialTheme.typography.labelSmall) },
                             modifier = Modifier.testTag("budget_cat_chip_${cat.lowercase().replace(" ", "_")}")
                         )
@@ -1723,8 +1765,9 @@ fun AddAccountDialog(
  * First-Time SMS Sync Setup & Live Progress Screen (`FirstTimeSmsSyncScreen`):
  * - Prompts the user to sync their Bank & UPI SMS messages when setting up for the first time.
  * - Uses parallel reader threads (>= 5) + parallel writer threads (>= 5) in batches.
- * - Features a live "Transaction Being Read" radar & receipt scanner animation (`sms_transaction_reading_animation`)
- *   and live transaction ticker (`sms_live_transaction_ticker`) with icon/symbol-first telemetry.
+ * - Places compact sync controls/telemetry at the top and expands the downward-scanning
+ *   "Transaction Being Read" animation (`sms_transaction_reading_animation`) at the bottom
+ *   to fill the rest of the screen.
  */
 @Composable
 fun FirstTimeSmsSyncScreen(
@@ -1735,257 +1778,304 @@ fun FirstTimeSmsSyncScreen(
     currencySymbol: String = "₹"
 ) {
     val dimens = LocalAppDimens.current
+    val density = LocalDensity.current
     val hasStartedOrFinished = syncState.isSyncing || syncState.isCompleted
+    var topControlsHeightPx by remember { mutableIntStateOf(0) }
 
     Surface(
         modifier = Modifier
-            .fillMaxWidth()
+            .fillMaxSize()
             .testTag("first_time_sms_sync_screen"),
         color = MaterialTheme.colorScheme.background
     ) {
-        Column(
+        BoxWithConstraints(
             modifier = Modifier
-                .fillMaxWidth()
-                .padding(
-                    horizontal = dimens.horizontalPadding * 1.25f,
-                    vertical = dimens.itemSpacing * 1.6f
-                )
-                .verticalScroll(rememberScrollState()),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(dimens.itemSpacing * 1.15f)
+                .fillMaxSize()
+                .windowInsetsPadding(WindowInsets.safeDrawing)
         ) {
-            // Animated Transaction Scanner Header & Live Reading Card
-            TransactionReadingAnimationCard(
-                syncState = syncState,
-                currencySymbol = currencySymbol
-            )
-
-            Text(
-                text = when {
-                    syncState.isCompleted -> "SMS Sync Complete"
-                    syncState.isSyncing -> "Syncing Your SMS Inbox..."
-                    else -> "Sync Bank & UPI SMS"
-                },
-                style = MaterialTheme.typography.headlineSmall,
-                fontWeight = FontWeight.ExtraBold,
-                color = MaterialTheme.colorScheme.onBackground
-            )
-
-            // Compact icon + symbol parallel engine badge
-            Surface(
-                shape = RoundedCornerShape(50),
-                color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.65f)
-            ) {
-                Row(
-                    modifier = Modifier.padding(
-                        horizontal = dimens.horizontalPadding * 0.85f,
-                        vertical = dimens.itemSpacing * 0.45f
-                    ),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(dimens.itemSpacing * 0.6f)
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Sync,
-                        contentDescription = "Parallel SMS Engine",
-                        tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(dimens.rowIconSize * 0.8f)
-                    )
-                    Text(
-                        text = "⚡ ${syncState.readerThreadCount}R × ${syncState.writerThreadCount}W  •  📦 ${syncState.processedBatchesCount}/${syncState.totalBatchesCount.coerceAtLeast(1)}",
-                        style = MaterialTheme.typography.labelMedium,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onSecondaryContainer,
-                        modifier = Modifier.testTag("sms_parallel_threads_badge")
-                    )
-                }
+            val viewportHeight = maxHeight
+            val topControlsDp = with(density) { topControlsHeightPx.toDp() }
+            val outerVerticalPad = dimens.itemSpacing * 1.1f
+            val sectionGap = dimens.itemSpacing * 0.95f
+            val minScannerHeight = (viewportHeight * 0.46f).coerceIn(200.dp, 360.dp)
+            val scannerCardHeight = if (topControlsHeightPx > 0) {
+                (viewportHeight - topControlsDp - (outerVerticalPad * 2) - sectionGap)
+                    .coerceAtLeast(minScannerHeight)
+            } else {
+                (viewportHeight * 0.62f).coerceAtLeast(minScannerHeight)
             }
 
-            if (hasStartedOrFinished) {
-                ReceiptTicketCard(
-                    containerColor = MaterialTheme.colorScheme.surface,
-                    contentColor = MaterialTheme.colorScheme.onSurface
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .verticalScroll(rememberScrollState())
+                    .padding(
+                        horizontal = dimens.horizontalPadding * 1.15f,
+                        vertical = outerVerticalPad
+                    ),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(sectionGap)
+            ) {
+                // 1. Top Controls & Telemetry Header
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .onSizeChanged { topControlsHeightPx = it.height },
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(dimens.itemSpacing * 0.75f)
                 ) {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(dimens.cardPadding),
-                        verticalArrangement = Arrangement.spacedBy(dimens.itemSpacing)
+                    Text(
+                        text = when {
+                            syncState.isCompleted -> "SMS Sync Complete"
+                            syncState.isSyncing -> "Syncing Your SMS Inbox..."
+                            else -> "Sync Bank & UPI SMS"
+                        },
+                        style = MaterialTheme.typography.headlineSmall,
+                        fontWeight = FontWeight.ExtraBold,
+                        color = MaterialTheme.colorScheme.onBackground
+                    )
+
+                    // Compact status & batch progress pill (zero thread counts exposed in UI)
+                    Surface(
+                        shape = RoundedCornerShape(50),
+                        color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.65f)
                     ) {
                         Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
+                            modifier = Modifier.padding(
+                                horizontal = dimens.horizontalPadding * 0.85f,
+                                vertical = dimens.itemSpacing * 0.4f
+                            ),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(dimens.itemSpacing * 0.55f)
                         ) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(dimens.itemSpacing * 0.5f)
-                            ) {
-                                Icon(
-                                    imageVector = if (syncState.isSyncing) Icons.Default.Message else Icons.Default.Check,
-                                    contentDescription = if (syncState.isSyncing) "Reading SMS Messages" else "Completed",
-                                    tint = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.size(dimens.rowIconSize * 0.85f)
-                                )
-                                Text(
-                                    text = if (syncState.isSyncing) "Reading SMS Messages" else "Completed",
-                                    style = MaterialTheme.typography.titleSmall,
-                                    fontWeight = FontWeight.Bold
-                                )
-                            }
-                            val pct = (syncState.progressFraction * 100f).roundToInt().coerceIn(0, 100)
+                            Icon(
+                                imageVector = Icons.Default.Sync,
+                                contentDescription = "SMS Receipt Scanner",
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(dimens.rowIconSize * 0.8f)
+                            )
                             Text(
-                                text = "$pct%",
-                                style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.ExtraBold,
-                                color = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.testTag("sms_sync_percentage_text")
+                                text = if (hasStartedOrFinished) {
+                                    "📦 Batch ${syncState.processedBatchesCount}/${syncState.totalBatchesCount.coerceAtLeast(1)}  •  Bank & UPI Scanner"
+                                } else {
+                                    "Bank & UPI Receipt Scanner"
+                                },
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onSecondaryContainer,
+                                modifier = Modifier.testTag("sms_parallel_threads_badge")
                             )
                         }
+                    }
 
-                        LinearProgressIndicator(
-                            progress = { syncState.progressFraction },
-                            color = MaterialTheme.colorScheme.primary,
-                            trackColor = MaterialTheme.colorScheme.surfaceVariant,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(dimens.itemSpacing * 0.9f)
-                                .clip(RoundedCornerShape(50))
-                                .testTag("sms_sync_progress_bar")
-                        )
-
-                        ReceiptDashedDividerLine()
-
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween
+                    if (hasStartedOrFinished) {
+                        ReceiptTicketCard(
+                            containerColor = MaterialTheme.colorScheme.surface,
+                            contentColor = MaterialTheme.colorScheme.onSurface
                         ) {
-                            Column(horizontalAlignment = Alignment.Start) {
-                                Text(
-                                    text = "📨 Read",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                                Text(
-                                    text = "${syncState.readSmsCount}",
-                                    style = MaterialTheme.typography.titleMedium,
-                                    fontWeight = FontWeight.Bold,
-                                    color = MaterialTheme.colorScheme.onSurface,
-                                    modifier = Modifier.testTag("sms_sync_read_count")
-                                )
-                            }
-
-                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                Text(
-                                    text = "⏳",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                                Text(
-                                    text = "${syncState.remainingSmsCount}",
-                                    style = MaterialTheme.typography.titleMedium,
-                                    fontWeight = FontWeight.Bold,
-                                    color = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.testTag("sms_sync_remaining_count")
-                                )
-                            }
-
-                            Column(horizontalAlignment = Alignment.End) {
-                                Text(
-                                    text = "📥 Σ",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                                Text(
-                                    text = "${syncState.totalSmsCount}",
-                                    style = MaterialTheme.typography.titleMedium,
-                                    fontWeight = FontWeight.Bold,
-                                    color = MaterialTheme.colorScheme.onSurface,
-                                    modifier = Modifier.testTag("sms_sync_total_count")
-                                )
-                            }
-                        }
-
-                        Surface(
-                            shape = RoundedCornerShape(dimens.smallCornerRadius),
-                            color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.55f),
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Row(
+                            Column(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .padding(
-                                        horizontal = dimens.horizontalPadding * 0.8f,
-                                        vertical = dimens.itemSpacing * 0.7f
+                                        horizontal = dimens.cardPadding,
+                                        vertical = dimens.itemSpacing * 0.75f
                                     ),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
+                                verticalArrangement = Arrangement.spacedBy(dimens.itemSpacing * 0.65f)
                             ) {
-                                Text(
-                                    text = "💳 ✓ / 🔍",
-                                    style = MaterialTheme.typography.labelMedium,
-                                    fontWeight = FontWeight.Bold,
-                                    color = MaterialTheme.colorScheme.onPrimaryContainer
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(dimens.itemSpacing * 0.5f)
+                                    ) {
+                                        Icon(
+                                            imageVector = if (syncState.isSyncing) Icons.Default.Message else Icons.Default.Check,
+                                            contentDescription = if (syncState.isSyncing) "Reading SMS Messages" else "Completed",
+                                            tint = MaterialTheme.colorScheme.primary,
+                                            modifier = Modifier.size(dimens.rowIconSize * 0.85f)
+                                        )
+                                        Text(
+                                            text = if (syncState.isSyncing) "Reading SMS Messages" else "Completed",
+                                            style = MaterialTheme.typography.titleSmall,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                    }
+                                    val pct = (syncState.progressFraction * 100f).roundToInt().coerceIn(0, 100)
+                                    Text(
+                                        text = "$pct%",
+                                        style = MaterialTheme.typography.titleMedium,
+                                        fontWeight = FontWeight.ExtraBold,
+                                        color = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.testTag("sms_sync_percentage_text")
+                                    )
+                                }
+
+                                LinearProgressIndicator(
+                                    progress = { syncState.progressFraction },
+                                    color = MaterialTheme.colorScheme.primary,
+                                    trackColor = MaterialTheme.colorScheme.surfaceVariant,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(dimens.itemSpacing * 0.8f)
+                                        .clip(RoundedCornerShape(50))
+                                        .testTag("sms_sync_progress_bar")
                                 )
-                                Text(
-                                    text = "${syncState.savedTransactionsCount} / ${syncState.matchedTransactionsCount}",
-                                    style = MaterialTheme.typography.titleSmall,
-                                    fontWeight = FontWeight.ExtraBold,
-                                    color = MaterialTheme.colorScheme.onPrimaryContainer,
-                                    modifier = Modifier.testTag("sms_sync_saved_tx_count")
-                                )
+
+                                ReceiptDashedDividerLine()
+
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(horizontalAlignment = Alignment.Start) {
+                                        Text(
+                                            text = "📨 Read",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                        Text(
+                                            text = "${syncState.readSmsCount}",
+                                            style = MaterialTheme.typography.titleSmall,
+                                            fontWeight = FontWeight.Bold,
+                                            color = MaterialTheme.colorScheme.onSurface,
+                                            modifier = Modifier.testTag("sms_sync_read_count")
+                                        )
+                                    }
+
+                                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                        Text(
+                                            text = "⏳",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                        Text(
+                                            text = "${syncState.remainingSmsCount}",
+                                            style = MaterialTheme.typography.titleSmall,
+                                            fontWeight = FontWeight.Bold,
+                                            color = MaterialTheme.colorScheme.primary,
+                                            modifier = Modifier.testTag("sms_sync_remaining_count")
+                                        )
+                                    }
+
+                                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                        Text(
+                                            text = "📥 Σ",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                        Text(
+                                            text = "${syncState.totalSmsCount}",
+                                            style = MaterialTheme.typography.titleSmall,
+                                            fontWeight = FontWeight.Bold,
+                                            color = MaterialTheme.colorScheme.onSurface,
+                                            modifier = Modifier.testTag("sms_sync_total_count")
+                                        )
+                                    }
+
+                                    Surface(
+                                        shape = RoundedCornerShape(dimens.smallCornerRadius),
+                                        color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.6f)
+                                    ) {
+                                        Row(
+                                            modifier = Modifier.padding(
+                                                horizontal = dimens.horizontalPadding * 0.55f,
+                                                vertical = dimens.itemSpacing * 0.35f
+                                            ),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                        ) {
+                                            Text(
+                                                text = "💳 ✓",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                fontWeight = FontWeight.Bold,
+                                                color = MaterialTheme.colorScheme.onPrimaryContainer
+                                            )
+                                            Text(
+                                                text = "${syncState.savedTransactionsCount}/${syncState.matchedTransactionsCount}",
+                                                style = MaterialTheme.typography.labelLarge,
+                                                fontWeight = FontWeight.ExtraBold,
+                                                color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                                modifier = Modifier.testTag("sms_sync_saved_tx_count")
+                                            )
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
-                }
-            }
 
-            if (!hasStartedOrFinished) {
-                Button(
-                    onClick = onStartSyncClick,
-                    shape = RoundedCornerShape(50),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(dimens.navPillHeight)
-                        .testTag("start_first_time_sms_sync_button")
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Sync,
-                        contentDescription = "Start SMS Sync Now",
-                        modifier = Modifier.size(dimens.rowIconSize * 0.85f)
-                    )
-                    Spacer(modifier = Modifier.width(dimens.horizontalPadding * 0.45f))
-                    Text(
-                        text = "Start SMS Sync Now",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold
-                    )
+                    if (!hasStartedOrFinished) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(dimens.horizontalPadding * 0.5f),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Button(
+                                onClick = onStartSyncClick,
+                                shape = RoundedCornerShape(50),
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .height(dimens.navPillHeight)
+                                    .testTag("start_first_time_sms_sync_button")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Sync,
+                                    contentDescription = "Start SMS Sync Now",
+                                    modifier = Modifier.size(dimens.rowIconSize * 0.85f)
+                                )
+                                Spacer(modifier = Modifier.width(dimens.horizontalPadding * 0.35f))
+                                Text(
+                                    text = "Start SMS Sync Now",
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+
+                            TextButton(
+                                onClick = onSkipClick,
+                                modifier = Modifier.testTag("skip_first_time_sms_sync_button")
+                            ) {
+                                Text("Skip for Now")
+                            }
+                        }
+                    } else if (syncState.isCompleted && !syncState.isSyncing) {
+                        Button(
+                            onClick = onContinueToAppClick,
+                            shape = RoundedCornerShape(50),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(dimens.navPillHeight)
+                                .testTag("finish_sms_sync_continue_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Check,
+                                contentDescription = "Continue to Home",
+                                modifier = Modifier.size(dimens.rowIconSize * 0.85f)
+                            )
+                            Spacer(modifier = Modifier.width(dimens.horizontalPadding * 0.45f))
+                            Text(
+                                text = "Continue to Home",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
                 }
 
-                TextButton(
-                    onClick = onSkipClick,
-                    modifier = Modifier.testTag("skip_first_time_sms_sync_button")
-                ) {
-                    Text("Skip for Now")
-                }
-            } else if (syncState.isCompleted && !syncState.isSyncing) {
-                Button(
-                    onClick = onContinueToAppClick,
-                    shape = RoundedCornerShape(50),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(dimens.navPillHeight)
-                        .testTag("finish_sms_sync_continue_button")
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Check,
-                        contentDescription = "Continue to Home",
-                        modifier = Modifier.size(dimens.rowIconSize * 0.85f)
-                    )
-                    Spacer(modifier = Modifier.width(dimens.horizontalPadding * 0.45f))
-                    Text(
-                        text = "Continue to Home",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold
+                // 2. Bottom Expanded Downward-Scanning Animation Card — shown ONLY while actively scanning
+                if (syncState.isSyncing) {
+                    TransactionReadingAnimationCard(
+                        syncState = syncState,
+                        currencySymbol = currencySymbol,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(scannerCardHeight)
                     )
                 }
             }
@@ -1994,37 +2084,60 @@ fun FirstTimeSmsSyncScreen(
 }
 
 /**
- * Live "Transaction Being Read" Radar & Receipt Scanner Animation Card shown on the Setup / First-Time Sync screen.
- * Uses progress-linked spring animation (`animateFloatAsState`) so it animates smoothly as batches stream in
- * while staying deterministic for Robolectric tests.
+ * Expanded "Transaction Being Read" Downward Laser & Receipt Scanner Animation Card:
+ * - Positioned in the lower portion of `FirstTimeSmsSyncScreen` and sized to fill all remaining screen height.
+ * - Sweeps a glowing laser scan beam downward (`top -> bottom`) across a large multi-line SMS receipt viewport
+ *   with viewfinder corner brackets and concentric radar pulse rings.
+ * - Uses continuous downward infinite transition on device runtime and deterministic spring phase under
+ *   Robolectric so `composeTestRule.waitForIdle()` never hangs.
  */
 @Composable
 private fun TransactionReadingAnimationCard(
     syncState: SmsSyncProgressState,
-    currencySymbol: String
+    currencySymbol: String,
+    modifier: Modifier = Modifier
 ) {
     val dimens = LocalAppDimens.current
     val primaryColor = MaterialTheme.colorScheme.primary
     val secondaryColor = MaterialTheme.colorScheme.tertiary
     val surfaceVariantColor = MaterialTheme.colorScheme.surfaceVariant
+    val isRobolectric = remember { Build.FINGERPRINT.equals("robolectric", ignoreCase = true) }
 
-    // Smoothly animate scan beam position as SMS read count / batch progress updates
-    val targetPhase = if (syncState.isCompleted) {
-        1f
+    val deterministicTargetPhase = if (syncState.isCompleted) {
+        0.94f
     } else if (syncState.isSyncing) {
         val raw = ((syncState.readSmsCount % 15) / 15f) + (syncState.progressFraction * 0.35f)
         (raw % 1f).coerceIn(0.12f, 0.92f)
     } else {
         0.35f
     }
-    val animatedScanPhase by animateFloatAsState(
-        targetValue = targetPhase,
+    val deterministicPhase by animateFloatAsState(
+        targetValue = deterministicTargetPhase,
         animationSpec = spring(
             dampingRatio = Spring.DampingRatioNoBouncy,
             stiffness = Spring.StiffnessMediumLow
         ),
-        label = "sms_scan_beam_phase"
+        label = "sms_scan_beam_deterministic_phase"
     )
+
+    val animatedScanPhase = if (!isRobolectric && !syncState.isCompleted) {
+        val infiniteTransition = rememberInfiniteTransition(label = "sms_downward_scanner_transition")
+        val sweepingDownPhase by infiniteTransition.animateFloat(
+            initialValue = 0.06f,
+            targetValue = 0.94f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(
+                    durationMillis = if (syncState.isSyncing) 1450 else 2100,
+                    easing = LinearEasing
+                ),
+                repeatMode = RepeatMode.Restart
+            ),
+            label = "sms_downward_laser_phase"
+        )
+        sweepingDownPhase
+    } else {
+        deterministicPhase
+    }
 
     val activeTitle = syncState.currentReadingTransactionTitle.ifBlank {
         if (syncState.isCompleted) "All SMS Transactions Indexed"
@@ -2032,143 +2145,32 @@ private fun TransactionReadingAnimationCard(
         else "Ready to Scan SMS Inbox"
     }
     val activeBank = syncState.currentReadingBank.ifBlank { "BANK / UPI" }
-    val activeCategory = syncState.currentReadingCategory.ifBlank { "Groceries" }
+    val activeCategory = if (syncState.currentReadingCategory.isBlank()) {
+        "Unknown"
+    } else {
+        ExpenseCategories.normalizeCategory(syncState.currentReadingCategory)
+    }
     val activeAmount = syncState.currentReadingAmount
 
     Surface(
-        shape = RoundedCornerShape(dimens.cardCornerRadius),
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
-        modifier = Modifier
-            .fillMaxWidth()
+        shape = RoundedCornerShape(dimens.cardCornerRadius * 1.15f),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.48f),
+        modifier = modifier
             .border(
-                width = 1.dp,
-                color = primaryColor.copy(alpha = 0.28f),
-                shape = RoundedCornerShape(dimens.cardCornerRadius)
+                width = 1.5.dp,
+                color = primaryColor.copy(alpha = 0.32f),
+                shape = RoundedCornerShape(dimens.cardCornerRadius * 1.15f)
             )
             .testTag("sms_transaction_reading_animation")
     ) {
         Column(
             modifier = Modifier
-                .fillMaxWidth()
+                .fillMaxSize()
                 .padding(dimens.cardPadding),
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(dimens.itemSpacing * 0.85f)
+            verticalArrangement = Arrangement.spacedBy(dimens.itemSpacing * 0.8f)
         ) {
-            // Animated Receipt & Laser Scanner Canvas
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(dimens.navPillHeight * 1.75f),
-                contentAlignment = Alignment.Center
-            ) {
-                Canvas(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(dimens.navPillHeight * 1.75f)
-                ) {
-                    val w = size.width
-                    val h = size.height
-                    val centerX = w / 2f
-                    val centerY = h / 2f
-
-                    // Concentric radar pulse rings
-                    val maxRadius = h * 0.48f
-                    drawCircle(
-                        color = primaryColor.copy(alpha = 0.10f),
-                        radius = maxRadius,
-                        center = Offset(centerX, centerY)
-                    )
-                    drawCircle(
-                        color = primaryColor.copy(alpha = 0.18f),
-                        radius = maxRadius * (0.55f + 0.35f * animatedScanPhase),
-                        center = Offset(centerX, centerY),
-                        style = Stroke(width = 2.dp.toPx())
-                    )
-
-                    // Stylized SMS Receipt Card in the center
-                    val cardW = (w * 0.62f).coerceAtMost(240.dp.toPx())
-                    val cardH = h * 0.76f
-                    val cardLeft = centerX - cardW / 2f
-                    val cardTop = centerY - cardH / 2f
-
-                    drawRoundRect(
-                        color = surfaceVariantColor.copy(alpha = 0.9f),
-                        topLeft = Offset(cardLeft, cardTop),
-                        size = Size(cardW, cardH),
-                        cornerRadius = CornerRadius(12.dp.toPx(), 12.dp.toPx())
-                    )
-                    drawRoundRect(
-                        color = primaryColor.copy(alpha = 0.45f),
-                        topLeft = Offset(cardLeft, cardTop),
-                        size = Size(cardW, cardH),
-                        cornerRadius = CornerRadius(12.dp.toPx(), 12.dp.toPx()),
-                        style = Stroke(width = 1.5.dp.toPx())
-                    )
-
-                    // Simulated SMS text lines inside the receipt card
-                    val lineStartX = cardLeft + cardW * 0.12f
-                    val lineMaxW = cardW * 0.76f
-                    for (idx in 0..2) {
-                        val lineY = cardTop + cardH * (0.28f + idx * 0.22f)
-                        val lineW = when (idx) {
-                            0 -> lineMaxW * 0.65f
-                            1 -> lineMaxW * 0.92f
-                            else -> lineMaxW * 0.50f
-                        }
-                        drawRoundRect(
-                            color = primaryColor.copy(alpha = if (idx == 1) 0.55f else 0.30f),
-                            topLeft = Offset(lineStartX, lineY),
-                            size = Size(lineW, 5.dp.toPx()),
-                            cornerRadius = CornerRadius(4.dp.toPx(), 4.dp.toPx())
-                        )
-                    }
-
-                    // Sweeping horizontal laser scan line across the SMS receipt card
-                    val beamY = cardTop + (cardH * animatedScanPhase)
-                    drawRect(
-                        brush = Brush.verticalGradient(
-                            colors = listOf(
-                                Color.Transparent,
-                                primaryColor.copy(alpha = 0.28f),
-                                secondaryColor.copy(alpha = 0.45f),
-                                Color.Transparent
-                            ),
-                            startY = (beamY - 12.dp.toPx()).coerceAtLeast(cardTop),
-                            endY = (beamY + 12.dp.toPx()).coerceAtMost(cardTop + cardH)
-                        ),
-                        topLeft = Offset(cardLeft, (beamY - 10.dp.toPx()).coerceAtLeast(cardTop)),
-                        size = Size(cardW, 20.dp.toPx())
-                    )
-                    drawLine(
-                        color = primaryColor,
-                        start = Offset(cardLeft - 6.dp.toPx(), beamY),
-                        end = Offset(cardLeft + cardW + 6.dp.toPx(), beamY),
-                        strokeWidth = 2.5.dp.toPx()
-                    )
-                }
-
-                // Floating center status icon badge
-                Box(
-                    modifier = Modifier
-                        .size(dimens.rowIconBoxSize * 1.15f)
-                        .clip(CircleShape)
-                        .background(MaterialTheme.colorScheme.primaryContainer),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        imageVector = when {
-                            syncState.isCompleted -> Icons.Default.Check
-                            syncState.currentReadingCategory.isNotBlank() -> categoryIcon(activeCategory)
-                            else -> Icons.Default.Sync
-                        },
-                        contentDescription = activeTitle,
-                        tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(dimens.rowIconSize * 1.05f)
-                    )
-                }
-            }
-
-            // Live Transaction Being Read Ticker Pill
+            // Live Transaction Being Read Ticker Pill (at top of scanner card for immediate visibility)
             Surface(
                 shape = RoundedCornerShape(dimens.smallCornerRadius),
                 color = MaterialTheme.colorScheme.surface,
@@ -2243,7 +2245,7 @@ private fun TransactionReadingAnimationCard(
                 }
             }
 
-            // Recent Read Transactions Stream Pills (shows up to 3 most recently parsed SMS items)
+            // Recent Read Transactions Stream Pills
             if (syncState.recentReadTransactions.isNotEmpty()) {
                 Row(
                     modifier = Modifier
@@ -2281,6 +2283,158 @@ private fun TransactionReadingAnimationCard(
                             }
                         }
                     }
+                }
+            }
+
+            // Large Full-Space Downward Laser & SMS Receipt Scanner Viewport (expands to fill the rest of the card)
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f)
+                    .testTag("sms_scanner_viewport_canvas"),
+                contentAlignment = Alignment.Center
+            ) {
+                Canvas(
+                    modifier = Modifier.fillMaxSize()
+                ) {
+                    val w = size.width
+                    val h = size.height
+                    val centerX = w / 2f
+                    val centerY = h / 2f
+                    val minDim = minOf(w, h)
+
+                    // Concentric radar pulse rings scaled to the expanded viewport
+                    val maxRadius = minDim * 0.47f
+                    drawCircle(
+                        color = primaryColor.copy(alpha = 0.08f),
+                        radius = maxRadius,
+                        center = Offset(centerX, centerY)
+                    )
+                    drawCircle(
+                        color = primaryColor.copy(alpha = 0.14f),
+                        radius = maxRadius * 0.74f,
+                        center = Offset(centerX, centerY),
+                        style = Stroke(width = 1.5.dp.toPx())
+                    )
+                    drawCircle(
+                        color = primaryColor.copy(alpha = 0.22f),
+                        radius = maxRadius * (0.42f + 0.50f * animatedScanPhase),
+                        center = Offset(centerX, centerY),
+                        style = Stroke(width = 2.dp.toPx())
+                    )
+
+                    // Large Stylized SMS Receipt Document filling the scanner viewport
+                    val cardW = (w * 0.80f).coerceAtMost(380.dp.toPx())
+                    val cardH = (h * 0.86f).coerceAtLeast(80.dp.toPx())
+                    val cardLeft = centerX - cardW / 2f
+                    val cardTop = centerY - cardH / 2f
+                    val cardRight = cardLeft + cardW
+                    val cardBottom = cardTop + cardH
+                    val cornerRad = 16.dp.toPx()
+
+                    drawRoundRect(
+                        color = surfaceVariantColor.copy(alpha = 0.92f),
+                        topLeft = Offset(cardLeft, cardTop),
+                        size = Size(cardW, cardH),
+                        cornerRadius = CornerRadius(cornerRad, cornerRad)
+                    )
+                    drawRoundRect(
+                        color = primaryColor.copy(alpha = 0.38f),
+                        topLeft = Offset(cardLeft, cardTop),
+                        size = Size(cardW, cardH),
+                        cornerRadius = CornerRadius(cornerRad, cornerRad),
+                        style = Stroke(width = 1.5.dp.toPx())
+                    )
+
+                    // Viewfinder Corner Brackets around the scanner document
+                    val bracketOffset = 8.dp.toPx()
+                    val bracketLen = (minDim * 0.09f).coerceIn(14.dp.toPx(), 28.dp.toPx())
+                    val bracketStroke = 3.dp.toPx()
+                    val bLeft = (cardLeft - bracketOffset).coerceAtLeast(2.dp.toPx())
+                    val bRight = (cardRight + bracketOffset).coerceAtMost(w - 2.dp.toPx())
+                    val bTop = (cardTop - bracketOffset).coerceAtLeast(2.dp.toPx())
+                    val bBottom = (cardBottom + bracketOffset).coerceAtMost(h - 2.dp.toPx())
+
+                    // Top-Left Bracket
+                    drawLine(primaryColor, Offset(bLeft, bTop), Offset(bLeft + bracketLen, bTop), bracketStroke, StrokeCap.Round)
+                    drawLine(primaryColor, Offset(bLeft, bTop), Offset(bLeft, bTop + bracketLen), bracketStroke, StrokeCap.Round)
+                    // Top-Right Bracket
+                    drawLine(primaryColor, Offset(bRight, bTop), Offset(bRight - bracketLen, bTop), bracketStroke, StrokeCap.Round)
+                    drawLine(primaryColor, Offset(bRight, bTop), Offset(bRight, bTop + bracketLen), bracketStroke, StrokeCap.Round)
+                    // Bottom-Left Bracket
+                    drawLine(primaryColor, Offset(bLeft, bBottom), Offset(bLeft + bracketLen, bBottom), bracketStroke, StrokeCap.Round)
+                    drawLine(primaryColor, Offset(bLeft, bBottom), Offset(bLeft, bBottom - bracketLen), bracketStroke, StrokeCap.Round)
+                    // Bottom-Right Bracket
+                    drawLine(primaryColor, Offset(bRight, bBottom), Offset(bRight - bracketLen, bBottom), bracketStroke, StrokeCap.Round)
+                    drawLine(primaryColor, Offset(bRight, bBottom), Offset(bRight, bBottom - bracketLen), bracketStroke, StrokeCap.Round)
+
+                    // Simulated SMS Header + Multi-line Transaction Rows (illuminate as downward laser passes them)
+                    val lineStartX = cardLeft + cardW * 0.10f
+                    val lineMaxW = cardW * 0.80f
+                    val lineFractions = listOf(0.16f, 0.29f, 0.42f, 0.55f, 0.68f, 0.81f)
+                    val widthFactors = listOf(0.52f, 0.90f, 0.76f, 0.94f, 0.64f, 0.82f)
+                    val lineHeightPx = (cardH * 0.036f).coerceIn(4.dp.toPx(), 8.dp.toPx())
+
+                    lineFractions.forEachIndexed { idx, yFrac ->
+                        val lineY = cardTop + cardH * yFrac
+                        val isScanned = yFrac <= animatedScanPhase
+                        val rowAlpha = if (isScanned) 0.62f else 0.22f
+                        val rowColor = if (isScanned) primaryColor else secondaryColor
+                        drawRoundRect(
+                            color = rowColor.copy(alpha = rowAlpha),
+                            topLeft = Offset(lineStartX, lineY),
+                            size = Size(lineMaxW * widthFactors[idx], lineHeightPx),
+                            cornerRadius = CornerRadius(lineHeightPx / 2f, lineHeightPx / 2f)
+                        )
+                    }
+
+                    // Downward-Sweeping Horizontal Laser Scan Beam + Trailing Luminous Wake Above Beam
+                    val beamY = cardTop + (cardH * animatedScanPhase)
+                    val trailHeight = (cardH * 0.22f).coerceIn(22.dp.toPx(), 68.dp.toPx())
+                    val trailTop = (beamY - trailHeight).coerceAtLeast(cardTop)
+                    val actualTrailHeight = (beamY - trailTop).coerceAtLeast(1f)
+
+                    drawRect(
+                        brush = Brush.verticalGradient(
+                            colors = listOf(
+                                Color.Transparent,
+                                secondaryColor.copy(alpha = 0.16f),
+                                primaryColor.copy(alpha = 0.38f)
+                            ),
+                            startY = trailTop,
+                            endY = beamY
+                        ),
+                        topLeft = Offset(cardLeft, trailTop),
+                        size = Size(cardW, actualTrailHeight)
+                    )
+                    drawLine(
+                        color = primaryColor,
+                        start = Offset((cardLeft - 8.dp.toPx()).coerceAtLeast(0f), beamY),
+                        end = Offset((cardRight + 8.dp.toPx()).coerceAtMost(w), beamY),
+                        strokeWidth = 3.dp.toPx(),
+                        cap = StrokeCap.Round
+                    )
+                }
+
+                // Floating center status icon badge scaled for the larger scanner
+                Box(
+                    modifier = Modifier
+                        .size(dimens.rowIconBoxSize * 1.45f)
+                        .clip(CircleShape)
+                        .background(MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.92f))
+                        .border(2.dp, primaryColor.copy(alpha = 0.55f), CircleShape),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = when {
+                            syncState.isCompleted -> Icons.Default.Check
+                            syncState.currentReadingCategory.isNotBlank() -> categoryIcon(activeCategory)
+                            else -> Icons.Default.Sync
+                        },
+                        contentDescription = activeTitle,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(dimens.rowIconSize * 1.35f)
+                    )
                 }
             }
         }
@@ -2630,5 +2784,357 @@ fun LinkDuplicateTransactionDialog(
         }
     }
 }
+
+/**
+ * CSV Data Export Dialog (`ExportTransactionsCsvDialog`):
+ * - Lets the user pick a period / date range (`Current Month`, `Current FY`, `Past FY`, `This Year`,
+ *   `Past Year`, `Last 30 Days`, `Last 3 Months`, `Last 7 Days`, `All Time`, or `Custom Range`)
+ *   and scope (`Current Scope` vs `Family + Personal`).
+ * - Previews matching transaction count, total expenses, and total income before saving via
+ *   Storage Access Framework (`CreateDocument("text/csv")`) or sharing via Android Share sheet.
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+fun ExportTransactionsCsvDialog(
+    uiState: OneFamilyDashboardUiState,
+    onDismiss: () -> Unit,
+    onSaveCsvToFile: (csvContent: String, suggestedFileName: String, count: Int, periodLabel: String) -> Unit,
+    onShareCsv: (csvContent: String, suggestedFileName: String, count: Int, periodLabel: String) -> Unit = { _, _, _, _ -> }
+) {
+    val dimens = LocalAppDimens.current
+    val currency = uiState.activeCurrencySymbol
+
+    var selectedPreset by remember { mutableStateOf(uiState.selectedDateRangePreset) }
+    var customRange by remember {
+        mutableStateOf(
+            if (uiState.customStartDateMillis != null && uiState.customEndDateMillis != null) {
+                uiState.customStartDateMillis to uiState.customEndDateMillis
+            } else {
+                val now = System.currentTimeMillis()
+                (now - 29L * 86_400_000L) to now
+            }
+        )
+    }
+    var exportScope by remember { mutableStateOf(CsvExportScope.CURRENT_VIEW) }
+    var showCustomPicker by remember { mutableStateOf(false) }
+
+    val baseTransactions = remember(exportScope, uiState.allScopedExpenses, uiState.sharedExpenses, uiState.personalExpenses) {
+        when (exportScope) {
+            CsvExportScope.CURRENT_VIEW -> uiState.allScopedExpenses
+            CsvExportScope.ALL_TRANSACTIONS -> (uiState.sharedExpenses + uiState.personalExpenses)
+                .distinctBy { it.id }
+                .sortedByDescending { it.transactionDateMillis }
+        }
+    }
+
+    val filteredTransactions = remember(baseTransactions, selectedPreset, uiState.selectedPeriod, customRange) {
+        CsvTransactionExporter.filterTransactionsForExport(
+            transactions = baseTransactions,
+            preset = selectedPreset,
+            selectedPeriod = uiState.selectedPeriod,
+            customRange = customRange
+        )
+    }
+
+    val periodDisplayLabel = remember(selectedPreset, uiState.selectedPeriod, customRange) {
+        DateRangeFilterUtils.formatPeriodLabel(
+            preset = selectedPreset,
+            selectedPeriod = uiState.selectedPeriod,
+            customRange = customRange
+        )
+    }
+
+    val totalExpense = remember(filteredTransactions) {
+        filteredTransactions.filter { it.type.equals("EXPENSE", ignoreCase = true) }.sumOf { it.amount }
+    }
+    val totalIncome = remember(filteredTransactions) {
+        filteredTransactions.filter { it.type.equals("INCOME", ignoreCase = true) }.sumOf { it.amount }
+    }
+
+    val exportPresets = remember {
+        listOf(
+            DateRangePreset.MONTH,
+            DateRangePreset.CURRENT_FY,
+            DateRangePreset.PAST_FY,
+            DateRangePreset.THIS_YEAR,
+            DateRangePreset.PAST_YEAR,
+            DateRangePreset.LAST_30_DAYS,
+            DateRangePreset.LAST_90_DAYS,
+            DateRangePreset.LAST_7_DAYS,
+            DateRangePreset.ALL_TIME,
+            DateRangePreset.CUSTOM
+        )
+    }
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth(0.94f)
+                .padding(vertical = dimens.itemSpacing)
+                .verticalScroll(rememberScrollState())
+                .testTag("export_csv_dialog"),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            ReceiptTicketCard(
+                containerColor = MaterialTheme.colorScheme.surface,
+                contentColor = MaterialTheme.colorScheme.onSurface
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(dimens.cardPadding),
+                    verticalArrangement = Arrangement.spacedBy(dimens.itemSpacing * 0.85f)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Box(
+                                modifier = Modifier
+                                    .size(dimens.rowIconBoxSize * 0.85f)
+                                    .clip(CircleShape)
+                                    .background(MaterialTheme.colorScheme.primaryContainer),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Download,
+                                    contentDescription = "Export CSV",
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(dimens.rowIconSize * 0.85f)
+                                )
+                            }
+                            Spacer(modifier = Modifier.width(dimens.horizontalPadding * 0.55f))
+                            Column {
+                                Text(
+                                    text = "Export Transactions (CSV)",
+                                    style = MaterialTheme.typography.titleLarge,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Text(
+                                    text = "Select financial year, calendar year, or date range",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                        IconButton(onClick = onDismiss) {
+                            Icon(Icons.Default.Close, contentDescription = "Close")
+                        }
+                    }
+
+                    ReceiptDashedDividerLine()
+
+                    Text(
+                        text = "Period / Date Range",
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+
+                    FlowRow(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(dimens.horizontalPadding * 0.4f),
+                        verticalArrangement = Arrangement.spacedBy(dimens.itemSpacing * 0.45f)
+                    ) {
+                        exportPresets.forEach { preset ->
+                            FilterChip(
+                                selected = selectedPreset == preset,
+                                onClick = {
+                                    if (preset == DateRangePreset.CUSTOM) {
+                                        selectedPreset = DateRangePreset.CUSTOM
+                                        showCustomPicker = true
+                                    } else {
+                                        selectedPreset = preset
+                                    }
+                                },
+                                leadingIcon = if (preset == DateRangePreset.CUSTOM) {
+                                    {
+                                        Icon(
+                                            imageVector = Icons.Default.CalendarMonth,
+                                            contentDescription = null,
+                                            modifier = Modifier.size(dimens.rowIconSize * 0.65f)
+                                        )
+                                    }
+                                } else {
+                                    null
+                                },
+                                label = {
+                                    Text(
+                                        text = if (preset == DateRangePreset.CUSTOM && selectedPreset == DateRangePreset.CUSTOM) {
+                                            periodDisplayLabel
+                                        } else {
+                                            preset.label
+                                        },
+                                        style = MaterialTheme.typography.labelSmall
+                                    )
+                                },
+                                modifier = Modifier.testTag("export_preset_chip_${preset.name.lowercase()}")
+                            )
+                        }
+                    }
+
+                    if (uiState.household != null) {
+                        Text(
+                            text = "Transactions Scope",
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(dimens.horizontalPadding * 0.45f)
+                        ) {
+                            CsvExportScope.entries.forEach { scopeOption ->
+                                FilterChip(
+                                    selected = exportScope == scopeOption,
+                                    onClick = { exportScope = scopeOption },
+                                    label = { Text(scopeOption.label, style = MaterialTheme.typography.labelSmall) },
+                                    modifier = Modifier.testTag("export_scope_chip_${scopeOption.name.lowercase()}")
+                                )
+                            }
+                        }
+                    }
+
+                    // Live Export Summary Card
+                    Surface(
+                        shape = RoundedCornerShape(dimens.smallCornerRadius),
+                        color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.5f),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(dimens.cardPadding * 0.8f),
+                            verticalArrangement = Arrangement.spacedBy(dimens.itemSpacing * 0.45f)
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = periodDisplayLabel,
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onSecondaryContainer
+                                )
+                                Text(
+                                    text = "${filteredTransactions.size} rows",
+                                    style = MaterialTheme.typography.labelLarge,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.testTag("export_matching_count_text")
+                                )
+                            }
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text(
+                                    text = "Spent: ${formatCurrency(totalExpense, currency)}",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = MaterialTheme.colorScheme.onSecondaryContainer
+                                )
+                                Text(
+                                    text = "Income: ${formatCurrency(totalIncome, currency)}",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = BudgetSafeGreen
+                                )
+                            }
+                        }
+                    }
+
+                    ReceiptDashedDividerLine()
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        TextButton(onClick = onDismiss) {
+                            Text("Cancel")
+                        }
+
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(dimens.horizontalPadding * 0.45f),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            OutlinedButton(
+                                onClick = {
+                                    val csvText = CsvTransactionExporter.buildTransactionsCsv(
+                                        transactions = filteredTransactions,
+                                        currencySymbol = currency
+                                    )
+                                    val fileName = CsvTransactionExporter.suggestCsvFileName(
+                                        preset = selectedPreset,
+                                        selectedPeriod = uiState.selectedPeriod,
+                                        customRange = customRange
+                                    )
+                                    onShareCsv(csvText, fileName, filteredTransactions.size, periodDisplayLabel)
+                                },
+                                enabled = filteredTransactions.isNotEmpty(),
+                                shape = RoundedCornerShape(50),
+                                modifier = Modifier.testTag("share_export_csv_button")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Share,
+                                    contentDescription = "Share CSV",
+                                    modifier = Modifier.size(dimens.rowIconSize * 0.75f)
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("Share")
+                            }
+
+                            Button(
+                                onClick = {
+                                    val csvText = CsvTransactionExporter.buildTransactionsCsv(
+                                        transactions = filteredTransactions,
+                                        currencySymbol = currency
+                                    )
+                                    val fileName = CsvTransactionExporter.suggestCsvFileName(
+                                        preset = selectedPreset,
+                                        selectedPeriod = uiState.selectedPeriod,
+                                        customRange = customRange
+                                    )
+                                    onSaveCsvToFile(csvText, fileName, filteredTransactions.size, periodDisplayLabel)
+                                },
+                                enabled = filteredTransactions.isNotEmpty(),
+                                shape = RoundedCornerShape(50),
+                                modifier = Modifier.testTag("confirm_export_csv_button")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Download,
+                                    contentDescription = "Save CSV",
+                                    modifier = Modifier.size(dimens.rowIconSize * 0.78f)
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("Save CSV")
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if (showCustomPicker) {
+        CustomDateRangePickerModal(
+            initialStartMillis = customRange.first,
+            initialEndMillis = customRange.second,
+            onDismiss = { showCustomPicker = false },
+            onApplyRange = { startMillis, endMillis ->
+                customRange = startMillis to endMillis
+                selectedPreset = DateRangePreset.CUSTOM
+                showCustomPicker = false
+            }
+        )
+    }
+}
+
 
 

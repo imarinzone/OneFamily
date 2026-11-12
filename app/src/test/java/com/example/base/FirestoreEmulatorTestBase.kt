@@ -34,7 +34,7 @@ abstract class FirestoreEmulatorTestBase {
     open fun setUpFirebase() {
         val emulatorAvailable = runCatching {
             java.net.Socket().use { socket ->
-                socket.connect(java.net.InetSocketAddress(EMULATOR_HOST, FIRESTORE_PORT), 250)
+                socket.connect(java.net.InetSocketAddress(EMULATOR_HOST, FIRESTORE_PORT), 2000)
                 true
             }
         }.getOrDefault(false)
@@ -69,6 +69,22 @@ abstract class FirestoreEmulatorTestBase {
         }
         auth = FirebaseAuth.getInstance(app)
         runCatching { auth.useEmulator(EMULATOR_HOST, AUTH_PORT) }
+        clearEmulatorDatabase()
+    }
+
+    private fun clearEmulatorDatabase() {
+        runCatching {
+            val url = java.net.URL(
+                "http://$EMULATOR_HOST:$FIRESTORE_PORT/emulator/v1/projects/$PROJECT_ID/databases/$databaseId/documents"
+            )
+            val conn = (url.openConnection() as java.net.HttpURLConnection).apply {
+                requestMethod = "DELETE"
+                connectTimeout = 2000
+                readTimeout = 2000
+            }
+            conn.responseCode
+            conn.disconnect()
+        }
     }
 
     @After

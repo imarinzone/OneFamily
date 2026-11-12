@@ -42,6 +42,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.CurrencyExchange
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
@@ -153,6 +154,7 @@ fun HomeTabScreen(
     onSelectSortOrder: (String) -> Unit = {},
     onClearFilters: () -> Unit = {},
     onScanSmsClick: () -> Unit = {},
+    onExportCsvClick: () -> Unit = {},
     onAddTransactionClick: () -> Unit = {},
     onAcceptEmailInvite: (Household) -> Unit = {},
     onEditTransaction: (ExpenseTransaction) -> Unit = {},
@@ -169,6 +171,7 @@ fun HomeTabScreen(
     var showDrawerCustomRangePicker by rememberSaveable { mutableStateOf(false) }
 
     val hasActiveFilter = uiState.searchQuery.isNotBlank() ||
+        uiState.selectedDateRangePreset != DateRangePreset.MONTH ||
         uiState.selectedTypeFilter != "All" ||
         uiState.selectedCategoryFilter != "All" ||
         uiState.selectedPaymentModeFilter != "All" ||
@@ -297,6 +300,17 @@ fun HomeTabScreen(
                             } else {
                                 MaterialTheme.colorScheme.onSurfaceVariant
                             }
+                        )
+                    }
+
+                    IconButton(
+                        onClick = onExportCsvClick,
+                        modifier = Modifier.testTag("home_export_csv_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Download,
+                            contentDescription = "Export CSV",
+                            tint = MaterialTheme.colorScheme.primary
                         )
                     }
                 }
@@ -429,6 +443,17 @@ fun HomeTabScreen(
                                     FilterChip(
                                         selected = uiState.selectedCategoryFilter.equals(cat, ignoreCase = true),
                                         onClick = { onSelectCategory(cat) },
+                                        leadingIcon = if (cat != "All") {
+                                            {
+                                                Icon(
+                                                    imageVector = categoryIcon(cat),
+                                                    contentDescription = null,
+                                                    modifier = Modifier.size(dimens.rowIconSize * 0.68f)
+                                                )
+                                            }
+                                        } else {
+                                            null
+                                        },
                                         label = { Text(cat) }
                                     )
                                 }
@@ -1325,6 +1350,7 @@ fun HouseholdTabScreen(
     onUpdatePreferredCurrency: (String) -> Unit = {},
     onAddAccountClick: () -> Unit = {},
     onScanSmsClick: () -> Unit = {},
+    onExportCsvClick: () -> Unit = {},
     onSendTestFcmAlertClick: () -> Unit = {},
     onRunStabilityCheckClick: () -> Unit = {},
     onSignOutClick: () -> Unit = {},
@@ -1653,7 +1679,7 @@ fun HouseholdTabScreen(
                                     modifier = Modifier.size(dimens.rowIconSize * 0.65f)
                                 )
                                 Text(
-                                    text = "Parallel Engine (${expertFeatureFlags.readerThreadCount}R × ${expertFeatureFlags.writerThreadCount}W)",
+                                    text = "Auto-detect Bank & UPI SMS receipts",
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
@@ -1671,6 +1697,76 @@ fun HouseholdTabScreen(
                             contentDescription = "Sync SMS",
                             modifier = Modifier.size(dimens.rowIconSize * 0.85f)
                         )
+                    }
+                }
+            }
+        }
+
+        // 2B. Export Transactions (CSV) Section
+        item {
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("export_csv_settings_card"),
+                shape = RoundedCornerShape(dimens.cardCornerRadius),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(dimens.cardPadding),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(dimens.horizontalPadding * 0.6f),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(dimens.rowIconBoxSize * 0.85f)
+                                .clip(CircleShape)
+                                .background(MaterialTheme.colorScheme.secondaryContainer),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Download,
+                                contentDescription = "Export CSV",
+                                tint = MaterialTheme.colorScheme.secondary,
+                                modifier = Modifier.size(dimens.rowIconSize * 0.85f)
+                            )
+                        }
+
+                        Column {
+                            Text(
+                                text = "Export Transactions (CSV)",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                text = "Download by FY, year, month, or date range",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.width(dimens.horizontalPadding * 0.45f))
+
+                    Button(
+                        onClick = onExportCsvClick,
+                        shape = RoundedCornerShape(50),
+                        modifier = Modifier.testTag("settings_export_csv_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Download,
+                            contentDescription = "Export CSV",
+                            modifier = Modifier.size(dimens.rowIconSize * 0.8f)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("CSV")
                     }
                 }
             }
@@ -1961,7 +2057,7 @@ fun HouseholdTabScreen(
                                     fontWeight = FontWeight.Bold
                                 )
                                 Text(
-                                    text = "Crashlytics, FCM & Parallel SMS Engine",
+                                    text = "Crashlytics & FCM Push Alerts",
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
@@ -1980,7 +2076,7 @@ fun HouseholdTabScreen(
                         )
                     }
 
-                    // Once user enables the Feature Flag switch, reveal sub-flags & expert modules
+                    // Once user enables the Feature Flag switch, reveal diagnostics & push alert modules
                     AnimatedVisibility(visible = expertFeatureFlags.expertModeEnabled) {
                         Column(
                             modifier = Modifier.fillMaxWidth(),
@@ -1995,7 +2091,7 @@ fun HouseholdTabScreen(
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
 
-                            // Icon Sub-Feature Flag Toggles Row
+                            // Icon Sub-Feature Flag Toggles Row (no thread counts or bug guards exposed)
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
@@ -2054,236 +2150,6 @@ fun HouseholdTabScreen(
                                     },
                                     modifier = Modifier.testTag("expert_flag_fcm_chip")
                                 )
-
-                                FilterChip(
-                                    selected = expertFeatureFlags.parallelSmsEngineTuningEnabled,
-                                    onClick = {
-                                        LocalAccountSessionManager.updateExpertFeatureFlags(
-                                            context = context,
-                                            newSettings = expertFeatureFlags.copy(
-                                                parallelSmsEngineTuningEnabled = !expertFeatureFlags.parallelSmsEngineTuningEnabled
-                                            )
-                                        )
-                                    },
-                                    label = {
-                                        Row(
-                                            verticalAlignment = Alignment.CenterVertically,
-                                            horizontalArrangement = Arrangement.spacedBy(4.dp)
-                                        ) {
-                                            Icon(
-                                                imageVector = Icons.Default.Bolt,
-                                                contentDescription = "Parallel SMS Engine",
-                                                modifier = Modifier.size(dimens.rowIconSize * 0.72f)
-                                            )
-                                            Text("SMS ⚡", style = MaterialTheme.typography.labelSmall)
-                                        }
-                                    },
-                                    modifier = Modifier.testTag("expert_flag_parallel_sms_chip")
-                                )
-
-                                FilterChip(
-                                    selected = expertFeatureFlags.strictDuplicateLinkerEnabled,
-                                    onClick = {
-                                        LocalAccountSessionManager.updateExpertFeatureFlags(
-                                            context = context,
-                                            newSettings = expertFeatureFlags.copy(
-                                                strictDuplicateLinkerEnabled = !expertFeatureFlags.strictDuplicateLinkerEnabled
-                                            )
-                                        )
-                                    },
-                                    label = {
-                                        Row(
-                                            verticalAlignment = Alignment.CenterVertically,
-                                            horizontalArrangement = Arrangement.spacedBy(4.dp)
-                                        ) {
-                                            Icon(
-                                                imageVector = Icons.Default.Link,
-                                                contentDescription = "Duplicate Guard",
-                                                modifier = Modifier.size(dimens.rowIconSize * 0.72f)
-                                            )
-                                            Text("Linker", style = MaterialTheme.typography.labelSmall)
-                                        }
-                                    },
-                                    modifier = Modifier.testTag("expert_flag_duplicate_guard_chip")
-                                )
-                            }
-
-                            // 1. Expert Parallel SMS Engine Tuning Panel (5+ Reader & Writer Threads)
-                            AnimatedVisibility(visible = expertFeatureFlags.parallelSmsEngineTuningEnabled) {
-                                Surface(
-                                    shape = RoundedCornerShape(dimens.smallCornerRadius),
-                                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .testTag("expert_parallel_sms_card")
-                                ) {
-                                    Column(
-                                        modifier = Modifier.padding(dimens.cardPadding * 0.85f),
-                                        verticalArrangement = Arrangement.spacedBy(dimens.itemSpacing * 0.7f)
-                                    ) {
-                                        Row(
-                                            verticalAlignment = Alignment.CenterVertically,
-                                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                        ) {
-                                            Icon(
-                                                imageVector = Icons.Default.Bolt,
-                                                contentDescription = null,
-                                                tint = MaterialTheme.colorScheme.primary,
-                                                modifier = Modifier.size(dimens.rowIconSize * 0.85f)
-                                            )
-                                            Text(
-                                                text = "Parallel SMS Engine Tuning",
-                                                style = MaterialTheme.typography.titleSmall,
-                                                fontWeight = FontWeight.Bold
-                                            )
-                                        }
-
-                                        // Reader Threads Selector (Min 5 Threads)
-                                        Row(
-                                            modifier = Modifier.fillMaxWidth(),
-                                            verticalAlignment = Alignment.CenterVertically,
-                                            horizontalArrangement = Arrangement.SpaceBetween
-                                        ) {
-                                            Row(
-                                                verticalAlignment = Alignment.CenterVertically,
-                                                horizontalArrangement = Arrangement.spacedBy(6.dp)
-                                            ) {
-                                                Icon(
-                                                    imageVector = Icons.Default.Sync,
-                                                    contentDescription = "Reader Threads",
-                                                    tint = MaterialTheme.colorScheme.primary,
-                                                    modifier = Modifier.size(dimens.rowIconSize * 0.8f)
-                                                )
-                                                Text(
-                                                    text = "Reader Threads (⚡R):",
-                                                    style = MaterialTheme.typography.bodySmall,
-                                                    fontWeight = FontWeight.Medium
-                                                )
-                                            }
-                                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                                listOf(5, 6, 8, 10).forEach { count ->
-                                                    FilterChip(
-                                                        selected = expertFeatureFlags.readerThreadCount == count,
-                                                        onClick = {
-                                                            LocalAccountSessionManager.updateExpertFeatureFlags(
-                                                                context = context,
-                                                                newSettings = expertFeatureFlags.copy(readerThreadCount = count)
-                                                            )
-                                                        },
-                                                        label = { Text("$count") },
-                                                        modifier = Modifier.testTag("expert_reader_threads_chip_$count")
-                                                    )
-                                                }
-                                            }
-                                        }
-
-                                        // Writer Threads Selector (Min 5 Threads)
-                                        Row(
-                                            modifier = Modifier.fillMaxWidth(),
-                                            verticalAlignment = Alignment.CenterVertically,
-                                            horizontalArrangement = Arrangement.SpaceBetween
-                                        ) {
-                                            Row(
-                                                verticalAlignment = Alignment.CenterVertically,
-                                                horizontalArrangement = Arrangement.spacedBy(6.dp)
-                                            ) {
-                                                Icon(
-                                                    imageVector = Icons.Default.Bolt,
-                                                    contentDescription = "Writer Threads",
-                                                    tint = MaterialTheme.colorScheme.secondary,
-                                                    modifier = Modifier.size(dimens.rowIconSize * 0.8f)
-                                                )
-                                                Text(
-                                                    text = "Writer Threads (⚡W):",
-                                                    style = MaterialTheme.typography.bodySmall,
-                                                    fontWeight = FontWeight.Medium
-                                                )
-                                            }
-                                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                                listOf(5, 6, 8, 10).forEach { count ->
-                                                    FilterChip(
-                                                        selected = expertFeatureFlags.writerThreadCount == count,
-                                                        onClick = {
-                                                            LocalAccountSessionManager.updateExpertFeatureFlags(
-                                                                context = context,
-                                                                newSettings = expertFeatureFlags.copy(writerThreadCount = count)
-                                                            )
-                                                        },
-                                                        label = { Text("$count") },
-                                                        modifier = Modifier.testTag("expert_writer_threads_chip_$count")
-                                                    )
-                                                }
-                                            }
-                                        }
-
-                                        // Raw SMS Inspector & Strict Duplicate Guard Switches
-                                        Row(
-                                            modifier = Modifier.fillMaxWidth(),
-                                            verticalAlignment = Alignment.CenterVertically,
-                                            horizontalArrangement = Arrangement.SpaceBetween
-                                        ) {
-                                            Row(
-                                                verticalAlignment = Alignment.CenterVertically,
-                                                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                                modifier = Modifier.weight(1f)
-                                            ) {
-                                                Icon(
-                                                    imageVector = Icons.Default.Code,
-                                                    contentDescription = "Raw SMS Inspector",
-                                                    tint = MaterialTheme.colorScheme.primary,
-                                                    modifier = Modifier.size(dimens.rowIconSize * 0.8f)
-                                                )
-                                                Text(
-                                                    text = "Raw SMS Inspector",
-                                                    style = MaterialTheme.typography.bodySmall
-                                                )
-                                            }
-                                            Switch(
-                                                checked = expertFeatureFlags.rawSmsDebugInspectorEnabled,
-                                                onCheckedChange = { enabled ->
-                                                    LocalAccountSessionManager.updateExpertFeatureFlags(
-                                                        context = context,
-                                                        newSettings = expertFeatureFlags.copy(rawSmsDebugInspectorEnabled = enabled)
-                                                    )
-                                                },
-                                                modifier = Modifier.testTag("expert_raw_sms_inspector_switch")
-                                            )
-                                        }
-
-                                        Row(
-                                            modifier = Modifier.fillMaxWidth(),
-                                            verticalAlignment = Alignment.CenterVertically,
-                                            horizontalArrangement = Arrangement.SpaceBetween
-                                        ) {
-                                            Row(
-                                                verticalAlignment = Alignment.CenterVertically,
-                                                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                                modifier = Modifier.weight(1f)
-                                            ) {
-                                                Icon(
-                                                    imageVector = Icons.Default.Link,
-                                                    contentDescription = "Strict Duplicate Linker",
-                                                    tint = MaterialTheme.colorScheme.tertiary,
-                                                    modifier = Modifier.size(dimens.rowIconSize * 0.8f)
-                                                )
-                                                Text(
-                                                    text = "Strict Duplicate Linker Guard",
-                                                    style = MaterialTheme.typography.bodySmall
-                                                )
-                                            }
-                                            Switch(
-                                                checked = expertFeatureFlags.strictDuplicateLinkerEnabled,
-                                                onCheckedChange = { enabled ->
-                                                    LocalAccountSessionManager.updateExpertFeatureFlags(
-                                                        context = context,
-                                                        newSettings = expertFeatureFlags.copy(strictDuplicateLinkerEnabled = enabled)
-                                                    )
-                                                },
-                                                modifier = Modifier.testTag("expert_strict_duplicate_switch")
-                                            )
-                                        }
-                                    }
-                                }
                             }
 
                             // 2. Firebase Cloud Messaging (FCM) Push Diagnostics Panel (Feature-Flagged)
@@ -2429,7 +2295,7 @@ fun HouseholdTabScreen(
                                                 modifier = Modifier.size(dimens.rowIconSize * 0.85f)
                                             )
                                             Text(
-                                                text = "Crash Analytics & Stability Guardrails",
+                                                text = "Crash Analytics & Diagnostics",
                                                 style = MaterialTheme.typography.titleSmall,
                                                 fontWeight = FontWeight.Bold
                                             )
@@ -2465,72 +2331,6 @@ fun HouseholdTabScreen(
                                                     )
                                                 },
                                                 modifier = Modifier.testTag("crashlytics_enabled_switch")
-                                            )
-                                        }
-
-                                        Row(
-                                            modifier = Modifier.fillMaxWidth(),
-                                            verticalAlignment = Alignment.CenterVertically,
-                                            horizontalArrangement = Arrangement.SpaceBetween
-                                        ) {
-                                            Row(
-                                                verticalAlignment = Alignment.CenterVertically,
-                                                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                                modifier = Modifier.weight(1f)
-                                            ) {
-                                                Icon(
-                                                    imageVector = Icons.Default.Sync,
-                                                    contentDescription = "SMS Sync Guard",
-                                                    tint = MaterialTheme.colorScheme.primary,
-                                                    modifier = Modifier.size(dimens.rowIconSize * 0.8f)
-                                                )
-                                                Text(
-                                                    text = "SMS Batch Sync Guard",
-                                                    style = MaterialTheme.typography.bodySmall
-                                                )
-                                            }
-                                            Switch(
-                                                checked = crashlyticsSettings.smsSyncGuardEnabled,
-                                                onCheckedChange = { enabled ->
-                                                    LocalAccountSessionManager.updateCrashlyticsSettings(
-                                                        context = context,
-                                                        newSettings = crashlyticsSettings.copy(smsSyncGuardEnabled = enabled)
-                                                    )
-                                                },
-                                                modifier = Modifier.testTag("crashlytics_sms_guard_switch")
-                                            )
-                                        }
-
-                                        Row(
-                                            modifier = Modifier.fillMaxWidth(),
-                                            verticalAlignment = Alignment.CenterVertically,
-                                            horizontalArrangement = Arrangement.SpaceBetween
-                                        ) {
-                                            Row(
-                                                verticalAlignment = Alignment.CenterVertically,
-                                                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                                modifier = Modifier.weight(1f)
-                                            ) {
-                                                Icon(
-                                                    imageVector = Icons.Default.TextFields,
-                                                    contentDescription = "Typography Guard",
-                                                    tint = MaterialTheme.colorScheme.secondary,
-                                                    modifier = Modifier.size(dimens.rowIconSize * 0.8f)
-                                                )
-                                                Text(
-                                                    text = "Typography Scale Guard",
-                                                    style = MaterialTheme.typography.bodySmall
-                                                )
-                                            }
-                                            Switch(
-                                                checked = crashlyticsSettings.typographyGuardEnabled,
-                                                onCheckedChange = { enabled ->
-                                                    LocalAccountSessionManager.updateCrashlyticsSettings(
-                                                        context = context,
-                                                        newSettings = crashlyticsSettings.copy(typographyGuardEnabled = enabled)
-                                                    )
-                                                },
-                                                modifier = Modifier.testTag("crashlytics_typography_guard_switch")
                                             )
                                         }
 

@@ -35,6 +35,7 @@
         "notes": { "type": "string", "description": "Optional notes or SMS summary." },
         "visibility": { "type": "string", "enum": ["PERSONAL", "SHARED"], "description": "Privacy scope." },
         "smsSignature": { "type": "string", "description": "Deduplication signature for SMS imports." },
+        "linkedSmsSignatures": { "type": "array", "description": "Linked duplicate SMS signatures (max 20)." },
         "referenceNumber": { "type": "string", "description": "Bank/UPI reference number." },
         "transactionDateMillis": { "type": "integer", "description": "Epoch milliseconds of transaction." },
         "memberUids": { "type": "array", "description": "Denormalized household member UIDs for shared access." },

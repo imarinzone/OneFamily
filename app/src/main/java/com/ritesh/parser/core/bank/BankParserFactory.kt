@@ -134,7 +134,7 @@ object BankParserFactory {
             listOf("amazon", "flipkart", "myntra", "ajio", "nykaa", "meesho", "zara", "h&m", "decathlon", "croma", "reliance digital", "vijay sales", "ikea", "shopping", "tata cliq", "firstcry", "lenskart", "titan").any { haystack.contains(it) } -> "Shopping"
             listOf("apollo", "pharmeasy", "1mg", "medplus", "netmeds", "hospital", "clinic", "pharmacy", "doctor", "diagnostic", "cult.fit", "health", "medical", "dental", "lab", "practo").any { haystack.contains(it) } -> "Health & Fitness"
             listOf("netflix", "spotify", "prime video", "hotstar", "jiocinema", "bookmyshow", "pvr", "inox", "youtube", "sony liv", "zee5", "steam", "playstation", "apple.com/bill", "google play").any { haystack.contains(it) } -> "Entertainment"
-            else -> "General"
+            else -> "Unknown"
         }
     }
 

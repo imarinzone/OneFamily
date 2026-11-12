@@ -16,9 +16,15 @@ import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.text.font.FontFamily
 import androidx.test.core.app.ApplicationProvider
+import android.Manifest
+import android.app.Application
+import android.app.Notification
+import android.app.NotificationManager
+import com.example.data.export.CsvTransactionExporter
 import com.example.data.local.LocalAccountDataStore
 import com.example.data.local.LocalAccountSessionManager
 import com.example.data.model.CrashlyticsSettings
+import com.example.data.model.ExpenseCategories
 import com.example.data.model.ExpenseTransaction
 import com.example.data.model.ExpertFeatureFlagsSettings
 import com.example.data.model.FamilyCurrencyOption
@@ -34,8 +40,10 @@ import com.example.data.sms.RawSmsRow
 import com.example.data.sms.SmsInboxReader
 import com.example.data.sms.TransactionNotificationHelper
 import com.example.ui.components.MonthlyBarGraph
+import com.example.ui.components.categoryIcon
 import com.example.ui.components.formatCompactCurrency
 import com.example.ui.components.formatCurrency
+import com.example.ui.screens.ExportTransactionsCsvDialog
 import com.example.ui.screens.FirstTimeSmsSyncScreen
 import com.example.ui.screens.HomeTabScreen
 import com.example.ui.screens.HouseholdTabScreen
@@ -56,6 +64,8 @@ import com.example.ui.theme.KiwiPrimaryLight
 import com.example.ui.theme.OneFamilyTheme
 import com.example.ui.theme.buildResponsiveTypography
 import com.example.ui.theme.resolveAppColorScheme
+import com.example.ui.viewmodel.DateRangeFilterUtils
+import com.example.ui.viewmodel.DateRangePreset
 import com.example.ui.viewmodel.MonthlySpendBar
 import com.example.ui.viewmodel.OneFamilyDashboardUiState
 import com.example.ui.viewmodel.OneFamilyViewModel
@@ -632,11 +642,9 @@ class ExampleRobolectricTest {
             currencySymbol = "₹"
         )
 
-        // 3. Verify Firebase Crashlytics stability guardrails & diagnostic breadcrumbs
+        // 3. Verify Firebase Crashlytics reporting & diagnostic breadcrumbs (bug guards are always-on in code, not toggleable)
         val customCrashlytics = CrashlyticsSettings(
-            crashReportingEnabled = true,
-            smsSyncGuardEnabled = true,
-            typographyGuardEnabled = true
+            crashReportingEnabled = true
         )
         LocalAccountSessionManager.updateCrashlyticsSettings(context, customCrashlytics)
         assertTrue(LocalAccountSessionManager.crashlyticsSettings.value.crashReportingEnabled)
@@ -1018,8 +1026,38 @@ class ExampleRobolectricTest {
     }
 
     @Test
-    fun `test FirstTimeSmsSyncScreen displays transaction being read animation and live ticker`() {
-        val sampleSyncState = SmsSyncProgressState(
+    fun `test FirstTimeSmsSyncScreen shows animation ONLY while actively scanning and hides thread counts`() {
+        var currentSyncState by mutableStateOf(
+            SmsSyncProgressState(
+                isSyncing = false,
+                isCompleted = false
+            )
+        )
+
+        composeTestRule.setContent {
+            OneFamilyTheme {
+                FirstTimeSmsSyncScreen(
+                    syncState = currentSyncState,
+                    onStartSyncClick = {},
+                    onContinueToAppClick = {},
+                    onSkipClick = {},
+                    currencySymbol = "₹"
+                )
+            }
+        }
+        composeTestRule.waitForIdle()
+
+        // 1. Before scanning starts: animation MUST NOT be shown, Start button is shown, and no thread counts appear
+        composeTestRule.onNodeWithTag("first_time_sms_sync_screen").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("start_first_time_sms_sync_button").assertIsDisplayed()
+        assertTrue(
+            "Expected scanning animation to be hidden before scanning starts",
+            composeTestRule.onAllNodesWithTag("sms_transaction_reading_animation").fetchSemanticsNodes().isEmpty()
+        )
+        assertTrue(composeTestRule.onAllNodesWithText("6R × 6W", substring = true).fetchSemanticsNodes().isEmpty())
+
+        // 2. During active scanning (`isSyncing = true`): animation IS displayed below header badge
+        currentSyncState = SmsSyncProgressState(
             isSyncing = true,
             isCompleted = false,
             totalSmsCount = 120,
@@ -1042,43 +1080,43 @@ class ExampleRobolectricTest {
                     category = "Food & Dining",
                     amount = 480.0,
                     isIncome = false
-                ),
-                SmsReadPreviewItem(
-                    id = "preview_2",
-                    merchant = "Nature's Basket",
-                    bankName = "ICICI Bank ••1104",
-                    category = "Groceries",
-                    amount = 1850.0,
-                    isIncome = false
                 )
             )
         )
-
-        composeTestRule.setContent {
-            OneFamilyTheme {
-                FirstTimeSmsSyncScreen(
-                    syncState = sampleSyncState,
-                    onStartSyncClick = {},
-                    onContinueToAppClick = {},
-                    onSkipClick = {},
-                    currencySymbol = "₹"
-                )
-            }
-        }
         composeTestRule.waitForIdle()
 
-        composeTestRule.onNodeWithTag("first_time_sms_sync_screen").assertIsDisplayed()
-        composeTestRule.onNodeWithTag("sms_transaction_reading_animation").assertIsDisplayed()
-        composeTestRule.onNodeWithTag("sms_live_transaction_ticker").assertIsDisplayed()
         composeTestRule.onNodeWithTag("sms_parallel_threads_badge").assertIsDisplayed()
-        composeTestRule.onNodeWithText("Blue Tokai Coffee").assertIsDisplayed()
-        composeTestRule.onNodeWithText("₹480").assertIsDisplayed()
+        assertTrue(composeTestRule.onAllNodesWithText("6R", substring = true).fetchSemanticsNodes().isEmpty())
         composeTestRule.onNodeWithTag("sms_sync_percentage_text").performScrollTo().assertIsDisplayed()
         composeTestRule.onNodeWithTag("sms_sync_read_count").performScrollTo().assertIsDisplayed()
+
+        composeTestRule.onNodeWithTag("sms_transaction_reading_animation").performScrollTo().assertIsDisplayed()
+        composeTestRule.onNodeWithTag("sms_live_transaction_ticker").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("sms_scanner_viewport_canvas").assertExists()
+        composeTestRule.onNodeWithText("Blue Tokai Coffee").assertIsDisplayed()
+        composeTestRule.onNodeWithText("₹480").assertIsDisplayed()
+
+        val badgeBounds = composeTestRule.onNodeWithTag("sms_parallel_threads_badge")
+            .fetchSemanticsNode().boundsInRoot
+        val animBounds = composeTestRule.onNodeWithTag("sms_transaction_reading_animation")
+            .fetchSemanticsNode().boundsInRoot
+        assertTrue(
+            "Expected scanning animation card (${animBounds.top}) to be placed below header badge (${badgeBounds.bottom})",
+            animBounds.top > badgeBounds.bottom
+        )
+
+        // 3. After scanning completes (`isSyncing = false, isCompleted = true`): animation is hidden again
+        currentSyncState = currentSyncState.copy(isSyncing = false, isCompleted = true, readSmsCount = 120)
+        composeTestRule.waitForIdle()
+        assertTrue(
+            "Expected scanning animation to be hidden once scanning finishes",
+            composeTestRule.onAllNodesWithTag("sms_transaction_reading_animation").fetchSemanticsNodes().isEmpty()
+        )
+        composeTestRule.onNodeWithTag("finish_sms_sync_continue_button").assertIsDisplayed()
     }
 
     @Test
-    fun `test feature-flagged expert settings and color-only theme selection on HouseholdTabScreen`() {
+    fun `test feature-flagged expert settings, CSV export button, and removal of thread-count and bug-guard toggles on HouseholdTabScreen`() {
         val context = ApplicationProvider.getApplicationContext<Context>()
         LocalAccountSessionManager.ensureInitialized(context)
         // Reset expert mode to disabled initially
@@ -1113,6 +1151,11 @@ class ExampleRobolectricTest {
         }
         composeTestRule.waitForIdle()
 
+        // Verify Export CSV card & button are displayed in Settings
+        composeTestRule.onNodeWithTag("household_tab_list")
+            .performScrollToNode(hasTestTag("settings_export_csv_button"))
+        composeTestRule.onNodeWithTag("settings_export_csv_button").assertIsDisplayed()
+
         // 1. Scroll to ThemeModeSelectorBar and verify it uses color-only swatches (no "System", "Light", "Dark" text labels)
         composeTestRule.onNodeWithTag("household_tab_list")
             .performScrollToNode(hasTestTag("theme_color_swatch_bar"))
@@ -1130,25 +1173,21 @@ class ExampleRobolectricTest {
         composeTestRule.waitForIdle()
         assertEquals(AppThemeMode.SYSTEM, LocalAccountSessionManager.themeMode.value)
 
-        // 2. Scroll to Expert Feature Flag card and verify Crashlytics, FCM Push, and Parallel SMS Expert cards are hidden when OFF
+        // 2. Scroll to Advanced Settings card and verify Crashlytics and FCM Push cards are hidden when OFF
         composeTestRule.onNodeWithTag("household_tab_list")
             .performScrollToNode(hasTestTag("expert_feature_flag_card"))
         composeTestRule.onNodeWithTag("expert_feature_flag_card").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Advanced Settings").assertIsDisplayed()
         assertTrue(composeTestRule.onAllNodesWithTag("crashlytics_settings_card").fetchSemanticsNodes().isEmpty())
         assertTrue(composeTestRule.onAllNodesWithTag("fcm_push_settings_card").fetchSemanticsNodes().isEmpty())
-        assertTrue(composeTestRule.onAllNodesWithTag("expert_parallel_sms_card").fetchSemanticsNodes().isEmpty())
 
         // 3. Enable the Master Expert Feature Flag switch
         composeTestRule.onNodeWithTag("expert_feature_flag_switch").performClick()
         composeTestRule.waitForIdle()
         assertTrue(LocalAccountSessionManager.expertFeatureFlags.value.expertModeEnabled)
 
-        // 4. Verify Expert sub-flag chips and gated expert settings cards are now revealed when scrolling the LazyColumn
+        // 4. Verify Expert sub-flag chips and valid diagnostic cards exist, while ALL thread-count and bug-guard toggles are absent
         composeTestRule.onNodeWithTag("expert_subflags_row").assertExists()
-        composeTestRule.onNodeWithTag("household_tab_list")
-            .performScrollToNode(hasTestTag("expert_parallel_sms_card"))
-        composeTestRule.onNodeWithTag("expert_parallel_sms_card").assertIsDisplayed()
-
         composeTestRule.onNodeWithTag("household_tab_list")
             .performScrollToNode(hasTestTag("fcm_push_settings_card"))
         composeTestRule.onNodeWithTag("fcm_push_settings_card").assertExists()
@@ -1156,6 +1195,14 @@ class ExampleRobolectricTest {
         composeTestRule.onNodeWithTag("household_tab_list")
             .performScrollToNode(hasTestTag("crashlytics_settings_card"))
         composeTestRule.onNodeWithTag("crashlytics_settings_card").assertExists()
+
+        // Ensure user cannot modify parsing/writing thread counts or disable bug guards in UI
+        assertTrue(composeTestRule.onAllNodesWithTag("expert_parallel_sms_card").fetchSemanticsNodes().isEmpty())
+        assertTrue(composeTestRule.onAllNodesWithTag("expert_reader_threads_chip_6").fetchSemanticsNodes().isEmpty())
+        assertTrue(composeTestRule.onAllNodesWithTag("expert_writer_threads_chip_6").fetchSemanticsNodes().isEmpty())
+        assertTrue(composeTestRule.onAllNodesWithTag("expert_strict_duplicate_switch").fetchSemanticsNodes().isEmpty())
+        assertTrue(composeTestRule.onAllNodesWithTag("crashlytics_sms_guard_switch").fetchSemanticsNodes().isEmpty())
+        assertTrue(composeTestRule.onAllNodesWithTag("crashlytics_typography_guard_switch").fetchSemanticsNodes().isEmpty())
     }
 
     @Test
@@ -1280,6 +1327,382 @@ class ExampleRobolectricTest {
         assertTrue(composeTestRule.onAllNodesWithTag("overall_budget_trend_header").fetchSemanticsNodes().isEmpty())
         assertTrue(composeTestRule.onAllNodesWithTag("overall_budget_trend_canvas").fetchSemanticsNodes().isEmpty())
     }
+
+    @Test
+    fun `test categories use Unknown instead of General, eliminate duplicate defaults, and map unique icons and notification icons`() {
+        // 1. Unknown replaces General; zero duplicates in ExpenseCategories.ALL
+        assertTrue(ExpenseCategories.ALL.contains("Unknown"))
+        assertFalse(ExpenseCategories.ALL.any { it.equals("General", ignoreCase = true) })
+        assertEquals(ExpenseCategories.ALL.size, ExpenseCategories.ALL.map { it.lowercase() }.distinct().size)
+
+        // 2. Legacy and duplicate category aliases collapse cleanly
+        assertEquals("Unknown", ExpenseCategories.normalizeCategory(""))
+        assertEquals("Unknown", ExpenseCategories.normalizeCategory("General"))
+        assertEquals("Salary & Income", ExpenseCategories.normalizeCategory("Salary"))
+        assertEquals("Bills & Utilities", ExpenseCategories.normalizeCategory("Utilities"))
+        assertEquals("Fuel & Travel", ExpenseCategories.normalizeCategory("Transportation"))
+        assertEquals("Health & Fitness", ExpenseCategories.normalizeCategory("Health & Medical"))
+
+        // 3. Every standard category has its own distinct Material icon & distinct notification drawable icon
+        val composeIcons = ExpenseCategories.ALL.map { categoryIcon(it) }.toSet()
+        assertEquals(
+            "Expected every standard category in ExpenseCategories.ALL to have a unique Compose icon",
+            ExpenseCategories.ALL.size,
+            composeIcons.size
+        )
+        val notifIconResIds = ExpenseCategories.ALL.map {
+            TransactionNotificationHelper.categoryNotificationIconRes(it)
+        }.toSet()
+        assertEquals(
+            "Expected every standard category in ExpenseCategories.ALL to have a unique notification icon drawable",
+            ExpenseCategories.ALL.size,
+            notifIconResIds.size
+        )
+    }
+
+    @Test
+    fun `test notifications display category icon and concise merchant category amount summary without raw SMS body`() {
+        val app = ApplicationProvider.getApplicationContext<Application>()
+        shadowOf(app).grantPermissions(Manifest.permission.POST_NOTIFICATIONS)
+        val nm = app.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        nm.cancelAll()
+
+        TransactionNotificationHelper.showNewTransactionNotification(
+            context = app,
+            expenseId = "notif_tx_99",
+            householdId = "local_household_test",
+            visibility = "SHARED",
+            title = "Swiggy Instamart\nRs. 645.00 debited from A/c XX4821 Avl Bal Rs. 24000",
+            amount = 645.0,
+            currentCategory = "Groceries",
+            currencySymbol = "₹",
+            paymentSummary = "UPI • HDFC Bank ••4821",
+            transactionType = "EXPENSE"
+        )
+
+        val activeNotifs = shadowOf(nm).allNotifications
+        assertEquals(1, activeNotifs.size)
+        val posted = activeNotifs.first()
+
+        // Verify category-specific small icon & large icon bitmap
+        assertEquals(
+            R.drawable.ic_cat_groceries,
+            posted.smallIcon.resId
+        )
+        assertNotNull("Expected large category icon bitmap on transaction notification", posted.getLargeIcon())
+
+        val titleText = posted.extras.getCharSequence(Notification.EXTRA_TITLE)?.toString().orEmpty()
+        val contentText = posted.extras.getCharSequence(Notification.EXTRA_TEXT)?.toString().orEmpty()
+        val bigText = posted.extras.getCharSequence(Notification.EXTRA_BIG_TEXT)?.toString().orEmpty()
+
+        // Must contain Merchant, Amount, and Category summary — and NEVER raw multi-line SMS text
+        assertTrue(titleText.contains("Swiggy Instamart"))
+        assertTrue(titleText.contains("₹645"))
+        assertTrue(contentText.contains("Groceries"))
+        assertTrue(bigText.contains("Merchant: Swiggy Instamart"))
+        assertTrue(bigText.contains("Category: Groceries"))
+        assertTrue(bigText.contains("Amount: ₹645"))
+        assertFalse(bigText.contains("debited from", ignoreCase = true))
+        assertFalse(bigText.contains("Avl Bal", ignoreCase = true))
+    }
+
+    @Test
+    fun `test Current FY, Past FY, Past Year filters and CSV export with period selection`() {
+        fun utcMillis(year: Int, monthOneBased: Int, day: Int): Long {
+            return Calendar.getInstance(TimeZone.getTimeZone("UTC")).apply {
+                set(Calendar.YEAR, year)
+                set(Calendar.MONTH, monthOneBased - 1)
+                set(Calendar.DAY_OF_MONTH, day)
+                set(Calendar.HOUR_OF_DAY, 12)
+                set(Calendar.MINUTE, 0)
+                set(Calendar.SECOND, 0)
+                set(Calendar.MILLISECOND, 0)
+            }.timeInMillis
+        }
+
+        // Reference date: 15 Nov 2026 -> Current FY is Apr 1, 2026 .. Mar 31, 2027; Past FY is Apr 1, 2025 .. Mar 31, 2026
+        val refNov2026 = utcMillis(2026, 11, 15)
+        val txCurrentFyMay2026 = ExpenseTransaction(
+            id = "tx_cfy_1",
+            title = "Apollo Pharmacy, Koramangala",
+            amount = 1250.50,
+            type = "EXPENSE",
+            category = "Health & Fitness",
+            accountName = "HDFC Bank ••4821",
+            paymentMode = "UPI",
+            userName = "Aarav",
+            householdId = "hh_1",
+            visibility = "SHARED",
+            transactionDateMillis = utcMillis(2026, 5, 10)
+        )
+        val txPastFyFeb2026 = ExpenseTransaction(
+            id = "tx_pfy_1",
+            title = "BESCOM Electricity",
+            amount = 3400.0,
+            type = "EXPENSE",
+            category = "Bills & Utilities",
+            accountName = "ICICI Bank ••1104",
+            paymentMode = "BANK",
+            userName = "Priya",
+            householdId = "hh_1",
+            visibility = "SHARED",
+            transactionDateMillis = utcMillis(2026, 2, 18)
+        )
+        val txPastFyAug2025 = ExpenseTransaction(
+            id = "tx_pfy_2",
+            title = "BigBasket Superstore",
+            amount = 2800.0,
+            type = "EXPENSE",
+            category = "Groceries",
+            accountName = "HDFC Bank ••4821",
+            paymentMode = "CARD",
+            userName = "Aarav",
+            householdId = "hh_1",
+            visibility = "SHARED",
+            transactionDateMillis = utcMillis(2025, 8, 22)
+        )
+        val allSampleTxs = listOf(txCurrentFyMay2026, txPastFyFeb2026, txPastFyAug2025)
+
+        val currentFyFiltered = DateRangeFilterUtils.filterTransactionsByPreset(
+            transactions = allSampleTxs,
+            preset = DateRangePreset.CURRENT_FY,
+            selectedPeriod = YearMonthPeriod(2026, 10),
+            customRange = null,
+            referenceMillis = refNov2026
+        )
+        assertEquals(listOf("tx_cfy_1"), currentFyFiltered.map { it.id })
+
+        val pastFyFiltered = DateRangeFilterUtils.filterTransactionsByPreset(
+            transactions = allSampleTxs,
+            preset = DateRangePreset.PAST_FY,
+            selectedPeriod = YearMonthPeriod(2026, 10),
+            customRange = null,
+            referenceMillis = refNov2026
+        )
+        assertEquals(listOf("tx_pfy_1", "tx_pfy_2"), pastFyFiltered.map { it.id })
+
+        val thisYearFiltered = DateRangeFilterUtils.filterTransactionsByPreset(
+            transactions = allSampleTxs,
+            preset = DateRangePreset.THIS_YEAR,
+            selectedPeriod = YearMonthPeriod(2026, 10),
+            customRange = null,
+            referenceMillis = refNov2026
+        )
+        assertEquals(listOf("tx_cfy_1", "tx_pfy_1"), thisYearFiltered.map { it.id })
+
+        val pastYearFiltered = DateRangeFilterUtils.filterTransactionsByPreset(
+            transactions = allSampleTxs,
+            preset = DateRangePreset.PAST_YEAR,
+            selectedPeriod = YearMonthPeriod(2026, 10),
+            customRange = null,
+            referenceMillis = refNov2026
+        )
+        assertEquals(listOf("tx_pfy_2"), pastYearFiltered.map { it.id })
+
+        // Verify RFC-4180 CSV generation escapes commas in merchant names and outputs normalized categories
+        val csvOutput = CsvTransactionExporter.buildTransactionsCsv(
+            transactions = currentFyFiltered,
+            currencySymbol = "₹"
+        )
+        val lines = csvOutput.trim().lines()
+        assertEquals(2, lines.size)
+        assertTrue(lines[0].startsWith("Date,Time,Merchant,Category,Type,Amount"))
+        assertTrue(lines[1].contains("\"Apollo Pharmacy, Koramangala\""))
+        assertTrue(lines[1].contains("Health & Fitness"))
+        assertTrue(lines[1].contains("1250.50"))
+
+        // Verify ExportTransactionsCsvDialog UI allows selecting Current FY and triggers Save CSV callback
+        var exportedCsvPayload: Triple<String, String, Int>? = null
+        val dialogUiState = OneFamilyDashboardUiState(
+            isLoading = false,
+            selectedDateRangePreset = DateRangePreset.ALL_TIME,
+            allScopedExpenses = allSampleTxs,
+            sharedExpenses = allSampleTxs
+        )
+
+        composeTestRule.setContent {
+            OneFamilyTheme {
+                ExportTransactionsCsvDialog(
+                    uiState = dialogUiState,
+                    onDismiss = {},
+                    onSaveCsvToFile = { csv, fileName, count, _ ->
+                        exportedCsvPayload = Triple(csv, fileName, count)
+                    }
+                )
+            }
+        }
+        composeTestRule.waitForIdle()
+
+        composeTestRule.onNodeWithTag("export_csv_dialog").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("export_preset_chip_current_fy").performScrollTo().performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("confirm_export_csv_button").performScrollTo().performClick()
+        composeTestRule.waitForIdle()
+
+        assertNotNull(exportedCsvPayload)
+        assertTrue(exportedCsvPayload!!.second.endsWith(".csv"))
+        assertTrue(exportedCsvPayload!!.first.contains("Date,Time,Merchant,Category"))
+    }
+
+    @Test
+    fun `test cross-bucket boundary SMS duplicate guard, typography scale guard, and batch sync guard are permanently active when all feature flags are disabled`() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        LocalAccountSessionManager.signInWithUsernamePassword(context, "test", "pass")
+        val user = LocalAccountSessionManager.getCurrentUser(context)!!
+
+        // Explicitly disable ALL optional feature flags and crash reporting to prove zero bug fixes are behind flags
+        LocalAccountSessionManager.updateExpertFeatureFlags(
+            context,
+            ExpertFeatureFlagsSettings(
+                expertModeEnabled = false,
+                crashAnalyticsFeatureEnabled = false,
+                fcmPushDiagnosticsEnabled = false
+            )
+        )
+        LocalAccountSessionManager.updateCrashlyticsSettings(
+            context,
+            CrashlyticsSettings(crashReportingEnabled = false)
+        )
+        assertFalse(LocalAccountSessionManager.expertFeatureFlags.value.expertModeEnabled)
+        assertFalse(LocalAccountSessionManager.crashlyticsSettings.value.crashReportingEnabled)
+
+        // 1. Typography Scale Guard: NaN, Infinity, negative, and extreme scales never crash and maintain >= 1.25x lineHeight
+        val nanTypography = buildResponsiveTypography(scale = Float.NaN, fontScale = Float.NaN)
+        val infTypography = buildResponsiveTypography(scale = Float.POSITIVE_INFINITY, fontScale = 4.0f)
+        val negTypography = buildResponsiveTypography(scale = -3.0f, fontScale = -1.0f)
+        val extremeTypography = buildResponsiveTypography(scale = 1.30f, fontScale = 2.0f)
+
+        listOf(nanTypography, infTypography, negTypography, extremeTypography).forEach { typo ->
+            val styles = listOf(
+                typo.displayLarge, typo.headlineLarge, typo.headlineMedium, typo.headlineSmall,
+                typo.titleLarge, typo.titleMedium, typo.titleSmall,
+                typo.bodyLarge, typo.bodyMedium, typo.bodySmall,
+                typo.labelLarge, typo.labelMedium, typo.labelSmall
+            )
+            styles.forEach { style ->
+                assertTrue("fontSize must be finite and positive", style.fontSize.value.isFinite() && style.fontSize.value > 0f)
+                assertTrue("lineHeight must be finite and positive", style.lineHeight.value.isFinite() && style.lineHeight.value > 0f)
+                assertTrue(
+                    "lineHeight (${style.lineHeight.value}) must be >= 1.25x fontSize (${style.fontSize.value})",
+                    style.lineHeight.value + 0.01f >= style.fontSize.value * 1.25f
+                )
+            }
+        }
+        // Combined multiplier is clamped to <= 1.55x base 16sp bodyLarge (<= 24.8sp)
+        assertTrue(extremeTypography.bodyLarge.fontSize.value <= 16f * 1.55f + 0.05f)
+
+        // 2. Cross-Bucket Boundary Duplicate SMS Guard (straddling BOTH 5-minute 300_000ms and 10-minute 600_000ms boundaries)
+        val repo = OneFamilyRepository(context)
+        val smsReader = SmsInboxReader(context)
+        val profile = repo.ensureUserProfile(user.displayName, user.email).getOrNull()!!
+        val household = repo.getHouseholdOnce(profile.activeHouseholdId)!!
+
+        // Exact 10-minute (and 5-minute) epoch boundary: 299.5s vs 301.0s / 599.5s vs 601.0s
+        val exact10MinBoundary = ((System.currentTimeMillis() - 3_600_000L) / 600_000L) * 600_000L
+        val tsJustBeforeBoundary = exact10MinBoundary - 500L   // e.g. 09:59.500 (bucket N-1)
+        val tsJustAfterBoundary = exact10MinBoundary + 1_000L  // e.g. 10:00.001 (bucket N)
+        val duplicateBody = "Rs. 2,345.00 debited from HDFC Bank A/c XX7744 on 18-11-26 to VPA zepto@icici (UPI Ref 554433221199). Avl Bal: Rs. 31200.00"
+
+        val parsedCrossBoundary = smsReader.parseSmsBatchesInParallel(
+            rawRows = listOf(
+                RawSmsRow(sender = "VM-HDFCBK", body = duplicateBody, timestamp = tsJustBeforeBoundary),
+                RawSmsRow(sender = "AD-HDFCBK", body = duplicateBody, timestamp = tsJustAfterBoundary)
+            ),
+            existingSignatures = emptySet()
+        )
+        assertEquals(
+            "Cross-boundary identical SMS rows (09:59.5 vs 10:01.0) must deduplicate to 1 candidate",
+            1,
+            parsedCrossBoundary.size
+        )
+
+        // Also verify repository batchImportSmsCandidates rejects a second candidate across the 5m/10m bucket boundary
+        val candBefore = smsReader.parseRawSms("VM-HDFCBK", duplicateBody, tsJustBeforeBoundary)!!
+        val candAfter = smsReader.parseRawSms("AD-HDFCBK", duplicateBody, tsJustAfterBoundary)!!
+        assertTrue("Raw modulo bucket signatures differ across boundary", candBefore.id != candAfter.id)
+
+        val firstImport = repo.batchImportSmsCandidates(
+            candidates = listOf(candBefore),
+            userName = user.displayName,
+            household = household,
+            shareByDefault = true
+        ).getOrThrow()
+        assertEquals(1, firstImport)
+
+        val secondCrossBoundaryImport = repo.batchImportSmsCandidates(
+            candidates = listOf(candAfter),
+            userName = user.displayName,
+            household = household,
+            shareByDefault = true
+        ).getOrThrow()
+        assertEquals(
+            "Second identical SMS straddling 10-minute boundary must be blocked without any feature flag",
+            0,
+            secondCrossBoundaryImport
+        )
+
+        // Verify LocalAccountDataStore.deduplicateSmsExpenses also collapses legacy cross-boundary duplicates
+        val legacyDupA = ExpenseTransaction(
+            id = "legacy_dup_a",
+            userId = user.uid,
+            userName = user.displayName,
+            householdId = household.id,
+            title = "Zepto",
+            amount = 2345.0,
+            type = "EXPENSE",
+            category = "Groceries",
+            accountName = "HDFC Bank ••7744",
+            paymentMode = "UPI",
+            notes = "[VM-HDFCBK] $duplicateBody",
+            visibility = "SHARED",
+            smsSignature = candBefore.id,
+            referenceNumber = "554433221199",
+            transactionDateMillis = tsJustBeforeBoundary
+        )
+        val legacyDupB = legacyDupA.copy(
+            id = "legacy_dup_b",
+            notes = "[AD-HDFCBK] $duplicateBody",
+            smsSignature = candAfter.id,
+            transactionDateMillis = tsJustAfterBoundary
+        )
+        val collapsed = LocalAccountDataStore.deduplicateSmsExpenses(listOf(legacyDupA, legacyDupB))
+        assertEquals("Legacy cross-boundary SMS duplicates must collapse to 1 item", 1, collapsed.size)
+
+        // 3. Verify constant thread counts and absence of thread badges in ViewModel sync status message
+        assertEquals(6, SmsInboxReader.DEFAULT_PARALLEL_READER_THREADS)
+        assertEquals(6, SmsInboxReader.DEFAULT_PARALLEL_WRITER_THREADS)
+        assertEquals(5, SmsInboxReader.MIN_PARALLEL_THREADS)
+
+        val viewModel = OneFamilyViewModel(
+            repository = repo,
+            smsInboxReader = smsReader,
+            currentUserId = user.uid,
+            currentUserName = user.displayName,
+            currentUserEmail = user.email
+        )
+        composeTestRule.waitForIdle()
+        shadowOf(Looper.getMainLooper()).idle()
+
+        viewModel.runParallelSmsBatchPipeline(
+            rawRowsOverride = listOf(
+                RawSmsRow(
+                    sender = "VM-HDFCBK",
+                    body = "Rs. 610.00 debited from HDFC Bank A/c XX7744 on 18-11-26 to VPA metro@sbi (UPI Ref 887766554433).",
+                    timestamp = exact10MinBoundary + 120_000L
+                )
+            ),
+            existingSignatures = emptySet(),
+            userName = user.displayName,
+            household = household
+        )
+        val syncStatusMsg = viewModel.smsSyncProgress.value.statusMessage
+        assertFalse("Status message must never expose thread counts or lightning badge", syncStatusMsg.contains("⚡"))
+        assertFalse("Status message must never mention threads", syncStatusMsg.contains("thread", ignoreCase = true))
+
+        LocalAccountSessionManager.signOut(context)
+    }
 }
+
+
 
 

@@ -36,6 +36,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.HelpOutline
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.filled.ReceiptLong
@@ -43,7 +44,9 @@ import androidx.compose.material.icons.automirrored.filled.TrendingUp
 import androidx.compose.material.icons.filled.AccountBalance
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.CalendarMonth
+import androidx.compose.material.icons.filled.Category
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Colorize
 import androidx.compose.material.icons.filled.CreditCard
@@ -166,17 +169,20 @@ fun formatShortDate(millis: Long): String {
 }
 
 fun categoryIcon(category: String): ImageVector {
-    val lower = category.lowercase()
+    val lower = category.trim().lowercase()
     return when {
+        lower.isBlank() || lower == "unknown" || lower == "general" || lower == "uncategorized" -> Icons.AutoMirrored.Filled.HelpOutline
         lower.contains("grocer") -> Icons.Default.LocalGroceryStore
         lower.contains("food") || lower.contains("dining") -> Icons.Default.Fastfood
         lower.contains("rent") || lower.contains("housing") -> Icons.Default.Home
-        lower.contains("fuel") || lower.contains("travel") -> Icons.Default.DirectionsCar
+        lower.contains("bill") || lower.contains("util") -> Icons.Default.Bolt
+        lower.contains("fuel") || lower.contains("travel") || lower.contains("transport") -> Icons.Default.DirectionsCar
         lower.contains("shop") -> Icons.Default.ShoppingBag
-        lower.contains("health") -> Icons.Default.MedicalServices
+        lower.contains("health") || lower.contains("medical") || lower.contains("fitness") -> Icons.Default.MedicalServices
         lower.contains("entertain") -> Icons.Default.Movie
-        lower.contains("invest") || lower.contains("salary") || lower.contains("income") -> Icons.AutoMirrored.Filled.TrendingUp
-        else -> Icons.AutoMirrored.Filled.ReceiptLong
+        lower.contains("invest") -> Icons.AutoMirrored.Filled.TrendingUp
+        lower.contains("salary") || lower.contains("income") -> Icons.Default.Payments
+        else -> Icons.Default.Category
     }
 }
 
@@ -581,10 +587,13 @@ fun MonthPeriodSelectorBar(
 
                 val presets = listOf(
                     DateRangePreset.MONTH to "Current Month",
-                    DateRangePreset.LAST_30_DAYS to "Last 30 Days",
-                    DateRangePreset.LAST_7_DAYS to "Last 7 Days",
-                    DateRangePreset.LAST_90_DAYS to "Last 3 Months",
+                    DateRangePreset.CURRENT_FY to "Current FY",
+                    DateRangePreset.PAST_FY to "Past FY",
                     DateRangePreset.THIS_YEAR to "This Year",
+                    DateRangePreset.PAST_YEAR to "Past Year",
+                    DateRangePreset.LAST_30_DAYS to "Last 30 Days",
+                    DateRangePreset.LAST_90_DAYS to "Last 3 Months",
+                    DateRangePreset.LAST_7_DAYS to "Last 7 Days",
                     DateRangePreset.ALL_TIME to "All Time"
                 )
                 presets.forEach { (preset, chipLabel) ->

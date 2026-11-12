@@ -28,7 +28,7 @@ data class ExpenseTransaction(
     val title: String = "",
     val amount: Double = 0.0,
     val type: String = "EXPENSE", // EXPENSE | INCOME
-    val category: String = "General",
+    val category: String = "Unknown",
     val accountName: String = "Cash",
     val paymentMode: String = "UPI", // UPI | BANK | CARD | WALLET | CASH
     val tags: List<String> = emptyList(),
@@ -154,21 +154,13 @@ data class FcmPushSettings(
 )
 
 data class CrashlyticsSettings(
-    val crashReportingEnabled: Boolean = true,
-    val smsSyncGuardEnabled: Boolean = true,
-    val typographyGuardEnabled: Boolean = true
+    val crashReportingEnabled: Boolean = true
 )
 
 data class ExpertFeatureFlagsSettings(
     val expertModeEnabled: Boolean = false,
     val crashAnalyticsFeatureEnabled: Boolean = true,
-    val fcmPushDiagnosticsEnabled: Boolean = true,
-    val parallelSmsEngineTuningEnabled: Boolean = true,
-    val strictDuplicateLinkerEnabled: Boolean = true,
-    val rawSmsDebugInspectorEnabled: Boolean = true,
-    val readerThreadCount: Int = 6,
-    val writerThreadCount: Int = 6,
-    val smsBatchSize: Int = 12
+    val fcmPushDiagnosticsEnabled: Boolean = true
 )
 
 data class StabilityDiagnosticEntry(
@@ -192,8 +184,32 @@ object ExpenseCategories {
         "Entertainment",
         "Investments",
         "Salary & Income",
-        "General"
+        "Unknown"
     )
 
     val EXPENSE_ONLY = ALL.filter { it != "Salary & Income" }
+
+    /**
+     * Normalizes category names so legacy "General", blank strings, and duplicate default aliases
+     * ("Salary", "Utilities", "Transportation", "Health & Medical") resolve to their single
+     * canonical category in [ALL], while preserving genuine custom user categories.
+     */
+    fun normalizeCategory(raw: String): String {
+        val cleaned = raw.trim().take(60)
+        if (cleaned.isBlank()) return "Unknown"
+        return when (cleaned.lowercase()) {
+            "general", "unknown", "uncategorized", "other", "misc", "miscellaneous" -> "Unknown"
+            "salary", "salary & income", "income" -> "Salary & Income"
+            "utilities", "bills", "bills & utilities" -> "Bills & Utilities"
+            "transportation", "transport", "fuel", "travel", "fuel & travel" -> "Fuel & Travel"
+            "health & medical", "medical", "health", "fitness", "health & fitness" -> "Health & Fitness"
+            "food", "dining", "food & dining" -> "Food & Dining"
+            "rent", "housing", "rent & housing" -> "Rent & Housing"
+            "groceries", "grocery" -> "Groceries"
+            "shopping" -> "Shopping"
+            "entertainment" -> "Entertainment"
+            "investment", "investments" -> "Investments"
+            else -> ALL.firstOrNull { it.equals(cleaned, ignoreCase = true) } ?: cleaned
+        }
+    }
 }

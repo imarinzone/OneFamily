@@ -6,15 +6,19 @@ import android.provider.Telephony
 import com.example.data.local.LocalAccountDataStore
 import com.ritesh.parser.core.ParsedTransaction
 import com.ritesh.parser.core.bank.BankParserFactory
+import java.util.Locale
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicInteger
+import kotlin.math.abs
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 
@@ -37,13 +41,14 @@ class SmsInboxReader(private val context: Context) {
 
     /**
      * Parses a list of [RawSmsRow] items in parallel batches using a dedicated fixed thread pool
-     * of at least [MIN_PARALLEL_THREADS] (5+) threads.
+     * of constant size ([DEFAULT_PARALLEL_READER_THREADS]).
      *
-     * Thread-Safety & Race-Condition Prevention:
-     * - `signatureLock` guards `seenSignatures` so checking and inserting both `signature` and
-     *   `contentKey` is strictly atomic across all reader threads.
-     * - `progressLock` serializes progress and streaming batch callbacks (`onBatchParsed`) so
-     *   downstream writer threads receive clean, non-overlapping batches immediately as they are read.
+     * Thread-Safety & Race-Condition Prevention (Always Active):
+     * - `signatureLock` atomically guards `seenSignatures` and sliding-window `seenBodyTimestamps`
+     *   (`±10 minutes`) so identical SMS messages — even straddling a 5-minute boundary — can never
+     *   produce duplicate candidates across parallel reader threads.
+     * - `progressMutex` serializes `onProgress` and `onBatchParsed` callbacks so `readCount` and
+     *   `matchedCount` are strictly monotonic and downstream writer threads receive clean batches.
      */
     suspend fun parseSmsBatchesInParallel(
         rawRows: List<RawSmsRow>,
@@ -66,13 +71,17 @@ class SmsInboxReader(private val context: Context) {
             return emptyList()
         }
 
-        val effectiveThreads = readerThreads.coerceAtLeast(MIN_PARALLEL_THREADS)
+        val effectiveThreads = readerThreads.coerceIn(MIN_PARALLEL_THREADS, DEFAULT_PARALLEL_READER_THREADS)
         val effectiveBatchSize = batchSize.coerceAtLeast(1)
         val signatureLock = Any()
+        val progressMutex = Mutex()
         val seenSignatures = existingSignatures.toMutableSet()
+        val seenBodyTimestamps = mutableMapOf<String, MutableList<Long>>()
         val allCandidates = mutableListOf<SmsCandidate>()
         val readCounter = AtomicInteger(0)
         val matchedCounter = AtomicInteger(0)
+        var maxReportedRead = 0
+        var maxReportedMatched = 0
 
         onProgress(0, totalCount, 0)
 
@@ -107,6 +116,14 @@ class SmsInboxReader(private val context: Context) {
                                         if (parsed != null) {
                                             val signature = parsed.generateTransactionId()
                                             val contentKey = buildSmsContentKey(body, timestamp)
+                                            val adjacentKeys = buildSmsAdjacentContentKeys(body, timestamp)
+                                            val normalizedBody = normalizeSmsBody(body)
+                                            val bodyIdentityKey = if (normalizedBody.length >= 15) {
+                                                "${parsed.type.name}|${String.format(Locale.US, "%.2f", parsed.amount.toDouble())}|$normalizedBody"
+                                            } else {
+                                                ""
+                                            }
+
                                             LocalAccountDataStore.cacheSmsMessage(
                                                 signature = signature,
                                                 sender = sender,
@@ -116,9 +133,24 @@ class SmsInboxReader(private val context: Context) {
                                             )
 
                                             val acceptedCandidate: SmsCandidate? = synchronized(signatureLock) {
-                                                if (signature !in seenSignatures && contentKey !in seenSignatures) {
+                                                val alreadySeenBySigOrKey = signature in seenSignatures ||
+                                                    contentKey in seenSignatures ||
+                                                    adjacentKeys.any { it in seenSignatures }
+                                                val alreadySeenBySlidingWindow = if (!alreadySeenBySigOrKey && bodyIdentityKey.isNotEmpty()) {
+                                                    seenBodyTimestamps[bodyIdentityKey]?.any { prevTs ->
+                                                        abs(timestamp - prevTs) <= SLIDING_DEDUP_WINDOW_MS
+                                                    } == true
+                                                } else {
+                                                    false
+                                                }
+
+                                                if (!alreadySeenBySigOrKey && !alreadySeenBySlidingWindow) {
                                                     seenSignatures.add(signature)
                                                     seenSignatures.add(contentKey)
+                                                    seenSignatures.addAll(adjacentKeys)
+                                                    if (bodyIdentityKey.isNotEmpty()) {
+                                                        seenBodyTimestamps.getOrPut(bodyIdentityKey) { mutableListOf() }.add(timestamp)
+                                                    }
                                                     val category = BankParserFactory.inferCategory(parsed)
                                                     val candidate = SmsCandidate(
                                                         id = signature,
@@ -150,20 +182,27 @@ class SmsInboxReader(private val context: Context) {
                                 }
                             }
 
-                            val currentRead = readCounter.addAndGet(batchReadCount).coerceAtMost(totalCount)
-                            val currentMatched = matchedCounter.addAndGet(batchCandidates.size)
+                            val currentReadRaw = readCounter.addAndGet(batchReadCount).coerceAtMost(totalCount)
+                            val currentMatchedRaw = matchedCounter.addAndGet(batchCandidates.size)
                             val latestCandidate = batchCandidates.lastOrNull()
 
-                            onProgress(currentRead, totalCount, currentMatched)
-                            onBatchParsed(
-                                batchCandidates,
-                                currentRead,
-                                totalCount,
-                                currentMatched,
-                                latestCandidate
-                            )
+                            progressMutex.withLock {
+                                if (currentReadRaw > maxReportedRead) maxReportedRead = currentReadRaw
+                                if (currentMatchedRaw > maxReportedMatched) maxReportedMatched = currentMatchedRaw
+                                val monotonicRead = maxReportedRead
+                                val monotonicMatched = maxReportedMatched
 
-                            if (perBatchDelayMs > 0L && currentRead < totalCount) {
+                                onProgress(monotonicRead, totalCount, monotonicMatched)
+                                onBatchParsed(
+                                    batchCandidates,
+                                    monotonicRead,
+                                    totalCount,
+                                    monotonicMatched,
+                                    latestCandidate
+                                )
+                            }
+
+                            if (perBatchDelayMs > 0L && currentReadRaw < totalCount) {
                                 delay(perBatchDelayMs)
                             }
                             batchCandidates
@@ -185,7 +224,7 @@ class SmsInboxReader(private val context: Context) {
 
     /**
      * Reads SMS messages from the phone (`content://sms/inbox` and fallback `content://sms`)
-     * and processes them in parallel batches across at least 5 reader threads (`readerThreads = 6`),
+     * and processes them in parallel batches across [DEFAULT_PARALLEL_READER_THREADS] threads,
      * streaming each parsed batch via `onBatchParsed` so transaction writer threads can save them
      * concurrently without waiting for the entire inbox scan to finish.
      */
@@ -222,11 +261,21 @@ class SmsInboxReader(private val context: Context) {
         for (uri: Uri in urisToTry) {
             if (processedAnyUri) break
             try {
+                val selection = if (uri == Telephony.Sms.CONTENT_URI) {
+                    "${Telephony.Sms.TYPE} = ?"
+                } else {
+                    null
+                }
+                val selectionArgs = if (uri == Telephony.Sms.CONTENT_URI) {
+                    arrayOf(Telephony.Sms.MESSAGE_TYPE_INBOX.toString())
+                } else {
+                    null
+                }
                 context.contentResolver.query(
                     uri,
                     projection,
-                    null,
-                    null,
+                    selection,
+                    selectionArgs,
                     "${Telephony.Sms.DATE} ASC"
                 )?.use { cursor ->
                     val addressIdx = cursor.getColumnIndex(Telephony.Sms.ADDRESS)
@@ -256,13 +305,10 @@ class SmsInboxReader(private val context: Context) {
                                 val body = cursor.getString(bodyIdx).orEmpty()
                                 val timestamp = cursor.getLong(dateIdx)
                                 val key = "$sender|$timestamp|${body.trim()}"
-                                if (seenRawKeys.add(key)) {
+                                if (sender.isNotBlank() && body.isNotBlank() && seenRawKeys.add(key)) {
                                     rawRows.add(RawSmsRow(sender = sender, body = body, timestamp = timestamp))
                                 }
                             }
-                        } else {
-                            // Keep total count accurate for progress bar even for non-inbox rows
-                            rawRows.add(RawSmsRow(sender = "", body = "", timestamp = 0L))
                         }
                     }
                 }
@@ -282,7 +328,7 @@ class SmsInboxReader(private val context: Context) {
             rawRows = rawRows,
             existingSignatures = existingSignatures,
             batchSize = batchSize,
-            readerThreads = readerThreads.coerceAtLeast(MIN_PARALLEL_THREADS),
+            readerThreads = readerThreads.coerceIn(MIN_PARALLEL_THREADS, DEFAULT_PARALLEL_READER_THREADS),
             perBatchDelayMs = perBatchDelayMs,
             onProgress = onProgress,
             onBatchParsed = onBatchParsed
@@ -298,6 +344,7 @@ class SmsInboxReader(private val context: Context) {
     ): List<SmsCandidate> {
         val candidates = mutableListOf<SmsCandidate>()
         val seenSignatures = existingSignatures.toMutableSet()
+        val seenBodyTimestamps = mutableMapOf<String, MutableList<Long>>()
 
         val urisToTry = listOf(
             Telephony.Sms.Inbox.CONTENT_URI,
@@ -315,11 +362,21 @@ class SmsInboxReader(private val context: Context) {
         for (uri: Uri in urisToTry) {
             if (processedAnyUri) break
             try {
+                val selection = if (uri == Telephony.Sms.CONTENT_URI) {
+                    "${Telephony.Sms.TYPE} = ?"
+                } else {
+                    null
+                }
+                val selectionArgs = if (uri == Telephony.Sms.CONTENT_URI) {
+                    arrayOf(Telephony.Sms.MESSAGE_TYPE_INBOX.toString())
+                } else {
+                    null
+                }
                 context.contentResolver.query(
                     uri,
                     projection,
-                    null,
-                    null,
+                    selection,
+                    selectionArgs,
                     "${Telephony.Sms.DATE} ASC"
                 )?.use { cursor ->
                     val addressIdx = cursor.getColumnIndex(Telephony.Sms.ADDRESS)
@@ -352,6 +409,14 @@ class SmsInboxReader(private val context: Context) {
 
                         val signature = parsed.generateTransactionId()
                         val contentKey = buildSmsContentKey(body, timestamp)
+                        val adjacentKeys = buildSmsAdjacentContentKeys(body, timestamp)
+                        val normalizedBody = normalizeSmsBody(body)
+                        val bodyIdentityKey = if (normalizedBody.length >= 15) {
+                            "${parsed.type.name}|${String.format(Locale.US, "%.2f", parsed.amount.toDouble())}|$normalizedBody"
+                        } else {
+                            ""
+                        }
+
                         LocalAccountDataStore.cacheSmsMessage(
                             signature = signature,
                             sender = sender,
@@ -359,9 +424,21 @@ class SmsInboxReader(private val context: Context) {
                             timestamp = timestamp,
                             persistImmediately = false
                         )
-                        if (signature in seenSignatures || contentKey in seenSignatures) continue
+                        if (signature in seenSignatures ||
+                            contentKey in seenSignatures ||
+                            adjacentKeys.any { it in seenSignatures }
+                        ) continue
+
+                        if (bodyIdentityKey.isNotEmpty() &&
+                            seenBodyTimestamps[bodyIdentityKey]?.any { abs(timestamp - it) <= SLIDING_DEDUP_WINDOW_MS } == true
+                        ) continue
+
                         seenSignatures.add(signature)
                         seenSignatures.add(contentKey)
+                        seenSignatures.addAll(adjacentKeys)
+                        if (bodyIdentityKey.isNotEmpty()) {
+                            seenBodyTimestamps.getOrPut(bodyIdentityKey) { mutableListOf() }.add(timestamp)
+                        }
 
                         val category = BankParserFactory.inferCategory(parsed)
 
@@ -427,11 +504,43 @@ class SmsInboxReader(private val context: Context) {
         const val DEFAULT_PARALLEL_READER_THREADS = 6
         const val DEFAULT_PARALLEL_WRITER_THREADS = 6
         const val DEFAULT_SMS_BATCH_SIZE = 12
+        const val SLIDING_DEDUP_WINDOW_MS = 600_000L
+        private const val BOUNDARY_GRACE_MS = 90_000L
+
+        fun normalizeSmsBody(body: String): String =
+            body.trim().replace(Regex("\\s+"), " ").lowercase(Locale.US)
+
+        /**
+         * Extracts the original raw SMS body from a transaction `notes` field, stripping any
+         * `[SENDER] ` prefix and any appended `\n[Linked Duplicate: ...]` metadata suffix.
+         */
+        fun extractRawSmsBodyFromNotes(notes: String): String {
+            val withoutLinkSuffix = notes
+                .substringBefore("\n[Linked Duplicate:")
+                .substringBefore("[Linked Duplicate:")
+                .trim()
+            return withoutLinkSuffix.substringAfter("] ", withoutLinkSuffix).trim()
+        }
 
         fun buildSmsContentKey(body: String, timestamp: Long): String {
-            val cleanBody = body.trim().replace(Regex("\\s+"), " ").lowercase()
+            val cleanBody = normalizeSmsBody(body)
             val window = timestamp / 300_000L
             return "sms_content_${window}_${cleanBody.hashCode()}"
+        }
+
+        /**
+         * Emits content keys for the current 5-minute window AND any adjacent 5-minute window
+         * within ±90 seconds so SMSC vs content-provider arrival timestamps straddling a 5-minute
+         * boundary (e.g. 04:59.5 vs 05:01.0) always match as duplicates.
+         */
+        fun buildSmsAdjacentContentKeys(body: String, timestamp: Long): List<String> {
+            val cleanBody = normalizeSmsBody(body)
+            if (cleanBody.isBlank()) return emptyList()
+            val hash = cleanBody.hashCode()
+            val wCenter = timestamp / 300_000L
+            val wBefore = (timestamp - BOUNDARY_GRACE_MS).coerceAtLeast(0L) / 300_000L
+            val wAfter = (timestamp + BOUNDARY_GRACE_MS) / 300_000L
+            return setOf(wBefore, wCenter, wAfter).map { w -> "sms_content_${w}_$hash" }
         }
     }
 }
