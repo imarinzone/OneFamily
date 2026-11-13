@@ -4,6 +4,19 @@ import android.app.Activity
 import android.content.Context
 import android.content.ContextWrapper
 import android.util.Log
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -540,7 +553,11 @@ fun AuthScreen(
                             .testTag("password_input")
                     )
 
-                    if (isCreateAccountMode) {
+                    AnimatedVisibility(
+                        visible = isCreateAccountMode,
+                        enter = slideInVertically(tween(200)) { -it / 3 } + expandVertically(tween(200)) + fadeIn(tween(180)),
+                        exit = slideOutVertically(tween(160)) { -it / 3 } + shrinkVertically(tween(160)) + fadeOut(tween(140))
+                    ) {
                         OutlinedTextField(
                             value = displayNameInput,
                             onValueChange = {
@@ -561,6 +578,16 @@ fun AuthScreen(
                                 .testTag("display_name_input")
                         )
                     }
+
+                    val submitBtnColor by animateColorAsState(
+                        targetValue = if (isCreateAccountMode) {
+                            MaterialTheme.colorScheme.tertiary
+                        } else {
+                            MaterialTheme.colorScheme.primary
+                        },
+                        animationSpec = tween(200),
+                        label = "auth_submit_btn_color"
+                    )
 
                     Button(
                         onClick = {
@@ -600,13 +627,7 @@ fun AuthScreen(
                         },
                         enabled = !isLoading,
                         shape = RoundedCornerShape(16.dp),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = if (isCreateAccountMode) {
-                                MaterialTheme.colorScheme.tertiary
-                            } else {
-                                MaterialTheme.colorScheme.primary
-                            }
-                        ),
+                        colors = ButtonDefaults.buttonColors(containerColor = submitBtnColor),
                         modifier = Modifier
                             .fillMaxWidth()
                             .height(52.dp)
@@ -618,11 +639,25 @@ fun AuthScreen(
                             modifier = Modifier.size(18.dp)
                         )
                         Spacer(modifier = Modifier.width(8.dp))
-                        Text(
-                            text = if (isCreateAccountMode) "Join Home" else "Enter Home",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold
-                        )
+                        AnimatedContent(
+                            targetState = isCreateAccountMode,
+                            transitionSpec = {
+                                if (targetState) {
+                                    (slideInHorizontally(tween(200)) { it / 2 } + fadeIn(tween(180)))
+                                        .togetherWith(slideOutHorizontally(tween(160)) { -it / 2 } + fadeOut(tween(140)))
+                                } else {
+                                    (slideInHorizontally(tween(200)) { -it / 2 } + fadeIn(tween(180)))
+                                        .togetherWith(slideOutHorizontally(tween(160)) { it / 2 } + fadeOut(tween(140)))
+                                }
+                            },
+                            label = "auth_submit_label_shift"
+                        ) { createMode ->
+                            Text(
+                                text = if (createMode) "Join Home" else "Enter Home",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
                     }
 
                     ReceiptDashedDividerLine()

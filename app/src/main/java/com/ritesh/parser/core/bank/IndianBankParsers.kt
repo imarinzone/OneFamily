@@ -16,21 +16,27 @@ class HDFCBankParser : BankParser() {
     }
 
     override fun extractMerchant(message: String, sender: String): String? {
+        val sanitized = stripTrailingDisclaimers(message)
+        if (sanitized.isBlank()) return null
+
         // HDFC multiline format: "Sent Rs.450.00\nFrom HDFC Bank A/C *4821\nTo Zomato Limited\nOn 05/11"
-        val multilineTo = Regex("""To\s+([^\n\r]+?)(?:\r?\n|\s+On\s+|\s+Ref\s+|$)""", RegexOption.IGNORE_CASE)
-        multilineTo.find(message)?.let {
-            val cleaned = cleanMerchantName(it.groupValues[1])
+        val multilineTo = Regex(
+            """(?:(?m)^\s*To|\bFrom\s+[^\n\r]+?\s+To)\s+([^\n\r]+?)(?:\r?\n|\s+On\b|\s+Ref\b|\.\s|\.$|$)""",
+            RegexOption.IGNORE_CASE
+        )
+        for (match in multilineTo.findAll(sanitized)) {
+            val cleaned = cleanMerchantName(match.groupValues[1])
             if (isValidMerchantName(cleaned)) return cleaned
         }
 
         // HDFC Card format: "Rs 1,299.00 spent on HDFC Bank Card x4821 at AMAZON INDIA on..."
-        val cardAt = Regex("""at\s+([A-Za-z0-9\s&._'\-]+?)\s+on\s+[0-9]{1,2}""", RegexOption.IGNORE_CASE)
-        cardAt.find(message)?.let {
-            val cleaned = cleanMerchantName(it.groupValues[1])
+        val cardAt = Regex("""\bat\s+([A-Za-z0-9\s&._'\-]+?)\s+on\s+[0-9]{1,2}""", RegexOption.IGNORE_CASE)
+        for (match in cardAt.findAll(sanitized)) {
+            val cleaned = cleanMerchantName(match.groupValues[1])
             if (isValidMerchantName(cleaned)) return cleaned
         }
 
-        return super.extractMerchant(message, sender)
+        return super.extractMerchant(sanitized, sender)
     }
 }
 
@@ -58,13 +64,14 @@ class SBIBankParser : BankParser() {
     }
 
     override fun extractMerchant(message: String, sender: String): String? {
+        val sanitized = stripTrailingDisclaimers(message)
         // SBI "trf to Swiggy Refno 431012345678"
-        val trfTo = Regex("""trf\s+to\s+([A-Za-z0-9\s&._'\-]+?)(?:\s+Ref(?:\s*No)?|\s+on|\.|$)""", RegexOption.IGNORE_CASE)
-        trfTo.find(message)?.let {
-            val cleaned = cleanMerchantName(it.groupValues[1])
+        val trfTo = Regex("""\btrf\s+to\s+([A-Za-z0-9\s&._'\-]+?)(?:\s+Ref(?:\s*No)?|\s+on\b|\.|$)""", RegexOption.IGNORE_CASE)
+        for (match in trfTo.findAll(sanitized)) {
+            val cleaned = cleanMerchantName(match.groupValues[1])
             if (isValidMerchantName(cleaned)) return cleaned
         }
-        return super.extractMerchant(message, sender)
+        return super.extractMerchant(sanitized, sender)
     }
 }
 
@@ -81,13 +88,14 @@ class ICICIBankParser : BankParser() {
     }
 
     override fun extractMerchant(message: String, sender: String): String? {
+        val sanitized = stripTrailingDisclaimers(message)
         // ICICI format: "ICICI Bank Acct XX819 debited for Rs 620.00 on 05-Nov-26; BIGBASKET credited. UPI:..."
         val semiCredited = Regex(""";\s*([A-Za-z0-9\s&._'\-@]+?)\s+credited""", RegexOption.IGNORE_CASE)
-        semiCredited.find(message)?.let {
-            val cleaned = cleanMerchantName(it.groupValues[1])
+        for (match in semiCredited.findAll(sanitized)) {
+            val cleaned = cleanMerchantName(match.groupValues[1])
             if (isValidMerchantName(cleaned)) return cleaned
         }
-        return super.extractMerchant(message, sender)
+        return super.extractMerchant(sanitized, sender)
     }
 }
 
@@ -103,13 +111,14 @@ class AxisBankParser : BankParser() {
     }
 
     override fun extractMerchant(message: String, sender: String): String? {
+        val sanitized = stripTrailingDisclaimers(message)
         // Axis UPI format: "UPI/P2M/431098765432/STARBUCKS COFFEE"
         val axisUpi = Regex("""UPI/(?:P2[AM]/)?[0-9]+/([^\n\r./]+)""", RegexOption.IGNORE_CASE)
-        axisUpi.find(message)?.let {
-            val cleaned = cleanMerchantName(it.groupValues[1])
+        for (match in axisUpi.findAll(sanitized)) {
+            val cleaned = cleanMerchantName(match.groupValues[1])
             if (isValidMerchantName(cleaned)) return cleaned
         }
-        return super.extractMerchant(message, sender)
+        return super.extractMerchant(sanitized, sender)
     }
 }
 

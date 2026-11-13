@@ -820,13 +820,19 @@ private fun HomeBudgetTrendMiniStrip(
     currencySymbol: String
 ) {
     val dimens = LocalAppDimens.current
+    val hasIncome = bars.any { it.incomeTotal > 0.0 }
+    val maxIncome = bars.maxOfOrNull { it.incomeTotal } ?: 0.0
     val maxRef = maxOf(
         bars.maxOfOrNull { it.expenseTotal } ?: 1.0,
         overallBudget * 1.15,
+        if (hasIncome) maxIncome * 1.12 else 0.0,
         1.0
     )
     val selectedBar = bars.firstOrNull { it.isSelected } ?: bars.lastOrNull()
     val selectedActual = selectedBar?.expenseTotal ?: 0.0
+    val selectedIncome = selectedBar?.incomeTotal?.takeIf { it > 0.0 }
+        ?: bars.lastOrNull { it.incomeTotal > 0.0 }?.incomeTotal
+        ?: 0.0
     val isSelectedAbove = selectedActual > overallBudget
     val primaryColor = MaterialTheme.colorScheme.primary
     val surfaceColor = MaterialTheme.colorScheme.surface
@@ -852,12 +858,25 @@ private fun HomeBudgetTrendMiniStrip(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text(
-                    text = "Budget ${formatCompactCurrency(overallBudget, currencySymbol)}",
-                    style = MaterialTheme.typography.labelSmall,
-                    fontWeight = FontWeight.SemiBold,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Budget ${formatCompactCurrency(overallBudget, currencySymbol)}",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    if (hasIncome) {
+                        Text(
+                            text = "● Income ${formatCompactCurrency(selectedIncome, currencySymbol)}",
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = PersonalBadgeTeal
+                        )
+                    }
+                }
                 Text(
                     text = if (isSelectedAbove) "▲ Above Budget" else "▼ Below Budget",
                     style = MaterialTheme.typography.labelSmall,
@@ -869,7 +888,7 @@ private fun HomeBudgetTrendMiniStrip(
             Canvas(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(34.dp)
+                    .height(36.dp)
                     .testTag("home_budget_trend_canvas")
             ) {
                 val topPad = 5.dp.toPx()
@@ -889,6 +908,45 @@ private fun HomeBudgetTrendMiniStrip(
 
                 val count = bars.size.coerceAtLeast(1)
                 val slotW = size.width / count
+
+                // Optional Salary / Income trend line when income data is available
+                if (hasIncome) {
+                    val incomePts = bars.mapIndexed { idx, bar ->
+                        val frac = if (bar.incomeTotal > 0.0) {
+                            (bar.incomeTotal / maxRef).toFloat().coerceIn(0.06f, 0.98f)
+                        } else {
+                            0.04f
+                        }
+                        val x = slotW * (idx + 0.5f)
+                        val y = size.height - bottomPad - usableH * frac
+                        Offset(x, y)
+                    }
+                    if (incomePts.size >= 2) {
+                        val incomePath = Path().apply {
+                            moveTo(incomePts.first().x, incomePts.first().y)
+                            for (i in 1 until incomePts.size) {
+                                lineTo(incomePts[i].x, incomePts[i].y)
+                            }
+                        }
+                        drawPath(
+                            path = incomePath,
+                            color = PersonalBadgeTeal,
+                            style = Stroke(
+                                width = 2.dp.toPx(),
+                                cap = StrokeCap.Round,
+                                join = StrokeJoin.Round
+                            )
+                        )
+                    }
+                    incomePts.forEachIndexed { idx, pt ->
+                        if (bars[idx].incomeTotal > 0.0) {
+                            val r = if (bars[idx].isSelected) 3.8.dp.toPx() else 2.8.dp.toPx()
+                            drawCircle(color = surfaceColor, radius = r + 1.2.dp.toPx(), center = pt)
+                            drawCircle(color = PersonalBadgeTeal, radius = r, center = pt)
+                        }
+                    }
+                }
+
                 val points = bars.mapIndexed { idx, bar ->
                     val frac = (bar.expenseTotal / maxRef).toFloat().coerceIn(0.04f, 1f)
                     val x = slotW * (idx + 0.5f)
@@ -975,16 +1033,22 @@ fun MonthlyBarGraph(
 ) {
     val dimens = LocalAppDimens.current
     val hasOverallBudget = overallBudget > 0.0
+    val hasIncome = bars.any { it.incomeTotal > 0.0 }
     val maxExpense = bars.maxOfOrNull { it.expenseTotal }?.coerceAtLeast(1.0) ?: 1.0
-    val maxReference = if (hasOverallBudget) {
-        maxOf(maxExpense, overallBudget * 1.15, 1.0)
-    } else {
-        maxExpense
-    }
+    val maxIncome = bars.maxOfOrNull { it.incomeTotal } ?: 0.0
+    val maxReference = maxOf(
+        maxExpense,
+        if (hasOverallBudget) overallBudget * 1.15 else 0.0,
+        if (hasIncome) maxIncome * 1.12 else 0.0,
+        1.0
+    )
     var dragAccum by remember { mutableFloatStateOf(0f) }
 
     val selectedBar = bars.firstOrNull { it.isSelected } ?: bars.lastOrNull()
     val selectedSpend = selectedBar?.expenseTotal ?: 0.0
+    val selectedIncomeDisplay = selectedBar?.incomeTotal?.takeIf { it > 0.0 }
+        ?: bars.lastOrNull { it.incomeTotal > 0.0 }?.incomeTotal
+        ?: 0.0
     val isSelectedAboveBudget = hasOverallBudget && selectedSpend > overallBudget
     val budgetDiff = kotlin.math.abs(overallBudget - selectedSpend)
     val primaryColor = MaterialTheme.colorScheme.primary
@@ -1039,6 +1103,48 @@ fun MonthlyBarGraph(
                             horizontal = dimens.horizontalPadding * 0.7f,
                             vertical = dimens.itemSpacing * 0.3f
                         )
+                    )
+                }
+            }
+        }
+
+        if (hasIncome) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("monthly_income_trend_legend"),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Surface(
+                    shape = RoundedCornerShape(50),
+                    color = PersonalBadgeTeal.copy(alpha = 0.14f)
+                ) {
+                    Text(
+                        text = "● Salary / Income ${formatCompactCurrency(selectedIncomeDisplay, currencySymbol)}",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = PersonalBadgeTeal,
+                        modifier = Modifier.padding(
+                            horizontal = dimens.horizontalPadding * 0.65f,
+                            vertical = dimens.itemSpacing * 0.3f
+                        )
+                    )
+                }
+
+                if (selectedBar != null && selectedBar.incomeTotal > 0.0) {
+                    val netSavings = selectedBar.incomeTotal - selectedSpend
+                    val netColor = if (netSavings >= 0.0) BudgetSafeGreen else BudgetDangerCoral
+                    val netLabel = if (netSavings >= 0.0) {
+                        "+${formatCompactCurrency(netSavings, currencySymbol)} Saved"
+                    } else {
+                        "-${formatCompactCurrency(kotlin.math.abs(netSavings), currencySymbol)} Deficit"
+                    }
+                    Text(
+                        text = netLabel,
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.SemiBold,
+                        color = netColor
                     )
                 }
             }
@@ -1153,6 +1259,66 @@ fun MonthlyBarGraph(
                                 color = if (bar.isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
                                 textAlign = TextAlign.Center
                             )
+                        }
+                    }
+                }
+
+                // Overlay Canvas for Salary / Income Trend Line (if available)
+                if (hasIncome && bars.isNotEmpty()) {
+                    Canvas(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .testTag("salary_income_trend_canvas")
+                    ) {
+                        val bottomLabelReservePx = (dimens.itemSpacing * 1.1f + 18.dp).toPx()
+                        val maxBarAreaPx = maxBarHeight.toPx()
+                        val barBottomY = (size.height - bottomLabelReservePx).coerceAtLeast(maxBarAreaPx)
+                        val slotWidth = size.width / bars.size.coerceAtLeast(1)
+
+                        val incomePoints = bars.mapIndexed { index, bar ->
+                            val frac = if (bar.incomeTotal > 0.0) {
+                                (bar.incomeTotal / maxReference).toFloat().coerceIn(0.08f, 1f)
+                            } else {
+                                0.04f
+                            }
+                            val cx = slotWidth * (index + 0.5f)
+                            val cy = (barBottomY - maxBarAreaPx * frac).coerceIn(6.dp.toPx(), barBottomY - 4.dp.toPx())
+                            Offset(cx, cy)
+                        }
+
+                        if (incomePoints.size >= 2) {
+                            val incomePath = Path().apply {
+                                moveTo(incomePoints.first().x, incomePoints.first().y)
+                                for (i in 1 until incomePoints.size) {
+                                    lineTo(incomePoints[i].x, incomePoints[i].y)
+                                }
+                            }
+                            drawPath(
+                                path = incomePath,
+                                color = PersonalBadgeTeal,
+                                style = Stroke(
+                                    width = 2.5.dp.toPx(),
+                                    cap = StrokeCap.Round,
+                                    join = StrokeJoin.Round
+                                )
+                            )
+                        }
+
+                        incomePoints.forEachIndexed { index, point ->
+                            val bar = bars[index]
+                            if (bar.incomeTotal > 0.0) {
+                                val nodeRadius = if (bar.isSelected) 5.2.dp.toPx() else 3.8.dp.toPx()
+                                drawCircle(
+                                    color = surfaceColor,
+                                    radius = nodeRadius + 1.6.dp.toPx(),
+                                    center = point
+                                )
+                                drawCircle(
+                                    color = PersonalBadgeTeal,
+                                    radius = nodeRadius,
+                                    center = point
+                                )
+                            }
                         }
                     }
                 }

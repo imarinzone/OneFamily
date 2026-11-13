@@ -141,11 +141,74 @@ object TransactionNotificationHelper {
     private fun sanitizeSummaryField(raw: String, fallback: String): String {
         val singleLine = raw
             .lineSequence()
-            .firstOrNull()
+            .firstOrNull { it.isNotBlank() }
             .orEmpty()
             .replace(Regex("\\s+"), " ")
             .trim()
-        return singleLine.ifBlank { fallback }.take(60)
+        return singleLine.ifBlank { fallback }.take(48)
+    }
+
+    /**
+     * Cleans a raw transaction title for notification display so trailing SMS sentences
+     * (e.g. "Not you? Call 1800...", "If not done by you...", "SMS BLOCK...", "Avl Bal...")
+     * or raw debit/credit alert sentences never appear in the notification title.
+     */
+    fun cleanNotificationMerchant(
+        rawTitle: String,
+        cleanCategory: String,
+        transactionType: String = "EXPENSE"
+    ): String {
+        val defaultFallback = when {
+            !cleanCategory.equals("Unknown", ignoreCase = true) && cleanCategory.isNotBlank() -> cleanCategory
+            transactionType.equals("INCOME", ignoreCase = true) -> "Income"
+            else -> "Expense"
+        }
+
+        var candidate = rawTitle
+            .lineSequence()
+            .map { it.trim() }
+            .firstOrNull { it.isNotBlank() }
+            .orEmpty()
+            .replace(Regex("""^\[[^\]]+]\s*"""), "") // strip "[VM-HDFCBK] " prefix if present
+            .replace(Regex("""\s+"""), " ")
+            .trim()
+
+        if (candidate.isBlank()) return defaultFallback
+
+        // Strip trailing disclaimer/balance/helpline sentences or clauses
+        val trailingBoilerplateRegex = Regex(
+            """(?:[.;!|]|\s+-\s+|\s+)\s*(?:not\s+you\b|if\s+not\b|if\s+this\s+was\s+not\b|if\s+you\s+(?:have\s+)?not\b|sms\s+block\b|to\s+(?:block|dispute|report|check|know|view|opt|stop|avoid)\b|for\s+(?:dispute|any\s+query|assistance)\b|call\s+(?:1800|1860|022|080|\+?91|[0-9]{7,})\b|(?:please\s+)?do\s+not\s+share\b|never\s+share\b|don'?t\s+share\b|avl\.?\s*bal\b|available\s+bal\b|avail\.?\s*(?:bal|limit)\b|clear\s+bal\b|ref(?:\s*no)?[:\s]+[0-9a-zA-Z]+).*$""",
+            RegexOption.IGNORE_CASE
+        )
+        candidate = candidate.replace(trailingBoilerplateRegex, "").trim().trim('.', ',', ';', '-', ':').trim()
+
+        // Strip inline raw debit/credit clauses if someone passed a raw SMS line
+        val rawAlertClauseRegex = Regex(
+            """(?:\s+(?:rs\.?|inr|₹)\s*[0-9,]+.*$|\b(?:rs\.?|inr|₹)\s*[0-9,]+(?:\.[0-9]{1,2})?\s+(?:debited|credited|spent|paid|withdrawn).*$)""",
+            RegexOption.IGNORE_CASE
+        )
+        candidate = candidate.replace(rawAlertClauseRegex, "").trim().trim('.', ',', ';', '-').trim()
+
+        val lower = candidate.lowercase()
+        val garbagePhrases = listOf(
+            "not you", "if not", "sms block", "block upi", "report fraud",
+            "to dispute", "to block", "to report", "do not share", "never share",
+            "call 1800", "call 1860", "helpline", "customer care", "debited from",
+            "credited to", "your a/c", "your acct", "avl bal", "available bal"
+        )
+        if (candidate.length < 2 ||
+            garbagePhrases.any { lower.contains(it) } ||
+            lower.startsWith("block ") ||
+            lower.startsWith("dispute ") ||
+            lower.startsWith("report ") ||
+            lower.startsWith("call ") ||
+            Regex("""^[0-9xX*.\-\s]+$""").matches(candidate) ||
+            Regex("""[0-9]{7,}""").containsMatchIn(candidate)
+        ) {
+            return defaultFallback
+        }
+
+        return candidate.take(38).trim()
     }
 
     fun showNewTransactionNotification(
@@ -171,7 +234,7 @@ object TransactionNotificationHelper {
 
         val notificationId = expenseId.hashCode()
         val cleanCategory = ExpenseCategories.normalizeCategory(currentCategory)
-        val cleanMerchant = sanitizeSummaryField(title, cleanCategory)
+        val cleanMerchant = cleanNotificationMerchant(title, cleanCategory, transactionType)
         val formattedAmt = NumberFormat.getNumberInstance(Locale.forLanguageTag("en-IN")).apply {
             maximumFractionDigits = if (amount % 1.0 == 0.0) 0 else 2
         }.format(amount)
@@ -203,7 +266,6 @@ object TransactionNotificationHelper {
             "Fuel & Travel"
         ).filterNot { it.equals(cleanCategory, ignoreCase = true) }.take(3)
 
-        val scopeShort = if (visibility == "SHARED" && householdId.isNotBlank()) "Household" else "Personal"
         val cleanPayment = sanitizeSummaryField(paymentSummary, "")
         val collapsedSummary = buildString {
             append(cleanCategory)
@@ -211,17 +273,13 @@ object TransactionNotificationHelper {
                 append(" • ")
                 append(cleanPayment)
             }
-            append(" • ")
-            append(scopeShort)
         }
         val expandedSummary = buildString {
             append("Merchant: ").append(cleanMerchant)
             append("\nCategory: ").append(cleanCategory)
             append(" • Amount: ").append(amountDisplay)
             if (cleanPayment.isNotBlank()) {
-                append("\nAccount: ").append(cleanPayment).append(" (").append(scopeShort).append(")")
-            } else {
-                append(" (").append(scopeShort).append(")")
+                append("\nAccount: ").append(cleanPayment)
             }
         }
 
@@ -289,7 +347,7 @@ object TransactionNotificationHelper {
         }
 
         val cleanCategory = ExpenseCategories.normalizeCategory(category)
-        val cleanMerchant = sanitizeSummaryField(title, cleanCategory)
+        val cleanMerchant = cleanNotificationMerchant(title, cleanCategory, "EXPENSE")
         val formattedAmt = NumberFormat.getNumberInstance(Locale.forLanguageTag("en-IN")).apply {
             maximumFractionDigits = if (amount % 1.0 == 0.0) 0 else 2
         }.format(amount)
@@ -310,7 +368,7 @@ object TransactionNotificationHelper {
 
         val cleanHousehold = sanitizeSummaryField(householdName, "Family Home")
         val cleanMember = sanitizeSummaryField(memberName, "Family Member")
-        val summaryLine = "$cleanCategory • $cleanMember ($cleanHousehold)"
+        val summaryLine = "$cleanCategory • $cleanMember"
         val expandedSummary = "Merchant: $cleanMerchant\nCategory: $cleanCategory • Amount: $currencySymbol$formattedAmt\nBy: $cleanMember ($cleanHousehold)"
 
         val builder = NotificationCompat.Builder(context, CHANNEL_ID_FCM_FAMILY)

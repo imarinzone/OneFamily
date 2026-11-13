@@ -14,8 +14,19 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -66,6 +77,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
@@ -193,20 +205,38 @@ fun AppNavigation(
         ?: "Member"
     val activeEmail = localUser?.email ?: firebaseUser?.email.orEmpty()
 
-    if (activeUid == null) {
-        AuthScreen(onAuthSuccess = { directUser = auth.currentUser })
-    } else {
-        OneFamilyMainShell(
-            currentUserId = activeUid,
-            currentUserName = activeName,
-            currentUserEmail = activeEmail,
-            deepLinkExpenseId = deepLinkExpenseId,
-            onConsumeDeepLinkExpenseId = onConsumeDeepLinkExpenseId,
-            onSignOut = {
-                LocalAccountSessionManager.signOut(context)
-                directUser = null
+    AnimatedContent(
+        targetState = activeUid,
+        transitionSpec = {
+            if (targetState != null && initialState == null) {
+                // Signing in: Main Shell moves UP into view
+                (slideInVertically(tween(240)) { it / 6 } + fadeIn(tween(200)))
+                    .togetherWith(slideOutVertically(tween(180)) { -it / 8 } + fadeOut(tween(150)))
+            } else if (targetState == null && initialState != null) {
+                // Signing out: Auth screen moves DOWN into view
+                (slideInVertically(tween(240)) { -it / 6 } + fadeIn(tween(200)))
+                    .togetherWith(slideOutVertically(tween(180)) { it / 6 } + fadeOut(tween(150)))
+            } else {
+                fadeIn(tween(180)).togetherWith(fadeOut(tween(150)))
             }
-        )
+        },
+        label = "app_auth_shell_transition"
+    ) { resolvedUid ->
+        if (resolvedUid == null) {
+            AuthScreen(onAuthSuccess = { directUser = auth.currentUser })
+        } else {
+            OneFamilyMainShell(
+                currentUserId = resolvedUid,
+                currentUserName = activeName,
+                currentUserEmail = activeEmail,
+                deepLinkExpenseId = deepLinkExpenseId,
+                onConsumeDeepLinkExpenseId = onConsumeDeepLinkExpenseId,
+                onSignOut = {
+                    LocalAccountSessionManager.signOut(context)
+                    directUser = null
+                }
+            )
+        }
     }
 }
 
@@ -375,256 +405,304 @@ fun OneFamilyMainShell(
         startOrRequestSmsSync()
     }
 
-    if (showSmsSyncScreen) {
-        FirstTimeSmsSyncScreen(
-            syncState = smsSyncProgress,
-            onStartSyncClick = startOrRequestSmsSync,
-            onContinueToAppClick = {
-                LocalAccountSessionManager.setInitialSmsSyncCompleted(context, currentUserId, true)
-                viewModel.resetSmsSyncProgress()
-                showSmsSyncScreen = false
-            },
-            onSkipClick = {
-                LocalAccountSessionManager.setInitialSmsSyncCompleted(context, currentUserId, true)
-                viewModel.resetSmsSyncProgress()
-                showSmsSyncScreen = false
-            },
-            currencySymbol = uiState.activeCurrencySymbol
-        )
-        return
-    }
-
-    if (currentTab != OneFamilyNavTab.HOME) {
-        BackHandler {
-            coroutineScope.launch {
-                pagerState.animateScrollToPage(OneFamilyNavTab.HOME.ordinal)
-            }
-        }
-    }
-
     val currency = uiState.activeCurrencySymbol
 
-    Scaffold(
-        contentWindowInsets = WindowInsets.safeDrawing,
-        containerColor = Color.Transparent,
-        topBar = {
-            val isDateBarApplicable = currentTab == OneFamilyNavTab.HOME || currentTab == OneFamilyNavTab.ANALYSIS
-            AnimatedVisibility(visible = isDateBarApplicable) {
-                // Top Gesture Date Bar (Year on top, Month name below; full-bar swap animation)
-                Surface(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .statusBarsPadding()
-                        .padding(vertical = dimens.itemSpacing * 0.45f),
-                    color = MaterialTheme.colorScheme.background
-                ) {
-                    MonthPeriodSelectorBar(
-                        selectedPeriod = uiState.selectedPeriod,
-                        periodLabel = uiState.periodLabel,
-                        onStepMonth = { viewModel.stepMonth(it) },
-                        onSelectCurrentMonth = { viewModel.selectPeriod(YearMonthPeriod.current()) },
-                        onToggleAllTime = {
-                            if (uiState.selectedDateRangePreset == DateRangePreset.ALL_TIME) {
-                                viewModel.selectDateRangePreset(DateRangePreset.MONTH)
-                            } else {
-                                viewModel.selectDateRangePreset(DateRangePreset.ALL_TIME)
-                            }
-                        },
-                        selectedDateRangePreset = uiState.selectedDateRangePreset,
-                        onSelectDateRangePreset = { viewModel.selectDateRangePreset(it) },
-                        onSelectMonthPeriod = { viewModel.selectPeriod(it) },
-                        customStartDateMillis = uiState.customStartDateMillis,
-                        customEndDateMillis = uiState.customEndDateMillis,
-                        onSelectCustomDateRange = { s, e -> viewModel.selectCustomDateRange(s, e) },
-                        showDateRangeChips = false
-                    )
+    AnimatedContent(
+        targetState = showSmsSyncScreen,
+        transitionSpec = {
+            if (targetState) {
+                // Opening SMS Sync screen: moves UP into view
+                (slideInVertically(tween(240)) { it / 5 } + fadeIn(tween(180)))
+                    .togetherWith(slideOutVertically(tween(180)) { -it / 8 } + fadeOut(tween(140)))
+            } else {
+                // Continuing / skipping to Dashboard: SMS Sync moves DOWN out of view
+                (slideInVertically(tween(240)) { -it / 8 } + fadeIn(tween(180)))
+                    .togetherWith(slideOutVertically(tween(200)) { it / 5 } + fadeOut(tween(150)))
+            }
+        },
+        label = "sms_sync_dashboard_transition"
+    ) { isSyncScreenVisible ->
+        if (isSyncScreenVisible) {
+            FirstTimeSmsSyncScreen(
+                syncState = smsSyncProgress,
+                onStartSyncClick = startOrRequestSmsSync,
+                onContinueToAppClick = {
+                    LocalAccountSessionManager.setInitialSmsSyncCompleted(context, currentUserId, true)
+                    viewModel.resetSmsSyncProgress()
+                    showSmsSyncScreen = false
+                },
+                onSkipClick = {
+                    LocalAccountSessionManager.setInitialSmsSyncCompleted(context, currentUserId, true)
+                    viewModel.resetSmsSyncProgress()
+                    showSmsSyncScreen = false
+                },
+                currencySymbol = currency
+            )
+        } else {
+            if (currentTab != OneFamilyNavTab.HOME) {
+                BackHandler {
+                    coroutineScope.launch {
+                        pagerState.animateScrollToPage(
+                            page = OneFamilyNavTab.HOME.ordinal,
+                            animationSpec = spring(
+                                dampingRatio = Spring.DampingRatioNoBouncy,
+                                stiffness = Spring.StiffnessMediumLow
+                            )
+                        )
+                    }
                 }
             }
-        }
-    ) { innerPadding ->
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(innerPadding)
-        ) {
-            Column(modifier = Modifier.fillMaxSize()) {
-                // Status / Error Banner (with Undo button for unwanted swipes)
-                val bannerMsg = uiState.errorMessage ?: uiState.statusBannerMessage
-                AnimatedVisibility(visible = bannerMsg != null) {
-                    if (bannerMsg != null) {
-                        val isErr = uiState.errorMessage != null
+
+            Scaffold(
+                contentWindowInsets = WindowInsets.safeDrawing,
+                containerColor = Color.Transparent,
+                topBar = {
+                    val isDateBarApplicable = currentTab == OneFamilyNavTab.HOME || currentTab == OneFamilyNavTab.ANALYSIS
+                    AnimatedVisibility(
+                        visible = isDateBarApplicable,
+                        enter = slideInVertically(tween(220)) { -it } + fadeIn(tween(180)),
+                        exit = slideOutVertically(tween(180)) { -it } + fadeOut(tween(140))
+                    ) {
+                        // Top Gesture Date Bar (Year on top, Month name below; full-bar swap animation)
                         Surface(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(
-                                    horizontal = dimens.horizontalPadding,
-                                    vertical = dimens.itemSpacing * 0.35f
-                                )
-                                .testTag("status_banner_surface"),
-                            shape = RoundedCornerShape(dimens.smallCornerRadius),
-                            color = if (isErr) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.primaryContainer
+                                .statusBarsPadding()
+                                .padding(vertical = dimens.itemSpacing * 0.45f),
+                            color = MaterialTheme.colorScheme.background
                         ) {
-                            Row(
-                                modifier = Modifier.padding(
-                                    horizontal = dimens.horizontalPadding * 0.85f,
-                                    vertical = dimens.itemSpacing * 0.55f
-                                ),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.SpaceBetween
-                            ) {
-                                Text(
-                                    text = bannerMsg,
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = if (isErr) MaterialTheme.colorScheme.onErrorContainer else MaterialTheme.colorScheme.onPrimaryContainer,
-                                    modifier = Modifier.weight(1f)
-                                )
-                                if (uiState.canUndoLastAction && !isErr) {
-                                    Spacer(modifier = Modifier.width(dimens.horizontalPadding * 0.35f))
-                                    TextButton(
-                                        onClick = { viewModel.undoLastSwipeAction() },
-                                        modifier = Modifier.testTag("undo_swipe_action_button")
+                            MonthPeriodSelectorBar(
+                                selectedPeriod = uiState.selectedPeriod,
+                                periodLabel = uiState.periodLabel,
+                                onStepMonth = { viewModel.stepMonth(it) },
+                                onSelectCurrentMonth = { viewModel.selectPeriod(YearMonthPeriod.current()) },
+                                onToggleAllTime = {
+                                    if (uiState.selectedDateRangePreset == DateRangePreset.ALL_TIME) {
+                                        viewModel.selectDateRangePreset(DateRangePreset.MONTH)
+                                    } else {
+                                        viewModel.selectDateRangePreset(DateRangePreset.ALL_TIME)
+                                    }
+                                },
+                                selectedDateRangePreset = uiState.selectedDateRangePreset,
+                                onSelectDateRangePreset = { viewModel.selectDateRangePreset(it) },
+                                onSelectMonthPeriod = { viewModel.selectPeriod(it) },
+                                customStartDateMillis = uiState.customStartDateMillis,
+                                customEndDateMillis = uiState.customEndDateMillis,
+                                onSelectCustomDateRange = { s, e -> viewModel.selectCustomDateRange(s, e) },
+                                showDateRangeChips = false
+                            )
+                        }
+                    }
+                }
+            ) { innerPadding ->
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(innerPadding)
+                ) {
+                    Column(modifier = Modifier.fillMaxSize()) {
+                        // Status / Error Banner (with Undo button for unwanted swipes)
+                        val bannerMsg = uiState.errorMessage ?: uiState.statusBannerMessage
+                        AnimatedVisibility(
+                            visible = bannerMsg != null,
+                            enter = slideInVertically(tween(200)) { -it / 2 } + fadeIn(tween(160)),
+                            exit = slideOutVertically(tween(180)) { -it / 2 } + fadeOut(tween(140))
+                        ) {
+                            if (bannerMsg != null) {
+                                val isErr = uiState.errorMessage != null
+                                Surface(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(
+                                            horizontal = dimens.horizontalPadding,
+                                            vertical = dimens.itemSpacing * 0.35f
+                                        )
+                                        .testTag("status_banner_surface"),
+                                    shape = RoundedCornerShape(dimens.smallCornerRadius),
+                                    color = if (isErr) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.primaryContainer
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(
+                                            horizontal = dimens.horizontalPadding * 0.85f,
+                                            vertical = dimens.itemSpacing * 0.55f
+                                        ),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.SpaceBetween
                                     ) {
                                         Text(
-                                            text = "UNDO",
-                                            style = MaterialTheme.typography.labelLarge,
-                                            fontWeight = FontWeight.ExtraBold,
-                                            color = MaterialTheme.colorScheme.primary
+                                            text = bannerMsg,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = if (isErr) MaterialTheme.colorScheme.onErrorContainer else MaterialTheme.colorScheme.onPrimaryContainer,
+                                            modifier = Modifier.weight(1f)
                                         )
+                                        if (uiState.canUndoLastAction && !isErr) {
+                                            Spacer(modifier = Modifier.width(dimens.horizontalPadding * 0.35f))
+                                            TextButton(
+                                                onClick = { viewModel.undoLastSwipeAction() },
+                                                modifier = Modifier.testTag("undo_swipe_action_button")
+                                            ) {
+                                                Text(
+                                                    text = "UNDO",
+                                                    style = MaterialTheme.typography.labelLarge,
+                                                    fontWeight = FontWeight.ExtraBold,
+                                                    color = MaterialTheme.colorScheme.primary
+                                                )
+                                            }
+                                        }
+                                        Spacer(modifier = Modifier.width(dimens.horizontalPadding * 0.35f))
+                                        IconButton(
+                                            onClick = { viewModel.dismissBanner() },
+                                            modifier = Modifier
+                                                .size(dimens.rowIconSize)
+                                                .testTag("dismiss_banner_button")
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.Close,
+                                                contentDescription = "Dismiss",
+                                                modifier = Modifier.size(dimens.rowIconSize * 0.72f)
+                                            )
+                                        }
                                     }
                                 }
-                                Spacer(modifier = Modifier.width(dimens.horizontalPadding * 0.35f))
-                                IconButton(
-                                    onClick = { viewModel.dismissBanner() },
-                                    modifier = Modifier
-                                        .size(dimens.rowIconSize)
-                                        .testTag("dismiss_banner_button")
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Default.Close,
-                                        contentDescription = "Dismiss",
-                                        modifier = Modifier.size(dimens.rowIconSize * 0.72f)
+                            }
+                        }
+
+                        // Gesture-Enabled HorizontalPager across tabs (shifting left & right smoothly)
+                        HorizontalPager(
+                            state = pagerState,
+                            modifier = Modifier
+                                .weight(1f)
+                                .fillMaxWidth()
+                        ) { pageIndex ->
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .graphicsLayer {
+                                        val pageOffset = ((pagerState.currentPage - pageIndex) + pagerState.currentPageOffsetFraction)
+                                        val absOffset = kotlin.math.abs(pageOffset).coerceIn(0f, 1f)
+                                        alpha = 1f - absOffset * 0.18f
+                                        val scale = 1f - absOffset * 0.03f
+                                        scaleX = scale
+                                        scaleY = scale
+                                    }
+                            ) {
+                                when (tabs[pageIndex]) {
+                                    OneFamilyNavTab.HOME -> HomeTabScreen(
+                                        uiState = uiState,
+                                        onScopeSelected = { viewModel.selectScope(it) },
+                                        onSelectDateRangePreset = { viewModel.selectDateRangePreset(it) },
+                                        onSelectCustomDateRange = { s, e -> viewModel.selectCustomDateRange(s, e) },
+                                        onEditMonthlyBudget = { showEditOverallBudgetDialog = true },
+                                        onSearchQueryChange = { viewModel.updateSearchQuery(it) },
+                                        onSelectType = { viewModel.selectTypeFilter(it) },
+                                        onSelectCategory = { viewModel.selectCategoryFilter(it) },
+                                        onSelectPaymentMode = { viewModel.selectPaymentModeFilter(it) },
+                                        onSelectAccount = { viewModel.selectAccountFilter(it) },
+                                        onSelectTag = { viewModel.selectTagFilter(it) },
+                                        onSelectMember = { viewModel.selectMemberFilter(it) },
+                                        onSelectSortOrder = { viewModel.selectSortOrder(it) },
+                                        onClearFilters = { viewModel.clearFilters() },
+                                        onScanSmsClick = triggerSmsSync,
+                                        onExportCsvClick = { showExportCsvDialog = true },
+                                        onAddTransactionClick = { showAddTransactionDialog = true },
+                                        onAcceptEmailInvite = { viewModel.acceptEmailInvitation(it) },
+                                        onEditTransaction = { editingTransaction = it },
+                                        onQuickChangeCategory = { quickCategoryTransaction = it },
+                                        onToggleTransactionPrivacy = { viewModel.toggleTransactionPrivacy(it) },
+                                        onDeleteTransaction = { viewModel.deleteTransaction(it) },
+                                        onLinkDuplicateTransaction = { linkingDuplicateTransaction = it },
+                                        onUndoLastSwipeAction = { viewModel.undoLastSwipeAction() }
+                                    )
+
+                                    OneFamilyNavTab.ANALYSIS -> AnalyticsTabScreen(
+                                        uiState = uiState,
+                                        onStepMonth = { viewModel.stepMonth(it) },
+                                        onSelectPeriod = { viewModel.selectPeriod(it) },
+                                        onSelectCategory = { viewModel.selectCategoryFilter(it) },
+                                        onEditTransaction = { editingTransaction = it },
+                                        onQuickChangeCategory = { quickCategoryTransaction = it },
+                                        onToggleTransactionPrivacy = { viewModel.toggleTransactionPrivacy(it) },
+                                        onDeleteTransaction = { viewModel.deleteTransaction(it) },
+                                        onLinkDuplicateTransaction = { linkingDuplicateTransaction = it }
+                                    )
+
+                                    OneFamilyNavTab.BUDGETS -> BudgetsTabScreen(
+                                        uiState = uiState,
+                                        onEditOverallBudgetClick = { showEditOverallBudgetDialog = true },
+                                        onAddOrEditCategoryBudgetClick = { catProg ->
+                                            editingCategoryBudget = true to catProg
+                                        }
+                                    )
+
+                                    OneFamilyNavTab.ACCOUNT -> HouseholdTabScreen(
+                                        uiState = uiState,
+                                        currentUserName = currentUserName,
+                                        currentUserEmail = currentUserEmail,
+                                        onUpdateUserName = { newName ->
+                                            viewModel.updateUserName(context, newName)
+                                        },
+                                        onUpdatePreferredCurrency = { newCurrency ->
+                                            viewModel.updatePreferredCurrency(newCurrency)
+                                        },
+                                        onAddAccountClick = { showAddAccountDialog = true },
+                                        onScanSmsClick = triggerSmsSync,
+                                        onExportCsvClick = { showExportCsvDialog = true },
+                                        onSendTestFcmAlertClick = {
+                                            viewModel.sendTestFcmPushAlert(context)
+                                        },
+                                        onRunStabilityCheckClick = {
+                                            viewModel.runCrashlyticsStabilityCheck(context)
+                                        },
+                                        onSignOutClick = {
+                                            signOut(
+                                                context = context,
+                                                credentialManager = credentialManager,
+                                                onSignOutComplete = onSignOut,
+                                                scope = coroutineScope
+                                            )
+                                        },
+                                        onCreateHousehold = { name, limit ->
+                                            viewModel.createFamilyHousehold(name, limit)
+                                        },
+                                        onJoinByCode = { code ->
+                                            viewModel.joinHouseholdWithCode(code)
+                                        },
+                                        onInviteByEmail = { email ->
+                                            viewModel.inviteFamilyMemberByEmail(email)
+                                        },
+                                        onAcceptEmailInvite = { household ->
+                                            viewModel.acceptEmailInvitation(household)
+                                        }
                                     )
                                 }
                             }
                         }
                     }
-                }
 
-                // Gesture-Enabled HorizontalPager across tabs
-                HorizontalPager(
-                    state = pagerState,
-                    modifier = Modifier
-                        .weight(1f)
-                        .fillMaxWidth()
-                ) { pageIndex ->
-                    when (tabs[pageIndex]) {
-                        OneFamilyNavTab.HOME -> HomeTabScreen(
-                            uiState = uiState,
-                            onScopeSelected = { viewModel.selectScope(it) },
-                            onSelectDateRangePreset = { viewModel.selectDateRangePreset(it) },
-                            onSelectCustomDateRange = { s, e -> viewModel.selectCustomDateRange(s, e) },
-                            onEditMonthlyBudget = { showEditOverallBudgetDialog = true },
-                            onSearchQueryChange = { viewModel.updateSearchQuery(it) },
-                            onSelectType = { viewModel.selectTypeFilter(it) },
-                            onSelectCategory = { viewModel.selectCategoryFilter(it) },
-                            onSelectPaymentMode = { viewModel.selectPaymentModeFilter(it) },
-                            onSelectAccount = { viewModel.selectAccountFilter(it) },
-                            onSelectTag = { viewModel.selectTagFilter(it) },
-                            onSelectMember = { viewModel.selectMemberFilter(it) },
-                            onSelectSortOrder = { viewModel.selectSortOrder(it) },
-                            onClearFilters = { viewModel.clearFilters() },
-                            onScanSmsClick = triggerSmsSync,
-                            onExportCsvClick = { showExportCsvDialog = true },
-                            onAddTransactionClick = { showAddTransactionDialog = true },
-                            onAcceptEmailInvite = { viewModel.acceptEmailInvitation(it) },
-                            onEditTransaction = { editingTransaction = it },
-                            onQuickChangeCategory = { quickCategoryTransaction = it },
-                            onToggleTransactionPrivacy = { viewModel.toggleTransactionPrivacy(it) },
-                            onDeleteTransaction = { viewModel.deleteTransaction(it) },
-                            onLinkDuplicateTransaction = { linkingDuplicateTransaction = it },
-                            onUndoLastSwipeAction = { viewModel.undoLastSwipeAction() }
-                        )
-
-                        OneFamilyNavTab.ANALYSIS -> AnalyticsTabScreen(
-                            uiState = uiState,
-                            onStepMonth = { viewModel.stepMonth(it) },
-                            onSelectPeriod = { viewModel.selectPeriod(it) },
-                            onSelectCategory = { viewModel.selectCategoryFilter(it) },
-                            onEditTransaction = { editingTransaction = it },
-                            onQuickChangeCategory = { quickCategoryTransaction = it },
-                            onToggleTransactionPrivacy = { viewModel.toggleTransactionPrivacy(it) },
-                            onDeleteTransaction = { viewModel.deleteTransaction(it) },
-                            onLinkDuplicateTransaction = { linkingDuplicateTransaction = it }
-                        )
-
-                        OneFamilyNavTab.BUDGETS -> BudgetsTabScreen(
-                            uiState = uiState,
-                            onEditOverallBudgetClick = { showEditOverallBudgetDialog = true },
-                            onAddOrEditCategoryBudgetClick = { catProg ->
-                                editingCategoryBudget = true to catProg
-                            }
-                        )
-
-                        OneFamilyNavTab.ACCOUNT -> HouseholdTabScreen(
-                            uiState = uiState,
-                            currentUserName = currentUserName,
-                            currentUserEmail = currentUserEmail,
-                            onUpdateUserName = { newName ->
-                                viewModel.updateUserName(context, newName)
-                            },
-                            onUpdatePreferredCurrency = { newCurrency ->
-                                viewModel.updatePreferredCurrency(newCurrency)
-                            },
-                            onAddAccountClick = { showAddAccountDialog = true },
-                            onScanSmsClick = triggerSmsSync,
-                            onExportCsvClick = { showExportCsvDialog = true },
-                            onSendTestFcmAlertClick = {
-                                viewModel.sendTestFcmPushAlert(context)
-                            },
-                            onRunStabilityCheckClick = {
-                                viewModel.runCrashlyticsStabilityCheck(context)
-                            },
-                            onSignOutClick = {
-                                signOut(
-                                    context = context,
-                                    credentialManager = credentialManager,
-                                    onSignOutComplete = onSignOut,
-                                    scope = coroutineScope
+                    // Floating Bottom Navigation Pill Bar (Add button shown ONLY on the Home Screen)
+                    FloatingBottomNavBar(
+                        tabs = tabs,
+                        selectedTab = currentTab,
+                        showAddButton = currentTab == OneFamilyNavTab.HOME,
+                        onSelectTab = { tab ->
+                            coroutineScope.launch {
+                                pagerState.animateScrollToPage(
+                                    page = tab.ordinal,
+                                    animationSpec = spring(
+                                        dampingRatio = Spring.DampingRatioNoBouncy,
+                                        stiffness = Spring.StiffnessMediumLow
+                                    )
                                 )
-                            },
-                            onCreateHousehold = { name, limit ->
-                                viewModel.createFamilyHousehold(name, limit)
-                            },
-                            onJoinByCode = { code ->
-                                viewModel.joinHouseholdWithCode(code)
-                            },
-                            onInviteByEmail = { email ->
-                                viewModel.inviteFamilyMemberByEmail(email)
-                            },
-                            onAcceptEmailInvite = { household ->
-                                viewModel.acceptEmailInvitation(household)
                             }
-                        )
-                    }
+                        },
+                        onAddClick = { showAddTransactionDialog = true },
+                        modifier = Modifier
+                            .align(Alignment.BottomCenter)
+                            .navigationBarsPadding()
+                            .padding(bottom = dimens.itemSpacing)
+                    )
                 }
             }
-
-            // Floating Bottom Navigation Pill Bar (Add button shown ONLY on the Home Screen)
-            FloatingBottomNavBar(
-                tabs = tabs,
-                selectedTab = currentTab,
-                showAddButton = currentTab == OneFamilyNavTab.HOME,
-                onSelectTab = { tab ->
-                    coroutineScope.launch {
-                        pagerState.animateScrollToPage(tab.ordinal)
-                    }
-                },
-                onAddClick = { showAddTransactionDialog = true },
-                modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .navigationBarsPadding()
-                    .padding(bottom = dimens.itemSpacing)
-            )
         }
     }
 
@@ -864,8 +942,12 @@ private fun FloatingBottomNavBar(
                 }
             }
 
-            // Show the Add button ONLY on the Home Screen
-            AnimatedVisibility(visible = showAddButton) {
+            // Show the Add button ONLY on the Home Screen (shifts right/left cleanly)
+            AnimatedVisibility(
+                visible = showAddButton,
+                enter = slideInHorizontally(tween(200)) { it / 2 } + fadeIn(tween(180)),
+                exit = slideOutHorizontally(tween(160)) { it / 2 } + fadeOut(tween(140))
+            ) {
                 Surface(
                     onClick = onAddClick,
                     modifier = Modifier

@@ -1,8 +1,10 @@
 package com.example.ui.screens
 
 import android.os.Build
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.Spring
@@ -12,6 +14,13 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -78,6 +87,7 @@ import androidx.compose.material3.TimePicker
 import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.material3.rememberTimePickerState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
@@ -94,6 +104,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
@@ -216,8 +227,36 @@ private fun formatExactTime(millis: Long): String {
     return SimpleDateFormat("hh:mm a", Locale.getDefault()).format(Date(millis))
 }
 
+private fun formatExactDateTime(millis: Long): String {
+    return SimpleDateFormat("dd MMM yyyy, hh:mm a", Locale.getDefault()).format(Date(millis))
+}
+
 private fun formatFullTimestamp(millis: Long): String {
     return SimpleDateFormat("dd MMM yyyy, hh:mm:ss a", Locale.getDefault()).format(Date(millis))
+}
+
+@Composable
+private fun AnimatedModalSheetContainer(
+    modifier: Modifier = Modifier,
+    content: @Composable () -> Unit
+) {
+    var entered by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        entered = true
+    }
+    val progress by animateFloatAsState(
+        targetValue = if (entered) 1f else 0f,
+        animationSpec = tween(durationMillis = 220, easing = FastOutSlowInEasing),
+        label = "modal_sheet_slide_up"
+    )
+    Box(
+        modifier = modifier.graphicsLayer {
+            translationY = (1f - progress) * 42.dp.toPx()
+            alpha = 0.25f + 0.75f * progress
+        }
+    ) {
+        content()
+    }
 }
 
 /**
@@ -322,17 +361,20 @@ private fun InteractiveReceiptSheet(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false)
     ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth(0.94f)
-                .padding(vertical = dimens.itemSpacing)
-                .verticalScroll(rememberScrollState()),
-            horizontalAlignment = Alignment.CenterHorizontally
+        AnimatedModalSheetContainer(
+            modifier = Modifier.fillMaxWidth(0.94f)
         ) {
-            ReceiptTicketCard(
-                containerColor = MaterialTheme.colorScheme.surface,
-                contentColor = MaterialTheme.colorScheme.onSurface
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = dimens.itemSpacing)
+                    .verticalScroll(rememberScrollState()),
+                horizontalAlignment = Alignment.CenterHorizontally
             ) {
+                ReceiptTicketCard(
+                    containerColor = MaterialTheme.colorScheme.surface,
+                    contentColor = MaterialTheme.colorScheme.onSurface
+                ) {
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -852,6 +894,7 @@ private fun InteractiveReceiptSheet(
                     }
                 }
             }
+            }
         }
     }
 
@@ -1066,10 +1109,11 @@ fun QuickCategoryPickerDialog(
     }
 
     Dialog(onDismissRequest = onDismiss) {
-        ReceiptTicketCard(
-            containerColor = MaterialTheme.colorScheme.surface,
-            contentColor = MaterialTheme.colorScheme.onSurface
-        ) {
+        AnimatedModalSheetContainer {
+            ReceiptTicketCard(
+                containerColor = MaterialTheme.colorScheme.surface,
+                contentColor = MaterialTheme.colorScheme.onSurface
+            ) {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -1162,6 +1206,7 @@ fun QuickCategoryPickerDialog(
                         }
                     }
                 }
+            }
             }
         }
     }
@@ -1287,10 +1332,11 @@ fun AddCategoryBudgetDialog(
     }
 
     Dialog(onDismissRequest = onDismiss) {
-        ReceiptTicketCard(
-            containerColor = MaterialTheme.colorScheme.surface,
-            contentColor = MaterialTheme.colorScheme.onSurface
-        ) {
+        AnimatedModalSheetContainer {
+            ReceiptTicketCard(
+                containerColor = MaterialTheme.colorScheme.surface,
+                contentColor = MaterialTheme.colorScheme.onSurface
+            ) {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -1440,6 +1486,7 @@ fun AddCategoryBudgetDialog(
                     }
                 }
             }
+            }
         }
     }
 }
@@ -1479,10 +1526,11 @@ fun EditOverallBudgetDialog(
     }
 
     Dialog(onDismissRequest = onDismiss) {
-        ReceiptTicketCard(
-            containerColor = MaterialTheme.colorScheme.surface,
-            contentColor = MaterialTheme.colorScheme.onSurface
-        ) {
+        AnimatedModalSheetContainer {
+            ReceiptTicketCard(
+                containerColor = MaterialTheme.colorScheme.surface,
+                contentColor = MaterialTheme.colorScheme.onSurface
+            ) {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -1571,6 +1619,7 @@ fun EditOverallBudgetDialog(
                     }
                 }
             }
+            }
         }
     }
 }
@@ -1625,10 +1674,11 @@ fun AddAccountDialog(
     }
 
     Dialog(onDismissRequest = onDismiss) {
-        ReceiptTicketCard(
-            containerColor = MaterialTheme.colorScheme.surface,
-            contentColor = MaterialTheme.colorScheme.onSurface
-        ) {
+        AnimatedModalSheetContainer {
+            ReceiptTicketCard(
+                containerColor = MaterialTheme.colorScheme.surface,
+                contentColor = MaterialTheme.colorScheme.onSurface
+            ) {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -1756,6 +1806,7 @@ fun AddAccountDialog(
                         Text("Save")
                     }
                 }
+            }
             }
         }
     }
@@ -2466,7 +2517,6 @@ fun LinkDuplicateTransactionDialog(
             val q = searchQuery.trim()
             others.filter { tx ->
                 tx.title.contains(q, ignoreCase = true) ||
-                    tx.category.contains(q, ignoreCase = true) ||
                     tx.accountName.contains(q, ignoreCase = true) ||
                     tx.amount.toLong().toString().contains(q)
             }
@@ -2491,292 +2541,437 @@ fun LinkDuplicateTransactionDialog(
     var keepTargetAsPrimary by remember { mutableStateOf(true) }
 
     val selectedTarget = candidates.firstOrNull { it.id == selectedTargetId }
-    val sourceSms = remember(sourceTransaction.id) {
-        LocalAccountDataStore.getSmsMessageForTransaction(sourceTransaction)
+    val sourceSmsRecords = remember(
+        sourceTransaction.id,
+        sourceTransaction.smsSignature,
+        sourceTransaction.linkedSmsSignatures,
+        sourceTransaction.notes
+    ) {
+        LocalAccountDataStore.getLinkedSmsMessagesForTransaction(sourceTransaction)
+    }
+    val selectedTargetSmsRecords = remember(
+        selectedTarget?.id,
+        selectedTarget?.smsSignature,
+        selectedTarget?.linkedSmsSignatures,
+        selectedTarget?.notes
+    ) {
+        selectedTarget?.let { LocalAccountDataStore.getLinkedSmsMessagesForTransaction(it) }.orEmpty()
     }
 
     Dialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false)
     ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth(0.94f)
-                .padding(vertical = dimens.itemSpacing)
-                .verticalScroll(rememberScrollState())
-                .testTag("link_duplicate_transaction_dialog"),
-            horizontalAlignment = Alignment.CenterHorizontally
+        AnimatedModalSheetContainer(
+            modifier = Modifier.fillMaxWidth(0.94f)
         ) {
-            ReceiptTicketCard(
-                containerColor = MaterialTheme.colorScheme.surface,
-                contentColor = MaterialTheme.colorScheme.onSurface
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = dimens.itemSpacing)
+                    .verticalScroll(rememberScrollState())
+                    .testTag("link_duplicate_transaction_dialog"),
+                horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(dimens.cardPadding),
-                    verticalArrangement = Arrangement.spacedBy(dimens.itemSpacing * 0.85f)
+                ReceiptTicketCard(
+                    containerColor = MaterialTheme.colorScheme.surface,
+                    contentColor = MaterialTheme.colorScheme.onSurface
                 ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Box(
-                                modifier = Modifier
-                                    .size(dimens.rowIconBoxSize * 0.85f)
-                                    .clip(CircleShape)
-                                    .background(MaterialTheme.colorScheme.primaryContainer),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Link,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.size(dimens.rowIconSize * 0.85f)
-                                )
-                            }
-                            Spacer(modifier = Modifier.width(dimens.horizontalPadding * 0.55f))
-                            Column {
-                                Text(
-                                    text = "Link Duplicate SMS / Tx",
-                                    style = MaterialTheme.typography.titleLarge,
-                                    fontWeight = FontWeight.Bold
-                                )
-                                Text(
-                                    text = "Merge duplicate SMS alerts into one transaction",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                        }
-                        IconButton(onClick = onDismiss) {
-                            Icon(Icons.Default.Close, contentDescription = "Close")
-                        }
-                    }
-
-                    ReceiptDashedDividerLine()
-
-                    // Swiped Source Transaction Summary Box
-                    Surface(
-                        shape = RoundedCornerShape(dimens.smallCornerRadius),
-                        color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f),
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Column(
-                            modifier = Modifier.padding(dimens.cardPadding * 0.75f),
-                            verticalArrangement = Arrangement.spacedBy(4.dp)
-                        ) {
-                            Text(
-                                text = "Selected Duplicate to Link:",
-                                style = MaterialTheme.typography.labelSmall,
-                                fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.primary
-                            )
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Text(
-                                    text = sourceTransaction.title,
-                                    style = MaterialTheme.typography.titleMedium,
-                                    fontWeight = FontWeight.Bold,
-                                    modifier = Modifier.weight(1f)
-                                )
-                                Text(
-                                    text = formatCurrency(sourceTransaction.amount, currencySymbol),
-                                    style = MaterialTheme.typography.titleMedium,
-                                    fontWeight = FontWeight.ExtraBold,
-                                    color = MaterialTheme.colorScheme.primary
-                                )
-                            }
-                            Text(
-                                text = "${formatExactDate(sourceTransaction.transactionDateMillis)} • ${sourceTransaction.accountName} (${sourceTransaction.paymentMode})",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                            if (sourceSms != null && sourceSms.body.isNotBlank()) {
-                                Text(
-                                    text = "SMS: ${sourceSms.body}",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    maxLines = 2
-                                )
-                            }
-                        }
-                    }
-
-                    OutlinedTextField(
-                        value = searchQuery,
-                        onValueChange = { searchQuery = it.take(60) },
-                        label = { Text("Search transaction to link with") },
-                        placeholder = { Text("Merchant, amount, or bank...") },
-                        leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
-                        singleLine = true,
-                        shape = RoundedCornerShape(dimens.smallCornerRadius),
+                    Column(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .testTag("link_duplicate_search_input")
-                    )
+                            .padding(dimens.cardPadding),
+                        verticalArrangement = Arrangement.spacedBy(dimens.itemSpacing * 0.85f)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(dimens.rowIconBoxSize * 0.85f)
+                                        .clip(CircleShape)
+                                        .background(MaterialTheme.colorScheme.primaryContainer),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Link,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(dimens.rowIconSize * 0.85f)
+                                    )
+                                }
+                                Spacer(modifier = Modifier.width(dimens.horizontalPadding * 0.55f))
+                                Column {
+                                    Text(
+                                        text = "Link Duplicate SMS / Tx",
+                                        style = MaterialTheme.typography.titleLarge,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                    Text(
+                                        text = "Verify both raw SMS messages before linking",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+                            IconButton(onClick = onDismiss) {
+                                Icon(Icons.Default.Close, contentDescription = "Close")
+                            }
+                        }
 
-                    if (candidates.isEmpty()) {
+                        ReceiptDashedDividerLine()
+
+                        // Top Raw SMS Verification Panel: Full Original SMS + Full Selected Target SMS
                         Surface(
                             shape = RoundedCornerShape(dimens.smallCornerRadius),
-                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                            modifier = Modifier.fillMaxWidth()
+                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .border(
+                                    width = 1.dp,
+                                    color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.65f),
+                                    shape = RoundedCornerShape(dimens.smallCornerRadius)
+                                )
+                                .testTag("link_duplicate_sms_verification_card")
                         ) {
-                            Text(
-                                text = "No other transactions found to link with.",
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.padding(dimens.cardPadding)
-                            )
-                        }
-                    } else {
-                        Text(
-                            text = "Select Target Transaction to Link Into:",
-                            style = MaterialTheme.typography.labelLarge,
-                            fontWeight = FontWeight.Bold
-                        )
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(dimens.cardPadding * 0.8f),
+                                verticalArrangement = Arrangement.spacedBy(dimens.itemSpacing * 0.65f)
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Message,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(dimens.rowIconSize * 0.72f)
+                                    )
+                                    Text(
+                                        text = "Raw SMS Verification",
+                                        style = MaterialTheme.typography.labelLarge,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
+                                }
 
-                        Column(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalArrangement = Arrangement.spacedBy(dimens.itemSpacing * 0.55f)
-                        ) {
-                            candidates.take(8).forEach { candidate ->
-                                val isSelected = candidate.id == selectedTargetId
-                                val isExactAmountMatch = kotlin.math.abs(candidate.amount - sourceTransaction.amount) < 0.01
-                                val isCloseTime = kotlin.math.abs(candidate.transactionDateMillis - sourceTransaction.transactionDateMillis) <= 48L * 3_600_000L
-                                val isSuggested = isExactAmountMatch || isCloseTime
-
+                                // 1. Full Untruncated Original SMS Box
                                 Surface(
-                                    shape = RoundedCornerShape(dimens.smallCornerRadius),
-                                    color = if (isSelected) {
-                                        MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.85f)
-                                    } else {
-                                        MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
-                                    },
+                                    shape = RoundedCornerShape(dimens.smallCornerRadius * 0.85f),
+                                    color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f),
                                     modifier = Modifier
                                         .fillMaxWidth()
-                                        .clip(RoundedCornerShape(dimens.smallCornerRadius))
-                                        .border(
-                                            width = if (isSelected) 2.dp else 1.dp,
-                                            color = if (isSelected) MaterialTheme.colorScheme.primary else Color.Transparent,
-                                            shape = RoundedCornerShape(dimens.smallCornerRadius)
-                                        )
-                                        .clickable { selectedTargetId = candidate.id }
-                                        .testTag("link_candidate_row_${candidate.id}")
+                                        .testTag("link_duplicate_original_sms_box")
                                 ) {
-                                    Row(
+                                    Column(
                                         modifier = Modifier
                                             .fillMaxWidth()
-                                            .padding(
-                                                horizontal = dimens.horizontalPadding * 0.85f,
-                                                vertical = dimens.itemSpacing * 0.75f
-                                            ),
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.SpaceBetween
+                                            .padding(dimens.cardPadding * 0.7f),
+                                        verticalArrangement = Arrangement.spacedBy(4.dp)
                                     ) {
-                                        Column(modifier = Modifier.weight(1f)) {
-                                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                                Text(
-                                                    text = candidate.title,
-                                                    style = MaterialTheme.typography.titleSmall,
-                                                    fontWeight = FontWeight.Bold,
-                                                    maxLines = 1
-                                                )
-                                                if (isSuggested) {
-                                                    Spacer(modifier = Modifier.width(6.dp))
-                                                    Surface(
-                                                        shape = RoundedCornerShape(50),
-                                                        color = if (isExactAmountMatch) {
-                                                            BudgetSafeGreen.copy(alpha = 0.2f)
-                                                        } else {
-                                                            MaterialTheme.colorScheme.primary.copy(alpha = 0.16f)
-                                                        }
-                                                    ) {
-                                                        Text(
-                                                            text = if (isExactAmountMatch) "Same Amount" else "Same Day",
-                                                            style = MaterialTheme.typography.labelSmall,
-                                                            fontWeight = FontWeight.Bold,
-                                                            color = if (isExactAmountMatch) BudgetSafeGreen else MaterialTheme.colorScheme.primary,
-                                                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                                                        )
-                                                    }
-                                                }
-                                            }
-                                            Text(
-                                                text = "${formatExactDate(candidate.transactionDateMillis)} • ${candidate.category} • ${candidate.accountName}",
-                                                style = MaterialTheme.typography.labelSmall,
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                                            )
+                                        val primaryOrigSms = sourceSmsRecords.firstOrNull()
+                                        val origHeaderMeta = if (primaryOrigSms != null && primaryOrigSms.sender.isNotBlank()) {
+                                            "Original SMS • ${primaryOrigSms.sender} (${formatExactDateTime(primaryOrigSms.timestamp)})"
+                                        } else {
+                                            "Original SMS • ${formatExactDateTime(sourceTransaction.transactionDateMillis)}"
                                         }
-                                        Spacer(modifier = Modifier.width(8.dp))
                                         Text(
-                                            text = formatCurrency(candidate.amount, currencySymbol),
-                                            style = MaterialTheme.typography.titleMedium,
+                                            text = origHeaderMeta,
+                                            style = MaterialTheme.typography.labelSmall,
                                             fontWeight = FontWeight.Bold,
-                                            color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                                            color = MaterialTheme.colorScheme.primary
                                         )
+                                        val fullOriginalSmsText = if (sourceSmsRecords.isNotEmpty()) {
+                                            sourceSmsRecords.joinToString("\n\n") { it.body }
+                                        } else {
+                                            sourceTransaction.notes.ifBlank { "Manual transaction (no raw SMS attached)" }
+                                        }
+                                        Text(
+                                            text = fullOriginalSmsText,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurface
+                                        )
+                                    }
+                                }
+
+                                // 2. Full Untruncated Selected Target SMS Box (animates smoothly when switching candidate)
+                                AnimatedContent(
+                                    targetState = selectedTarget?.id.orEmpty(),
+                                    transitionSpec = {
+                                        (slideInHorizontally(tween(200)) { it / 8 } + fadeIn(tween(180)))
+                                            .togetherWith(slideOutHorizontally(tween(160)) { -it / 8 } + fadeOut(tween(140)))
+                                    },
+                                    label = "selected_duplicate_sms_transition"
+                                ) { targetId ->
+                                    val activeTarget = candidates.firstOrNull { it.id == targetId } ?: selectedTarget
+                                    val activeTargetSms = if (activeTarget?.id == selectedTarget?.id) {
+                                        selectedTargetSmsRecords
+                                    } else {
+                                        activeTarget?.let { LocalAccountDataStore.getLinkedSmsMessagesForTransaction(it) }.orEmpty()
+                                    }
+
+                                    Surface(
+                                        shape = RoundedCornerShape(dimens.smallCornerRadius * 0.85f),
+                                        color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.55f),
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .testTag("link_duplicate_selected_sms_box")
+                                    ) {
+                                        Column(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(dimens.cardPadding * 0.7f),
+                                            verticalArrangement = Arrangement.spacedBy(4.dp)
+                                        ) {
+                                            if (activeTarget != null) {
+                                                val primarySelSms = activeTargetSms.firstOrNull()
+                                                val selHeaderMeta = if (primarySelSms != null && primarySelSms.sender.isNotBlank()) {
+                                                    "Selected SMS • ${primarySelSms.sender} (${formatExactDateTime(primarySelSms.timestamp)})"
+                                                } else {
+                                                    "Selected SMS • ${formatExactDateTime(activeTarget.transactionDateMillis)}"
+                                                }
+                                                Text(
+                                                    text = selHeaderMeta,
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = MaterialTheme.colorScheme.onSecondaryContainer
+                                                )
+                                                val fullSelectedSmsText = if (activeTargetSms.isNotEmpty()) {
+                                                    activeTargetSms.joinToString("\n\n") { it.body }
+                                                } else {
+                                                    activeTarget.notes.ifBlank { "Manual transaction (no raw SMS attached)" }
+                                                }
+                                                Text(
+                                                    text = fullSelectedSmsText,
+                                                    style = MaterialTheme.typography.bodySmall,
+                                                    color = MaterialTheme.colorScheme.onSurface
+                                                )
+                                            } else {
+                                                Text(
+                                                    text = "Selected SMS",
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = MaterialTheme.colorScheme.onSecondaryContainer
+                                                )
+                                                Text(
+                                                    text = "Select a transaction below to verify its raw SMS.",
+                                                    style = MaterialTheme.typography.bodySmall,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                )
+                                            }
+                                        }
                                     }
                                 }
                             }
                         }
 
-                        if (selectedTarget != null) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.SpaceBetween
+                        // Concise Original Transaction Summary (Merchant, DateTime, Account, Amount ONLY)
+                        Surface(
+                            shape = RoundedCornerShape(dimens.smallCornerRadius),
+                            color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("link_source_summary_card")
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(
+                                    horizontal = dimens.horizontalPadding * 0.85f,
+                                    vertical = dimens.itemSpacing * 0.7f
+                                ),
+                                verticalArrangement = Arrangement.spacedBy(3.dp)
                             ) {
                                 Text(
-                                    text = "Keep '${selectedTarget.title}' as Primary Receipt",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    modifier = Modifier.weight(1f)
+                                    text = "Original Transaction",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.primary
                                 )
-                                Switch(
-                                    checked = keepTargetAsPrimary,
-                                    onCheckedChange = { keepTargetAsPrimary = it },
-                                    modifier = Modifier.testTag("keep_target_primary_switch")
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = sourceTransaction.title,
+                                        style = MaterialTheme.typography.titleSmall,
+                                        fontWeight = FontWeight.Bold,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text(
+                                        text = formatCurrency(sourceTransaction.amount, currencySymbol),
+                                        style = MaterialTheme.typography.titleMedium,
+                                        fontWeight = FontWeight.ExtraBold,
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
+                                }
+                                Text(
+                                    text = "${formatExactDateTime(sourceTransaction.transactionDateMillis)} • ${sourceTransaction.accountName.ifBlank { "Account" }}",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
                                 )
                             }
                         }
-                    }
 
-                    ReceiptDashedDividerLine()
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.End,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        TextButton(onClick = onDismiss) {
-                            Text("Cancel")
-                        }
-                        Spacer(modifier = Modifier.width(dimens.horizontalPadding * 0.5f))
-                        Button(
-                            onClick = {
-                                val target = selectedTarget ?: return@Button
-                                if (keepTargetAsPrimary) {
-                                    onConfirmLink(target, sourceTransaction)
-                                } else {
-                                    onConfirmLink(sourceTransaction, target)
-                                }
-                            },
-                            enabled = selectedTarget != null,
+                        OutlinedTextField(
+                            value = searchQuery,
+                            onValueChange = { searchQuery = it.take(60) },
+                            label = { Text("Search transaction to link with") },
+                            placeholder = { Text("Merchant, amount, or account...") },
+                            leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
+                            singleLine = true,
                             shape = RoundedCornerShape(dimens.smallCornerRadius),
-                            modifier = Modifier.testTag("confirm_link_duplicate_button")
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Link,
-                                contentDescription = null,
-                                modifier = Modifier.size(dimens.rowIconSize * 0.78f)
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("link_duplicate_search_input")
+                        )
+
+                        if (candidates.isEmpty()) {
+                            Surface(
+                                shape = RoundedCornerShape(dimens.smallCornerRadius),
+                                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text(
+                                    text = "No other transactions found to link with.",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.padding(dimens.cardPadding)
+                                )
+                            }
+                        } else {
+                            Text(
+                                text = "Select Target Transaction:",
+                                style = MaterialTheme.typography.labelLarge,
+                                fontWeight = FontWeight.Bold
                             )
-                            Spacer(modifier = Modifier.width(dimens.horizontalPadding * 0.35f))
-                            Text("Link & Merge Duplicate")
+
+                            Column(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalArrangement = Arrangement.spacedBy(dimens.itemSpacing * 0.55f)
+                            ) {
+                                candidates.take(8).forEach { candidate ->
+                                    val isSelected = candidate.id == selectedTargetId
+
+                                    Surface(
+                                        shape = RoundedCornerShape(dimens.smallCornerRadius),
+                                        color = if (isSelected) {
+                                            MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.85f)
+                                        } else {
+                                            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                                        },
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clip(RoundedCornerShape(dimens.smallCornerRadius))
+                                            .border(
+                                                width = if (isSelected) 2.dp else 1.dp,
+                                                color = if (isSelected) MaterialTheme.colorScheme.primary else Color.Transparent,
+                                                shape = RoundedCornerShape(dimens.smallCornerRadius)
+                                            )
+                                            .clickable { selectedTargetId = candidate.id }
+                                            .testTag("link_candidate_row_${candidate.id}")
+                                    ) {
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(
+                                                    horizontal = dimens.horizontalPadding * 0.85f,
+                                                    vertical = dimens.itemSpacing * 0.75f
+                                                ),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.SpaceBetween
+                                        ) {
+                                            Column(modifier = Modifier.weight(1f)) {
+                                                Text(
+                                                    text = candidate.title,
+                                                    style = MaterialTheme.typography.titleSmall,
+                                                    fontWeight = FontWeight.Bold,
+                                                    maxLines = 1,
+                                                    overflow = TextOverflow.Ellipsis
+                                                )
+                                                Text(
+                                                    text = "${formatExactDateTime(candidate.transactionDateMillis)} • ${candidate.accountName.ifBlank { "Account" }}",
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                    maxLines = 1,
+                                                    overflow = TextOverflow.Ellipsis
+                                                )
+                                            }
+                                            Spacer(modifier = Modifier.width(8.dp))
+                                            Text(
+                                                text = formatCurrency(candidate.amount, currencySymbol),
+                                                style = MaterialTheme.typography.titleMedium,
+                                                fontWeight = FontWeight.Bold,
+                                                color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+
+                            if (selectedTarget != null) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Text(
+                                        text = "Keep '${selectedTarget.title}' as Primary Receipt",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                    Switch(
+                                        checked = keepTargetAsPrimary,
+                                        onCheckedChange = { keepTargetAsPrimary = it },
+                                        modifier = Modifier.testTag("keep_target_primary_switch")
+                                    )
+                                }
+                            }
+                        }
+
+                        ReceiptDashedDividerLine()
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.End,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            TextButton(onClick = onDismiss) {
+                                Text("Cancel")
+                            }
+                            Spacer(modifier = Modifier.width(dimens.horizontalPadding * 0.5f))
+                            Button(
+                                onClick = {
+                                    val target = selectedTarget ?: return@Button
+                                    if (keepTargetAsPrimary) {
+                                        onConfirmLink(target, sourceTransaction)
+                                    } else {
+                                        onConfirmLink(sourceTransaction, target)
+                                    }
+                                },
+                                enabled = selectedTarget != null,
+                                shape = RoundedCornerShape(dimens.smallCornerRadius),
+                                modifier = Modifier.testTag("confirm_link_duplicate_button")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Link,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(dimens.rowIconSize * 0.78f)
+                                )
+                                Spacer(modifier = Modifier.width(dimens.horizontalPadding * 0.35f))
+                                Text("Link & Merge Duplicate")
+                            }
                         }
                     }
                 }
@@ -2870,18 +3065,21 @@ fun ExportTransactionsCsvDialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false)
     ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth(0.94f)
-                .padding(vertical = dimens.itemSpacing)
-                .verticalScroll(rememberScrollState())
-                .testTag("export_csv_dialog"),
-            horizontalAlignment = Alignment.CenterHorizontally
+        AnimatedModalSheetContainer(
+            modifier = Modifier.fillMaxWidth(0.94f)
         ) {
-            ReceiptTicketCard(
-                containerColor = MaterialTheme.colorScheme.surface,
-                contentColor = MaterialTheme.colorScheme.onSurface
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = dimens.itemSpacing)
+                    .verticalScroll(rememberScrollState())
+                    .testTag("export_csv_dialog"),
+                horizontalAlignment = Alignment.CenterHorizontally
             ) {
+                ReceiptTicketCard(
+                    containerColor = MaterialTheme.colorScheme.surface,
+                    contentColor = MaterialTheme.colorScheme.onSurface
+                ) {
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -3118,6 +3316,7 @@ fun ExportTransactionsCsvDialog(
                         }
                     }
                 }
+            }
             }
         }
     }

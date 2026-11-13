@@ -47,7 +47,9 @@ import com.example.ui.screens.ExportTransactionsCsvDialog
 import com.example.ui.screens.FirstTimeSmsSyncScreen
 import com.example.ui.screens.HomeTabScreen
 import com.example.ui.screens.HouseholdTabScreen
+import com.example.ui.screens.LinkDuplicateTransactionDialog
 import com.example.ui.screens.mergeSelectedDatePreservingTime
+import com.ritesh.parser.core.bank.BankParserFactory
 import com.example.ui.screens.mergeSelectedTimePreservingDate
 import com.example.ui.screens.sanitizeDecimalInput
 import com.example.ui.screens.validateCategoryName
@@ -1700,6 +1702,179 @@ class ExampleRobolectricTest {
         assertFalse("Status message must never mention threads", syncStatusMsg.contains("thread", ignoreCase = true))
 
         LocalAccountSessionManager.signOut(context)
+    }
+
+    @Test
+    fun `test duplicate link screen displays full untruncated original and selected SMS on top and concise merchant datetime account amount rows below`() {
+        val baseTime = 1763200200000L // 15 Nov 2026
+        val longOriginalSms = "[VM-HDFCBK] Rs. 1,480.00 debited from HDFC Bank A/c XX4821 on 15-11-26 14:30:12 to VPA freshmart@okicici (UPI Ref No 632098765432). Avl Bal: Rs. 54,120.50. TailMarkerOriginalFullText991"
+        val longSelectedSms1 = "[AD-HDFCBK] Amt Sent Rs.1480.00 From HDFC Bank A/C *4821 To FreshMart Supermarket On 15-11-26 Ref 632098765432. TailMarkerCandidateOneFullText772"
+        val longSelectedSms2 = "[AX-ICICIB] ICICI Bank Acct XX1104 debited for Rs 1,480.00 on 15-Nov-26; FRESHMART credited. UPI:632099001122. TailMarkerCandidateTwoFullText883"
+
+        val sourceTx = ExpenseTransaction(
+            id = "dup_src_1",
+            title = "FreshMart",
+            amount = 1480.0,
+            type = "EXPENSE",
+            category = "Groceries",
+            accountName = "HDFC Bank ••4821",
+            paymentMode = "UPI",
+            notes = longOriginalSms,
+            smsSignature = "sig_orig_1",
+            transactionDateMillis = baseTime
+        )
+        val candidateOne = ExpenseTransaction(
+            id = "dup_cand_1",
+            title = "FreshMart Supermarket",
+            amount = 1480.0,
+            type = "EXPENSE",
+            category = "Groceries",
+            accountName = "HDFC Bank ••4821",
+            paymentMode = "UPI",
+            notes = longSelectedSms1,
+            smsSignature = "sig_cand_1",
+            transactionDateMillis = baseTime + 60_000L
+        )
+        val candidateTwo = ExpenseTransaction(
+            id = "dup_cand_2",
+            title = "FreshMart Store",
+            amount = 1480.0,
+            type = "EXPENSE",
+            category = "Shopping",
+            accountName = "ICICI Bank ••1104",
+            paymentMode = "CARD",
+            notes = longSelectedSms2,
+            smsSignature = "sig_cand_2",
+            transactionDateMillis = baseTime + 180_000L
+        )
+
+        composeTestRule.setContent {
+            OneFamilyTheme {
+                LinkDuplicateTransactionDialog(
+                    sourceTransaction = sourceTx,
+                    allTransactions = listOf(sourceTx, candidateOne, candidateTwo),
+                    currencySymbol = "₹",
+                    onDismiss = {},
+                    onConfirmLink = { _, _ -> }
+                )
+            }
+        }
+        composeTestRule.waitForIdle()
+
+        // 1. Top Raw SMS Verification panel displays BOTH full untruncated Original SMS and Selected SMS
+        composeTestRule.onNodeWithTag("link_duplicate_sms_verification_card").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("link_duplicate_original_sms_box").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("link_duplicate_selected_sms_box").assertIsDisplayed()
+
+        // Verify the very end of the >180-char SMS strings is rendered without 2-line truncation
+        composeTestRule.onNodeWithText("TailMarkerOriginalFullText991", substring = true).assertIsDisplayed()
+        composeTestRule.onNodeWithText("TailMarkerCandidateOneFullText772", substring = true).assertIsDisplayed()
+
+        // 2. Candidate rows below show ONLY Merchant, DateTime, Account, and Amount (no category or Same Amount badge clutter)
+        assertTrue(composeTestRule.onAllNodesWithText("Same Amount").fetchSemanticsNodes().isEmpty())
+        assertTrue(composeTestRule.onAllNodesWithText("Same Day").fetchSemanticsNodes().isEmpty())
+        assertTrue(composeTestRule.onAllNodesWithText("Groceries", substring = true).fetchSemanticsNodes().isEmpty())
+
+        // 3. Selecting the second candidate dynamically updates the top Selected SMS verification box
+        composeTestRule.onNodeWithTag("link_candidate_row_dup_cand_2").performScrollTo().performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithText("TailMarkerCandidateTwoFullText883", substring = true).assertIsDisplayed()
+    }
+
+    @Test
+    fun `test monthly trend renders salary income line when income is available with or without overall budget`() {
+        val oct = YearMonthPeriod(2026, 10)
+        val nov = YearMonthPeriod(2026, 11)
+        val barsWithSalary = listOf(
+            MonthlySpendBar(period = oct, label = "Oct", expenseTotal = 34000.0, incomeTotal = 90000.0, isSelected = false),
+            MonthlySpendBar(period = nov, label = "Nov", expenseTotal = 41000.0, incomeTotal = 95000.0, isSelected = true)
+        )
+        var budget by mutableStateOf(0.0)
+
+        composeTestRule.setContent {
+            OneFamilyTheme {
+                MonthlyBarGraph(
+                    bars = barsWithSalary,
+                    currencySymbol = "₹",
+                    overallBudget = budget,
+                    onSelectMonth = {}
+                )
+            }
+        }
+        composeTestRule.waitForIdle()
+
+        // 1. Even when overall budget is 0.0, Salary / Income line & legend are shown
+        composeTestRule.onNodeWithTag("monthly_income_trend_legend").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("salary_income_trend_canvas").assertIsDisplayed()
+        composeTestRule.onNodeWithText("● Salary / Income ₹95.0k").assertIsDisplayed()
+        assertTrue(composeTestRule.onAllNodesWithTag("overall_budget_trend_header").fetchSemanticsNodes().isEmpty())
+
+        // 2. When overall budget is set, BOTH Salary/Income line and Overall Budget trend line render together
+        budget = 50000.0
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("monthly_income_trend_legend").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("salary_income_trend_canvas").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("overall_budget_trend_header").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("overall_budget_trend_canvas").assertIsDisplayed()
+    }
+
+    @Test
+    fun `test bank parser and notification title strip trailing disclaimer last sentences and show required info only`() {
+        val app = ApplicationProvider.getApplicationContext<Application>()
+        shadowOf(app).grantPermissions(Manifest.permission.POST_NOTIFICATIONS)
+        val nm = app.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        nm.cancelAll()
+
+        // Case 1: Bank SMS with no merchant but a trailing "Not you? Call ... or SMS BLOCK UPI to 7308080808" sentence
+        val hdfcNoMerchantSms =
+            "Rs. 500.00 debited from HDFC Bank A/c XX4821 on 12-11-26. Not you? Call 18002586161 or SMS BLOCK UPI to 7308080808"
+        val parsedNoMerchant = BankParserFactory.parseSms(hdfcNoMerchantSms, "VM-HDFCBK", 1762940000000L)
+        assertNotNull(parsedNoMerchant)
+        assertNull(
+            "Trailing 'to 7308080808' or 'Not you?' sentence must never be extracted as merchant",
+            parsedNoMerchant!!.merchant
+        )
+
+        // Case 2: Bank SMS ending with "If not done by you, call 1800111109 immediately to report fraud."
+        val sbiFraudFooterSms =
+            "Your A/c XX3311 is debited by Rs. 850.00 on 12Nov26. If not done by you, call 1800111109 immediately to report fraud."
+        val parsedSbi = BankParserFactory.parseSms(sbiFraudFooterSms, "AD-SBIINB", 1762940100000L)
+        assertNotNull(parsedSbi)
+        assertNull(
+            "Trailing 'by you... to report fraud' sentence must never be extracted as merchant",
+            parsedSbi!!.merchant
+        )
+
+        // Case 3: Multi-line HDFC UPI SMS with valid merchant + trailing disclaimer sentence
+        val hdfcMerchantSms =
+            "Amt Sent Rs.650.00\nFrom HDFC Bank A/C *4821\nTo Blue Tokai Coffee\nOn 12-11-26 Ref 4310112233. Not you? Call 18002586161 or SMS BLOCK UPI to 7308080808"
+        val parsedMerchant = BankParserFactory.parseSms(hdfcMerchantSms, "VM-HDFCBK", 1762940200000L)
+        assertNotNull(parsedMerchant)
+        assertEquals("Blue Tokai Coffee", parsedMerchant!!.merchant)
+
+        // Case 4: Notification helper strips any trailing sentence if passed in title and shows ONLY required info
+        TransactionNotificationHelper.showNewTransactionNotification(
+            context = app,
+            expenseId = "notif_clean_title_1",
+            householdId = "hh_1",
+            visibility = "SHARED",
+            title = "Blue Tokai Coffee. Not you? Call 18002586161 or SMS BLOCK UPI to 7308080808",
+            amount = 650.0,
+            currentCategory = "Food & Dining",
+            currencySymbol = "₹",
+            paymentSummary = "HDFC Bank ••4821 • UPI",
+            transactionType = "EXPENSE"
+        )
+
+        val posted = shadowOf(nm).allNotifications.first()
+        val notifTitle = posted.extras.getCharSequence(Notification.EXTRA_TITLE)?.toString().orEmpty()
+        val notifBody = posted.extras.getCharSequence(Notification.EXTRA_TEXT)?.toString().orEmpty()
+
+        assertEquals("Blue Tokai Coffee • ₹650", notifTitle)
+        assertFalse(notifTitle.contains("Not you", ignoreCase = true))
+        assertFalse(notifTitle.contains("7308080808"))
+        assertFalse(notifTitle.contains("18002586161"))
+        assertTrue(notifBody.contains("Food & Dining"))
     }
 }
 

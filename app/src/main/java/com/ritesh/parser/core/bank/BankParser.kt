@@ -144,25 +144,82 @@ abstract class BankParser {
         return null
     }
 
-    protected open fun extractMerchant(message: String, sender: String): String? {
-        val patterns = listOf(
-            // UPI/P2M/123456/MERCHANT or UPI-123456-MERCHANT
-            Regex("""(?:UPI|IMPS|NEFT|RTGS|POS)[/\-:](?:P2[AM][/\-:])?(?:[0-9]{6,16}[/\-:])?([A-Za-z0-9\s&._'\-]{2,35}?)(?:[/\-:]|\s+on\b|\s+ref\b|\.|$|\n)""", RegexOption.IGNORE_CASE),
-            // trf to <Merchant> Refno
-            Regex("""\btrf\s+to\s+([A-Za-z0-9\s&._'\-@]{2,40}?)(?:\s+ref|\s+on\b|\s+upi\b|\.|$|\n)""", RegexOption.IGNORE_CASE),
-            // ; <Merchant> credited
-            Regex(""";\s*([A-Za-z0-9\s&._'\-@]{2,40}?)\s+credited""", RegexOption.IGNORE_CASE),
-            // Spent on Card at MERCHANT
-            Regex("""(?:spent|used|purchase|txn|transaction)\s+(?:on\s+.*?\s+)?at\s+([A-Za-z0-9\s&._'\-]{2,40}?)(?:\s+on\b|\s+for\b|\.\s|$|\n)""", RegexOption.IGNORE_CASE),
-            // To / at / towards / VPA <Merchant>
-            Regex("""\b(?:to|at|towards|vpa|beneficiary|payee)\s+([A-Za-z0-9._\-@\s&'/]{2,42}?)(?:\s+on\b|\s+ref\b|\s+upi\b|\s+avl\b|\s+bal\b|\s+via\b|\.\s|$|\n)""", RegexOption.IGNORE_CASE),
-            // Credited by / from SENDER
-            Regex("""\b(?:from|by)\s+([A-Za-z0-9\s&._@\-]{2,40}?)(?:\s+on\b|\s+ref\b|\s+upi\b|\s+towards\b|\.\s|$|\n)""", RegexOption.IGNORE_CASE)
+    /**
+     * Removes trailing security disclaimers, fraud-reporting footers, helpline instructions,
+     * OTP warnings, and balance clauses so they can never be mistaken for a merchant/payee name.
+     */
+    protected fun stripTrailingDisclaimers(message: String): String {
+        var result = message
+        // Truncate from the start of any trailing security/fraud/helpline disclaimer sentence
+        val trailingFooterPattern = Regex(
+            """(?:^|[.\n\r!;]|\s+-\s*)\s*(?:not\s+you\b|if\s+not\b|if\s+this\s+was\s+not\b|if\s+you\s+(?:have\s+)?not\b|if\s+unauthori[sz]ed\b|sms\s+block\b|to\s+(?:block|dispute|report|check|know|view|opt|stop|disable|manage|register|avail|prevent|avoid)\b|for\s+(?:dispute|any\s+query|queries|assistance|help|support)\b|call\s+(?:1800|1860|022|080|011|044|\+?91[\s\-]?[0-9]|[0-9]{7,})\b|(?:please\s+)?do\s+not\s+share\b|never\s+share\b|don'?t\s+share\b|forward\s+this\s+sms\b|warm\s+regards\b|thank\s+you\s+for\s+banking\b).*$""",
+            setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)
         )
+        result = result.replace(trailingFooterPattern, "")
+
+        // Also strip inline balance/limit clauses up to end of clause/line
+        val inlineBalanceClause = Regex(
+            """(?:[.\n\r;,]|\s+)\s*(?:avl\.?\s*bal|available\s+bal|avail\.?\s*(?:bal|limit)|curr(?:ent)?\s+bal|clear\s+bal|updated\s+bal|closing\s+bal|total\s+avl)[^.\n\r]*""",
+            RegexOption.IGNORE_CASE
+        )
+        result = result.replace(inlineBalanceClause, "")
+        return result.trim()
+    }
+
+    protected open fun extractMerchant(message: String, sender: String): String? {
+        val sanitized = stripTrailingDisclaimers(message)
+        if (sanitized.isBlank()) return null
+
+        val txType = extractTransactionType(message)
+        val patterns = buildList {
+            // UPI/P2M/123456/MERCHANT or UPI-123456-MERCHANT
+            add(
+                Regex(
+                    """(?:UPI|IMPS|NEFT|RTGS|POS)[/\-:](?:P2[AM][/\-:])?(?:[0-9]{6,16}[/\-:])?([A-Za-z0-9\s&._'\-]{2,35}?)(?:[/\-:]|\s+on\b|\s+ref\b|\.|$|\n)""",
+                    RegexOption.IGNORE_CASE
+                )
+            )
+            // trf to <Merchant> Refno
+            add(
+                Regex(
+                    """\btrf\s+to\s+([A-Za-z0-9\s&._'\-@]{2,40}?)(?:\s+ref|\s+on\b|\s+upi\b|\.|$|\n)""",
+                    RegexOption.IGNORE_CASE
+                )
+            )
+            // ; <Merchant> credited
+            add(
+                Regex(
+                    """;\s*([A-Za-z0-9\s&._'\-@]{2,40}?)\s+credited""",
+                    RegexOption.IGNORE_CASE
+                )
+            )
+            // Spent on Card at MERCHANT
+            add(
+                Regex(
+                    """(?:spent|used|purchase|txn|transaction)\s+(?:on\s+.*?\s+)?at\s+([A-Za-z0-9\s&._'\-]{2,40}?)(?:\s+on\b|\s+for\b|\s+ref\b|\.\s|\.$|$|\n)""",
+                    RegexOption.IGNORE_CASE
+                )
+            )
+            // To / at / towards / VPA <Merchant>
+            add(
+                Regex(
+                    """\b(?:to|at|towards|vpa|beneficiary|payee)\s+([A-Za-z0-9._\-@\s&'/]{2,42}?)(?:\s+on\b|\s+ref\b|\s+upi\b|\s+avl\b|\s+bal\b|\s+via\b|\.\s|\.$|$|\n)""",
+                    RegexOption.IGNORE_CASE
+                )
+            )
+            // Credited by / from SENDER — strictly for INCOME/credit messages so "debited from A/c" or "by you" never matches
+            if (txType == TransactionType.INCOME) {
+                add(
+                    Regex(
+                        """(?:credited|received|deposited|trf|transfer(?:red)?)\b[^.\n\r]{0,35}?\b(?:from|by)\s+([A-Za-z0-9\s&._@\-]{2,40}?)(?:\s+on\b|\s+ref\b|\s+upi\b|\s+towards\b|\.\s|\.$|$|\n)""",
+                        RegexOption.IGNORE_CASE
+                    )
+                )
+            }
+        }
 
         for (pattern in patterns) {
-            val match = pattern.find(message)
-            if (match != null) {
+            for (match in pattern.findAll(sanitized)) {
                 val candidate = cleanMerchantName(match.groupValues[1])
                 if (isValidMerchantName(candidate)) {
                     return candidate
@@ -261,19 +318,34 @@ abstract class BankParser {
     }
 
     protected open fun cleanMerchantName(merchant: String): String {
-        var cleaned = merchant
+        var cleaned = stripTrailingDisclaimers(merchant)
             .replace(Regex("""@[a-zA-Z0-9._\-]+"""), "")
             .replace(Regex("""^(?:VPA|UPI|POS|IMPS|NEFT|RTGS|ACH|MMT|BY|TO|AT|FROM)[:/\-\s]+""", RegexOption.IGNORE_CASE), "")
-            .replace(Regex("""(?:\s+on|\s+ref|\s+upi|\s+avl|\s+bal|\s+not\s+you|\s+if\s+not).*$""", RegexOption.IGNORE_CASE), "")
+            .replace(
+                Regex(
+                    """(?:\s+on|\s+ref|\s+upi|\s+avl|\s+bal|\s+not\s+you|\s+if\s+not|\s+call\s+[0-9]|\s+sms\s+block|\s+to\s+block|\s+to\s+dispute|\s+to\s+report|\s+do\s+not\s+share|\s+never\s+share).*$""",
+                    RegexOption.IGNORE_CASE
+                ),
+                ""
+            )
             .replace(Regex("""[^a-zA-Z0-9\s&'\-.]"""), " ")
             .replace(Regex("""\s+"""), " ")
+            .trim()
+            .trim('.', '-', '\'')
             .trim()
 
         val lowerCleaned = cleaned.lowercase()
         if (lowerCleaned in setOf(
                 "your a c", "your account", "a c", "ac", "account", "acct",
                 "you", "your", "me", "self", "bank", "upi", "imps", "neft"
-            ) || lowerCleaned.startsWith("a c ") || lowerCleaned.startsWith("ac ") || lowerCleaned.startsWith("acct ")
+            ) ||
+            lowerCleaned.startsWith("a c ") ||
+            lowerCleaned.startsWith("ac ") ||
+            lowerCleaned.startsWith("acct ") ||
+            lowerCleaned.startsWith("your a c") ||
+            lowerCleaned.startsWith("your acct") ||
+            lowerCleaned.startsWith("your account") ||
+            Regex("""\b(?:a\s*c|acct|account|card)\s*(?:no\.?\s*)?[x*]*[0-9]{3,}\b""").containsMatchIn(lowerCleaned)
         ) {
             return ""
         }
@@ -288,12 +360,35 @@ abstract class BankParser {
 
     protected fun isValidMerchantName(name: String): Boolean {
         if (name.length < 2) return false
+        val lower = name.lowercase().trim()
         val invalidWords = setOf(
             "a/c", "ac", "account", "acct", "bank", "card", "upi",
             "rs", "inr", "bal", "balance", "sms", "block", "call", "you", "your",
-            "debited", "credited", "date", "time", "ref", "refno", "info"
+            "debited", "credited", "date", "time", "ref", "refno", "info",
+            "dispute", "report", "fraud", "customer", "helpline", "otp", "pin"
         )
-        if (name.lowercase() in invalidWords) return false
+        if (lower in invalidWords) return false
+
+        // Reject disclaimer/action verb phrases or helpline fragments
+        val invalidPrefixes = listOf(
+            "block ", "dispute ", "report ", "call ", "sms ", "forward ",
+            "click ", "visit ", "check ", "know ", "view ", "opt ", "stop ",
+            "avoid ", "prevent ", "share ", "not you", "if not", "you ",
+            "your ", "dear ", "helpline", "toll free", "customer care",
+            "avl ", "available ", "ending ", "xx"
+        )
+        if (invalidPrefixes.any { lower.startsWith(it) }) return false
+
+        val invalidSubstrings = listOf(
+            "report fraud", "sms block", "block upi", "not done by you",
+            "do not share", "never share", "debited from", "credited to",
+            "call 1800", "call 1860", "avl bal", "available bal"
+        )
+        if (invalidSubstrings.any { lower.contains(it) }) return false
+
+        // Reject 7+ consecutive digits (phone/helpline/reference numbers)
+        if (Regex("""[0-9]{7,}""").containsMatchIn(lower)) return false
+        if (!lower.any { it.isLetter() }) return false
         if (name.all { it.isDigit() || it == 'x' || it == 'X' || it == '*' || it == '.' || it == '-' }) return false
         return true
     }

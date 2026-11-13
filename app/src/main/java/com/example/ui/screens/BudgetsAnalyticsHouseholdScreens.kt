@@ -1151,7 +1151,9 @@ fun BudgetsTabScreen(
                             }
                         }
 
-                        if (uiState.activeMonthlyBudget > 0.0 && uiState.monthlyTrendBars.isNotEmpty()) {
+                        val showTrendGraph = uiState.activeMonthlyBudget > 0.0 ||
+                            uiState.monthlyTrendBars.any { it.incomeTotal > 0.0 }
+                        if (showTrendGraph && uiState.monthlyTrendBars.isNotEmpty()) {
                             ReceiptDashedDividerLine()
                             MonthlyBarGraph(
                                 bars = uiState.monthlyTrendBars,
