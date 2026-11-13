@@ -2,8 +2,10 @@ package com.example.ui.theme
 
 import android.os.Build
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Shapes
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.dynamicDarkColorScheme
 import androidx.compose.material3.dynamicLightColorScheme
@@ -16,8 +18,10 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -29,12 +33,63 @@ enum class AppThemeMode(val label: String) {
     DARK("Dark")
 }
 
+val AppShapes = Shapes(
+    extraSmall = RoundedCornerShape(8.dp),
+    small = RoundedCornerShape(12.dp),
+    medium = RoundedCornerShape(18.dp),
+    large = RoundedCornerShape(24.dp),
+    extraLarge = RoundedCornerShape(28.dp)
+)
+
 /**
- * Primary color options for the application.
- * - Default is [KIWI_GREEN].
- * - [SYSTEM_DYNAMIC] follows Material 3 system dynamic colors (`dynamicLightColorScheme` / `dynamicDarkColorScheme`).
- * - Users can also choose from curated primary color swatches or set any custom primary color via [CUSTOM_COLOR].
+ * Returns Material Design 3 Expressive connected card stack shape:
+ * - Single card: `outerCorner` on all 4 corners
+ * - Top card: `outerCorner` on top, `innerCorner` on bottom
+ * - Middle card: `innerCorner` on all 4 corners
+ * - Bottom card: `innerCorner` on top, `outerCorner` on bottom
  */
+fun groupedCardShape(
+    index: Int,
+    count: Int,
+    outerCorner: Dp = 24.dp,
+    innerCorner: Dp = 6.dp
+): RoundedCornerShape {
+    return when {
+        count <= 1 -> RoundedCornerShape(outerCorner)
+        index <= 0 -> RoundedCornerShape(
+            topStart = outerCorner,
+            topEnd = outerCorner,
+            bottomStart = innerCorner,
+            bottomEnd = innerCorner
+        )
+        index >= count - 1 -> RoundedCornerShape(
+            topStart = innerCorner,
+            topEnd = innerCorner,
+            bottomStart = outerCorner,
+            bottomEnd = outerCorner
+        )
+        else -> RoundedCornerShape(innerCorner)
+    }
+}
+
+/**
+ * Returns a haptic tick callback that respects the user's Haptic Feedback setting.
+ */
+@Composable
+fun rememberAppHapticPerformer(): () -> Unit {
+    val haptic = LocalHapticFeedback.current
+    val enabled by LocalAccountSessionManager.hapticFeedbackEnabled.collectAsStateWithLifecycle()
+    return remember(haptic, enabled) {
+        {
+            if (enabled) {
+                runCatching {
+                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                }
+            }
+        }
+    }
+}
+
 enum class AppPrimaryColorOption(
     val lightPrimary: Color,
     val lightContainer: Color,
@@ -76,12 +131,12 @@ enum class AppPrimaryColorOption(
         onDarkContainer = Color(0xFFE0F2FE)
     ),
     ROYAL_BERRY(
-        lightPrimary = Color(0xFF8338EC),
-        lightContainer = Color(0xFFEDE2FF),
-        onLightContainer = Color(0xFF2B0063),
-        darkPrimary = Color(0xFFB98CFF),
-        darkContainer = Color(0xFF1F0A3D),
-        onDarkContainer = Color(0xFFEDE2FF)
+        lightPrimary = Color(0xFF7C3AED),
+        lightContainer = Color(0xFFEDE4FF),
+        onLightContainer = Color(0xFF28005C),
+        darkPrimary = Color(0xFFC4B5FD),
+        darkContainer = Color(0xFF3E2270),
+        onDarkContainer = Color(0xFFEDE4FF)
     ),
     EMERALD_TEAL(
         lightPrimary = Color(0xFF059669),
@@ -117,9 +172,6 @@ enum class AppPrimaryColorOption(
     )
 }
 
-/**
- * Relative screen dimensions computed dynamically from each phone's actual screen width and height.
- */
 @Immutable
 data class AppDimens(
     val screenWidth: Dp,
@@ -150,20 +202,20 @@ val LocalAppDimens = staticCompositionLocalOf {
         horizontalPadding = 16.dp,
         cardPadding = 18.dp,
         itemSpacing = 12.dp,
-        cardCornerRadius = 22.dp,
-        smallCornerRadius = 14.dp,
-        rowIconBoxSize = 44.dp,
+        cardCornerRadius = 24.dp,
+        smallCornerRadius = 16.dp,
+        rowIconBoxSize = 46.dp,
         rowIconSize = 22.dp,
         pulseRingSize = 88.dp,
         donutChartSize = 128.dp,
-        barChartHeight = 148.dp,
+        barChartHeight = 152.dp,
         navPillHeight = 48.dp,
-        navItemWidth = 56.dp,
-        bottomListPadding = 120.dp
+        navItemWidth = 64.dp,
+        bottomListPadding = 96.dp
     )
 }
 
-private val BaseDarkColorScheme = darkColorScheme(
+private val BaseTonalDarkColorScheme = darkColorScheme(
     primary = KiwiPrimaryDark,
     onPrimary = OnKiwiDark,
     primaryContainer = KiwiContainerDark,
@@ -176,22 +228,38 @@ private val BaseDarkColorScheme = darkColorScheme(
     onTertiary = OnBerryDark,
     tertiaryContainer = BerryContainerDark,
     onTertiaryContainer = OnBerryContainerDark,
-    background = Color(0xFF000000),
+    background = TonalBackgroundDark,
     onBackground = OnCreamSurfaceDark,
-    surface = PaperSurfaceDark,
+    surface = TonalSurfaceDark,
     onSurface = OnCreamSurfaceDark,
-    surfaceVariant = WarmSurfaceVariantDark,
+    surfaceVariant = TonalSurfaceVariantDark,
     onSurfaceVariant = OnWarmSurfaceVariantDark,
+    surfaceTint = KiwiPrimaryDark,
+    surfaceDim = SurfaceDimDark,
+    surfaceBright = SurfaceBrightDark,
+    surfaceContainerLowest = SurfaceContainerLowestDark,
+    surfaceContainerLow = SurfaceContainerLowDark,
+    surfaceContainer = SurfaceContainerDark,
+    surfaceContainerHigh = SurfaceContainerHighDark,
+    surfaceContainerHighest = SurfaceContainerHighestDark,
+    outline = Color(0xFF7B7F75),
+    outlineVariant = Color(0xFF3A3E36)
+)
+
+private val BaseAmoledDarkColorScheme = BaseTonalDarkColorScheme.copy(
+    background = CreamBackgroundDark,
+    surface = PaperSurfaceDark,
+    surfaceVariant = WarmSurfaceVariantDark,
     surfaceTint = Color.Transparent,
     surfaceDim = Color(0xFF000000),
-    surfaceBright = Color(0xFF1C1C1C),
-    surfaceContainerLowest = Color(0xFF000000),
-    surfaceContainerLow = Color(0xFF070707),
-    surfaceContainer = Color(0xFF0A0A0A),
-    surfaceContainerHigh = Color(0xFF121212),
-    surfaceContainerHighest = Color(0xFF1A1A1A),
-    outline = Color(0xFF2E2E2E),
-    outlineVariant = Color(0xFF1F1F1F)
+    surfaceBright = Color(0xFF222520),
+    surfaceContainerLowest = AmoledSurfaceContainerLowest,
+    surfaceContainerLow = AmoledSurfaceContainerLow,
+    surfaceContainer = AmoledSurfaceContainer,
+    surfaceContainerHigh = AmoledSurfaceContainerHigh,
+    surfaceContainerHighest = AmoledSurfaceContainerHighest,
+    outline = Color(0xFF565A51),
+    outlineVariant = Color(0xFF262923)
 )
 
 private val BaseLightColorScheme = lightColorScheme(
@@ -213,8 +281,16 @@ private val BaseLightColorScheme = lightColorScheme(
     onSurface = OnCreamSurfaceLight,
     surfaceVariant = WarmSurfaceVariantLight,
     onSurfaceVariant = OnWarmSurfaceVariantLight,
-    outline = Color(0xFFD5C8B8),
-    outlineVariant = Color(0xFFEAE2D3)
+    surfaceTint = KiwiPrimaryLight,
+    surfaceDim = SurfaceDimLight,
+    surfaceBright = SurfaceBrightLight,
+    surfaceContainerLowest = SurfaceContainerLowestLight,
+    surfaceContainerLow = SurfaceContainerLowLight,
+    surfaceContainer = SurfaceContainerLight,
+    surfaceContainerHigh = SurfaceContainerHighLight,
+    surfaceContainerHighest = SurfaceContainerHighestLight,
+    outline = Color(0xFF817D73),
+    outlineVariant = Color(0xFFDAD3C5)
 )
 
 private fun blendColors(from: Color, to: Color, ratio: Float): Color {
@@ -231,25 +307,36 @@ fun resolveAppColorScheme(
     context: android.content.Context,
     darkTheme: Boolean,
     primaryColorOption: AppPrimaryColorOption,
-    customPrimaryColorArgb: Long
+    customPrimaryColorArgb: Long,
+    amoledDark: Boolean = false
 ): ColorScheme {
+    val baseDark = if (amoledDark) BaseAmoledDarkColorScheme else BaseTonalDarkColorScheme
     if (primaryColorOption == AppPrimaryColorOption.SYSTEM_DYNAMIC &&
         Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
     ) {
         return runCatching {
             if (darkTheme) {
                 val dynDark = dynamicDarkColorScheme(context)
-                dynDark.copy(
-                    background = Color(0xFF000000),
-                    surface = PaperSurfaceDark,
-                    surfaceVariant = WarmSurfaceVariantDark,
-                    surfaceTint = Color.Transparent
-                )
+                if (amoledDark) {
+                    dynDark.copy(
+                        background = Color(0xFF000000),
+                        surface = PaperSurfaceDark,
+                        surfaceVariant = WarmSurfaceVariantDark,
+                        surfaceContainerLowest = AmoledSurfaceContainerLowest,
+                        surfaceContainerLow = AmoledSurfaceContainerLow,
+                        surfaceContainer = AmoledSurfaceContainer,
+                        surfaceContainerHigh = AmoledSurfaceContainerHigh,
+                        surfaceContainerHighest = AmoledSurfaceContainerHighest,
+                        surfaceTint = Color.Transparent
+                    )
+                } else {
+                    dynDark
+                }
             } else {
                 dynamicLightColorScheme(context)
             }
         }.getOrElse {
-            if (darkTheme) BaseDarkColorScheme else BaseLightColorScheme
+            if (darkTheme) baseDark else BaseLightColorScheme
         }
     }
 
@@ -261,13 +348,15 @@ fun resolveAppColorScheme(
             } else {
                 baseCustom
             }
-            val darkContainer = blendColors(baseCustom, Color.Black, 0.72f)
-            val onDarkContainer = blendColors(baseCustom, Color.White, 0.80f)
-            BaseDarkColorScheme.copy(
+            val darkContainer = blendColors(baseCustom, Color.Black, 0.70f)
+            val onDarkContainer = blendColors(baseCustom, Color.White, 0.82f)
+            baseDark.copy(
                 primary = darkPrimary,
                 onPrimary = if (darkPrimary.luminance() > 0.45f) Color.Black else Color.White,
                 primaryContainer = darkContainer,
-                onPrimaryContainer = onDarkContainer
+                onPrimaryContainer = onDarkContainer,
+                secondaryContainer = blendColors(darkPrimary, baseDark.surfaceContainerHigh, 0.72f),
+                onSecondaryContainer = onDarkContainer
             )
         } else {
             val lightPrimary = if (baseCustom.luminance() > 0.65f) {
@@ -281,13 +370,15 @@ fun resolveAppColorScheme(
                 primary = lightPrimary,
                 onPrimary = if (lightPrimary.luminance() > 0.55f) Color.Black else Color.White,
                 primaryContainer = lightContainer,
-                onPrimaryContainer = onLightContainer
+                onPrimaryContainer = onLightContainer,
+                secondaryContainer = blendColors(lightPrimary, BaseLightColorScheme.surfaceContainerHigh, 0.76f),
+                onSecondaryContainer = onLightContainer
             )
         }
     }
 
     return if (darkTheme) {
-        BaseDarkColorScheme.copy(
+        baseDark.copy(
             primary = primaryColorOption.darkPrimary,
             onPrimary = if (primaryColorOption.darkPrimary.luminance() > 0.45f) Color.Black else Color.White,
             primaryContainer = primaryColorOption.darkContainer,
@@ -313,13 +404,16 @@ fun OneFamilyTheme(
     },
     primaryColorOption: AppPrimaryColorOption? = null,
     customPrimaryColorArgb: Long? = null,
+    amoledDark: Boolean? = null,
     content: @Composable () -> Unit
 ) {
     val context = LocalContext.current
     val observedPrimaryOption by LocalAccountSessionManager.primaryColorOption.collectAsStateWithLifecycle()
     val observedCustomArgb by LocalAccountSessionManager.customPrimaryColorArgb.collectAsStateWithLifecycle()
+    val observedAmoledDark by LocalAccountSessionManager.amoledDarkEnabled.collectAsStateWithLifecycle()
     val effectivePrimaryOption = primaryColorOption ?: observedPrimaryOption
     val effectiveCustomArgb = customPrimaryColorArgb ?: observedCustomArgb
+    val effectiveAmoledDark = amoledDark ?: observedAmoledDark
 
     val configuration = LocalConfiguration.current
     val screenWidthDp = configuration.screenWidthDp.coerceAtLeast(320)
@@ -339,19 +433,19 @@ fun OneFamilyTheme(
             screenHeight = sh,
             widthScale = widthScale,
             heightScale = heightScale,
-            horizontalPadding = (sw * 0.041f).coerceIn(12.dp, 28.dp),
-            cardPadding = (sw * 0.045f).coerceIn(14.dp, 26.dp),
+            horizontalPadding = (sw * 0.044f).coerceIn(14.dp, 28.dp),
+            cardPadding = (sw * 0.046f).coerceIn(16.dp, 26.dp),
             itemSpacing = (sh * 0.014f).coerceIn(8.dp, 18.dp),
-            cardCornerRadius = (sw * 0.056f).coerceIn(18.dp, 30.dp),
-            smallCornerRadius = (sw * 0.036f).coerceIn(12.dp, 20.dp),
-            rowIconBoxSize = (sw * 0.112f).coerceIn(40.dp, 54.dp),
+            cardCornerRadius = (sw * 0.060f).coerceIn(20.dp, 30.dp),
+            smallCornerRadius = (sw * 0.040f).coerceIn(14.dp, 20.dp),
+            rowIconBoxSize = (sw * 0.116f).coerceIn(44.dp, 54.dp),
             rowIconSize = (sw * 0.056f).coerceIn(20.dp, 28.dp),
             pulseRingSize = (sw * 0.225f).coerceIn(76.dp, 116.dp),
             donutChartSize = (sw * 0.32f).coerceIn(106.dp, 164.dp),
-            barChartHeight = (sh * 0.175f).coerceIn(124.dp, 196.dp),
+            barChartHeight = (sh * 0.18f).coerceIn(128.dp, 196.dp),
             navPillHeight = (sh * 0.058f).coerceAtLeast(48.dp),
-            navItemWidth = (sw * 0.145f).coerceAtLeast(48.dp),
-            bottomListPadding = (sh * 0.14f).coerceIn(96.dp, 150.dp)
+            navItemWidth = (sw * 0.155f).coerceAtLeast(52.dp),
+            bottomListPadding = (sh * 0.12f).coerceIn(88.dp, 140.dp)
         )
     }
 
@@ -360,12 +454,13 @@ fun OneFamilyTheme(
             .getOrElse { Typography }
     }
 
-    val colorScheme = remember(context, darkTheme, effectivePrimaryOption, effectiveCustomArgb) {
+    val colorScheme = remember(context, darkTheme, effectivePrimaryOption, effectiveCustomArgb, effectiveAmoledDark) {
         resolveAppColorScheme(
             context = context,
             darkTheme = darkTheme,
             primaryColorOption = effectivePrimaryOption,
-            customPrimaryColorArgb = effectiveCustomArgb
+            customPrimaryColorArgb = effectiveCustomArgb,
+            amoledDark = effectiveAmoledDark
         )
     }
 
@@ -373,6 +468,7 @@ fun OneFamilyTheme(
         MaterialTheme(
             colorScheme = colorScheme,
             typography = responsiveTypography,
+            shapes = AppShapes,
             content = content
         )
     }

@@ -388,7 +388,8 @@ data class OneFamilyDashboardUiState(
     val smsCandidates: List<SmsCandidate> = emptyList(),
     val statusBannerMessage: String? = null,
     val errorMessage: String? = null,
-    val canUndoLastAction: Boolean = false
+    val canUndoLastAction: Boolean = false,
+    val householdFeatureEnabled: Boolean = false
 ) {
     val activeCurrencySymbol: String
         get() = household?.currencySymbol?.takeIf { it.isNotBlank() }
@@ -517,7 +518,8 @@ class OneFamilyViewModel(
         val candidates: List<SmsCandidate>,
         val banner: String?,
         val error: String?,
-        val canUndo: Boolean
+        val canUndo: Boolean,
+        val householdFeatureEnabled: Boolean
     )
 
     private val coreDataFlow = combine(
@@ -546,11 +548,19 @@ class OneFamilyViewModel(
         arrayOf(spdq[0], spdq[1], spdq[2], spdq[3], spdq[4], type, cat, pm, acc, tag, mem)
     }
 
+    private val mergedCustomCategoriesFlow = combine(
+        _customCategories,
+        com.example.data.local.LocalAccountSessionManager.customCategories
+    ) { localCats, persistedCats ->
+        (persistedCats + localCats).distinctBy { it.lowercase() }
+    }
+
     private val filterSecondaryFlow = combine(
-        combine(_sortOrder, _customCategories, _smsCandidates) { sort, customCats, cand -> Triple(sort, customCats, cand) },
-        combine(_statusBanner, _errorMessage, _lastUndoableAction) { ban, err, undo -> Triple(ban, err, undo != null) }
-    ) { (sort, customCats, cand), (ban, err, canUndo) ->
-        arrayOf(sort, customCats, cand, ban, err, canUndo)
+        combine(_sortOrder, mergedCustomCategoriesFlow, _smsCandidates) { sort, customCats, cand -> Triple(sort, customCats, cand) },
+        combine(_statusBanner, _errorMessage, _lastUndoableAction) { ban, err, undo -> Triple(ban, err, undo != null) },
+        com.example.data.local.LocalAccountSessionManager.householdFeatureEnabled
+    ) { (sort, customCats, cand), (ban, err, canUndo), hhEnabled ->
+        arrayOf(sort, customCats, cand, ban, err, canUndo, hhEnabled)
     }
 
     private val filterStateFlow = combine(filterPrimaryFlow, filterSecondaryFlow) { p, s ->
@@ -572,22 +582,35 @@ class OneFamilyViewModel(
             candidates = s[2] as List<SmsCandidate>,
             banner = s[3] as String?,
             error = s[4] as String?,
-            canUndo = s[5] as Boolean
+            canUndo = s[5] as Boolean,
+            householdFeatureEnabled = s[6] as Boolean
         )
     }
 
-    val uiState: StateFlow<OneFamilyDashboardUiState> = combine(coreDataFlow, filterStateFlow) { core, filter ->
-        val effectiveScope = filter.scope
+    private fun isIncomeTransaction(tx: ExpenseTransaction): Boolean {
+        return tx.type.equals("INCOME", ignoreCase = true) ||
+            ExpenseCategories.normalizeCategory(tx.category).equals("Salary & Income", ignoreCase = true)
+    }
 
-        val allScopedTransactions = when (effectiveScope) {
-            BudgetScope.HOUSEHOLD_SHARED -> {
-                if (core.household != null) {
-                    core.sharedExpenses
-                } else {
-                    core.personalExpenses
+    val uiState: StateFlow<OneFamilyDashboardUiState> = combine(coreDataFlow, filterStateFlow) { core, filter ->
+        val householdEnabled = filter.householdFeatureEnabled
+        val effectiveScope = if (!householdEnabled) BudgetScope.PERSONAL_ONLY else filter.scope
+
+        val allScopedTransactions = if (!householdEnabled) {
+            (core.personalExpenses + core.sharedExpenses.filter { it.userId == currentUserId })
+                .distinctBy { it.id }
+                .sortedByDescending { it.transactionDateMillis }
+        } else {
+            when (effectiveScope) {
+                BudgetScope.HOUSEHOLD_SHARED -> {
+                    if (core.household != null) {
+                        core.sharedExpenses
+                    } else {
+                        core.personalExpenses
+                    }
                 }
+                BudgetScope.PERSONAL_ONLY -> core.personalExpenses
             }
-            BudgetScope.PERSONAL_ONLY -> core.personalExpenses
         }
 
         val selectedPeriod = filter.period
@@ -625,8 +648,8 @@ class OneFamilyViewModel(
             referenceMillis = nowMillis
         )
 
-        val periodExpensesOnly = periodTransactions.filter { it.type == "EXPENSE" }
-        val periodIncomeOnly = periodTransactions.filter { it.type == "INCOME" }
+        val periodIncomeOnly = periodTransactions.filter { isIncomeTransaction(it) }
+        val periodExpensesOnly = periodTransactions.filter { !isIncomeTransaction(it) }
 
         val totalSpent = periodExpensesOnly.sumOf { it.amount }
         val totalIncome = periodIncomeOnly.sumOf { it.amount }
@@ -634,17 +657,20 @@ class OneFamilyViewModel(
         val personalCap = core.profile?.personalMonthlyBudget ?: 0.0
         val householdCap = core.household?.monthlyBudgetLimit ?: 0.0
 
-        val activeMonthlyBudget = when (effectiveScope) {
-            BudgetScope.HOUSEHOLD_SHARED -> if (core.household != null) householdCap else personalCap
-            BudgetScope.PERSONAL_ONLY -> personalCap
+        val activeMonthlyBudget = when {
+            !householdEnabled -> personalCap
+            effectiveScope == BudgetScope.HOUSEHOLD_SHARED -> if (core.household != null) householdCap else personalCap
+            else -> personalCap
         }
 
         val remainingBudget = if (activeMonthlyBudget > 0.0) (activeMonthlyBudget - totalSpent).coerceAtLeast(0.0) else 0.0
         val dailySafeSpend = if (activeMonthlyBudget > 0.0) remainingBudget / remainingDays else 0.0
 
-        val activeBudgets = when (effectiveScope) {
-            BudgetScope.HOUSEHOLD_SHARED -> if (core.household != null) core.sharedBudgets else core.personalBudgets
-            BudgetScope.PERSONAL_ONLY -> core.personalBudgets
+        val activeBudgets = when {
+            !householdEnabled -> (core.personalBudgets + core.sharedBudgets.filter { it.userId == currentUserId })
+                .distinctBy { ExpenseCategories.normalizeCategory(it.category).lowercase() }
+            effectiveScope == BudgetScope.HOUSEHOLD_SHARED -> if (core.household != null) core.sharedBudgets else core.personalBudgets
+            else -> core.personalBudgets
         }
 
         val allAvailableCategories = (
@@ -694,25 +720,30 @@ class OneFamilyViewModel(
                 .thenBy { it.category }
         )
 
-        // Build 6-Month Spending Bar Graph points ending at anchor month
-        val anchorPeriod = selectedPeriod
-            ?: allScopedTransactions.maxByOrNull { it.transactionDateMillis }
-                ?.let { YearMonthPeriod.fromMillis(it.transactionDateMillis) }
-            ?: nowPeriod
+        // Build 12-Month Scrollable Trend Window anchored at the latest period so scrolling never shifts months
+        val latestTxPeriod = allScopedTransactions.maxByOrNull { it.transactionDateMillis }
+            ?.let { YearMonthPeriod.fromMillis(it.transactionDateMillis) }
+        val periodComparator = compareBy<YearMonthPeriod> { it.year }.thenBy { it.month }
+        val graphEndPeriod = listOfNotNull(nowPeriod, latestTxPeriod, selectedPeriod)
+            .maxWithOrNull(periodComparator) ?: nowPeriod
 
-        val sixMonthsList = mutableListOf<YearMonthPeriod>()
-        var cursor = anchorPeriod
-        repeat(6) {
-            sixMonthsList.add(0, cursor)
+        val monthWindowList = mutableListOf<YearMonthPeriod>()
+        var cursor = graphEndPeriod
+        repeat(12) {
+            monthWindowList.add(0, cursor)
+            cursor = cursor.previousMonth()
+        }
+        while (selectedPeriod != null && periodComparator.compare(selectedPeriod, monthWindowList.first()) < 0 && monthWindowList.size < 36) {
+            monthWindowList.add(0, cursor)
             cursor = cursor.previousMonth()
         }
 
-        val monthlyTrendBars = sixMonthsList.map { ym ->
+        val monthlyTrendBars = monthWindowList.map { ym ->
             val monthTxs = allScopedTransactions.filter {
                 YearMonthPeriod.fromMillis(it.transactionDateMillis) == ym
             }
-            val expSum = monthTxs.filter { it.type == "EXPENSE" }.sumOf { it.amount }
-            val incSum = monthTxs.filter { it.type == "INCOME" }.sumOf { it.amount }
+            val expSum = monthTxs.filter { !isIncomeTransaction(it) }.sumOf { it.amount }
+            val incSum = monthTxs.filter { isIncomeTransaction(it) }.sumOf { it.amount }
             MonthlySpendBar(
                 period = ym,
                 label = ym.formatShortMonth(),
@@ -753,7 +784,12 @@ class OneFamilyViewModel(
                 tx.paymentMode.contains(filter.query, ignoreCase = true) ||
                 tx.tags.any { it.contains(filter.query, ignoreCase = true) }
 
-            val matchesType = filter.type == "All" || tx.type.equals(filter.type, ignoreCase = true)
+            val matchesType = when {
+                filter.type == "All" -> true
+                filter.type.equals("INCOME", ignoreCase = true) -> isIncomeTransaction(tx)
+                filter.type.equals("EXPENSE", ignoreCase = true) -> !isIncomeTransaction(tx)
+                else -> tx.type.equals(filter.type, ignoreCase = true)
+            }
             val matchesCat = filter.category == "All" ||
                 ExpenseCategories.normalizeCategory(tx.category).equals(
                     ExpenseCategories.normalizeCategory(filter.category),
@@ -777,8 +813,8 @@ class OneFamilyViewModel(
         OneFamilyDashboardUiState(
             isLoading = false,
             userProfile = core.profile,
-            household = core.household,
-            pendingEmailInvites = core.invites,
+            household = if (householdEnabled) core.household else null,
+            pendingEmailInvites = if (householdEnabled) core.invites else emptyList(),
             selectedScope = effectiveScope,
             selectedPeriod = selectedPeriod,
             selectedDateRangePreset = dateRangePreset,
@@ -809,11 +845,12 @@ class OneFamilyViewModel(
             remainingDaysInMonth = remainingDays,
             allTagsWithSpend = allTagsWithSpend,
             topMerchants = topMerchants,
-            memberSpendMap = memberSpendMap,
+            memberSpendMap = if (householdEnabled) memberSpendMap else emptyMap(),
             smsCandidates = filter.candidates,
             statusBannerMessage = filter.banner,
             errorMessage = filter.error,
-            canUndoLastAction = filter.canUndo
+            canUndoLastAction = filter.canUndo,
+            householdFeatureEnabled = householdEnabled
         )
     }.stateIn(
         scope = viewModelScope,
@@ -908,13 +945,39 @@ class OneFamilyViewModel(
         _sortOrder.value = sortOrder
     }
 
-    fun addCustomCategory(categoryName: String) {
+    fun addCustomCategory(categoryName: String, context: Context? = null) {
         val cleaned = ExpenseCategories.normalizeCategory(categoryName)
         if (cleaned.isNotBlank() && ExpenseCategories.ALL.none { it.equals(cleaned, ignoreCase = true) }) {
             val existing = _customCategories.value
             if (existing.none { it.equals(cleaned, ignoreCase = true) }) {
                 _customCategories.value = existing + cleaned
             }
+            com.example.data.local.LocalAccountSessionManager.addCustomCategory(context, cleaned)
+        }
+    }
+
+    fun addCustomCategoryWithOptionalBudget(
+        categoryName: String,
+        optionalMonthlyLimit: Double,
+        alertThresholdPercent: Int = 80,
+        isShared: Boolean = false,
+        context: Context? = null
+    ) {
+        val cleaned = ExpenseCategories.normalizeCategory(categoryName.trim())
+        if (cleaned.length < 2) {
+            _errorMessage.value = "Please enter a valid category name."
+            return
+        }
+        addCustomCategory(cleaned, context)
+        if (optionalMonthlyLimit > 0.0) {
+            saveCategoryBudget(
+                category = cleaned,
+                monthlyLimit = optionalMonthlyLimit,
+                alertThresholdPercent = alertThresholdPercent,
+                isShared = isShared
+            )
+        } else {
+            _statusBanner.value = "Added custom category '$cleaned'."
         }
     }
 
@@ -1454,20 +1517,26 @@ class OneFamilyViewModel(
         context: Context? = null
     ) {
         viewModelScope.launch {
-            addCustomCategory(category)
+            val normalizedCategory = ExpenseCategories.normalizeCategory(category)
+            val effectiveType = if (normalizedCategory.equals("Salary & Income", ignoreCase = true)) {
+                "INCOME"
+            } else {
+                type
+            }
+            addCustomCategory(normalizedCategory, context)
             val state = uiState.value
             val tags = tagsInput.split(",", " ")
                 .map { it.trim().removePrefix("#") }
                 .filter { it.isNotBlank() }
-            val shareFlag = isShared && state.household != null
+            val shareFlag = state.householdFeatureEnabled && isShared && state.household != null
 
             val result = repository.addExpense(
                 userName = currentUserName.ifBlank { state.userProfile?.displayName ?: "Me" },
                 household = state.household,
                 title = title,
                 amount = amount,
-                type = type,
-                category = category,
+                type = effectiveType,
+                category = normalizedCategory,
                 accountName = accountName,
                 paymentMode = paymentMode,
                 tags = tags,
@@ -1475,44 +1544,9 @@ class OneFamilyViewModel(
                 isShared = shareFlag,
                 transactionDateMillis = transactionDateMillis
             )
-            result.onSuccess { savedExpenseId ->
-                _statusBanner.value = "Added $title."
-                if (context != null) {
-                    val currency = state.activeCurrencySymbol
-                    val memberName = currentUserName.ifBlank { state.userProfile?.displayName ?: "Member" }
-                    TransactionNotificationHelper.showNewTransactionNotification(
-                        context = context,
-                        expenseId = savedExpenseId,
-                        visibility = if (shareFlag) "SHARED" else "PERSONAL",
-                        householdId = if (shareFlag) state.household?.id.orEmpty() else "",
-                        title = title.ifBlank { category },
-                        amount = amount,
-                        currentCategory = category,
-                        currencySymbol = currency,
-                        paymentSummary = "$accountName • $paymentMode",
-                        transactionType = type
-                    )
-                    if (shareFlag && state.household != null) {
-                        TransactionNotificationHelper.showFamilyTransactionPushNotification(
-                            context = context,
-                            expenseId = savedExpenseId,
-                            householdId = state.household.id,
-                            householdName = state.household.name,
-                            memberName = memberName,
-                            title = title.ifBlank { category },
-                            amount = amount,
-                            category = category,
-                            currencySymbol = currency
-                        )
-                    }
-                    if (type == "EXPENSE") {
-                        evaluateAndSendFcmBudgetAlerts(
-                            context = context,
-                            category = category,
-                            additionalSpend = amount
-                        )
-                    }
-                }
+            result.onSuccess {
+                // Manual in-app entries do NOT fire system notifications (notifications are strictly for SMS transactions)
+                _statusBanner.value = "Added ${title.ifBlank { normalizedCategory }}."
             }.onFailure { err ->
                 _errorMessage.value = err.localizedMessage ?: "Failed to add transaction."
             }
@@ -1645,7 +1679,13 @@ class OneFamilyViewModel(
         targetShared: Boolean
     ) {
         viewModelScope.launch {
-            addCustomCategory(category)
+            val normalizedCategory = ExpenseCategories.normalizeCategory(category)
+            val effectiveType = if (normalizedCategory.equals("Salary & Income", ignoreCase = true)) {
+                "INCOME"
+            } else {
+                type
+            }
+            addCustomCategory(normalizedCategory)
             val tags = tagsInput.split(",", " ")
                 .map { it.trim().removePrefix("#") }
                 .filter { it.isNotBlank() }
@@ -1653,18 +1693,18 @@ class OneFamilyViewModel(
             repository.updateExpense(
                 existing = original,
                 household = uiState.value.household,
-                title = title.ifBlank { category },
+                title = title.ifBlank { normalizedCategory },
                 amount = amount,
-                type = type,
-                category = category,
+                type = effectiveType,
+                category = normalizedCategory,
                 accountName = accountName,
                 paymentMode = paymentMode,
                 tags = tags,
                 notes = notes,
                 transactionDateMillis = transactionDateMillis,
-                isShared = targetShared
+                isShared = uiState.value.householdFeatureEnabled && targetShared
             ).onSuccess {
-                _statusBanner.value = "Updated '${title.ifBlank { category }}'."
+                _statusBanner.value = "Updated '${title.ifBlank { normalizedCategory }}'."
             }.onFailure { err ->
                 _errorMessage.value = err.localizedMessage ?: "Failed to update transaction."
             }

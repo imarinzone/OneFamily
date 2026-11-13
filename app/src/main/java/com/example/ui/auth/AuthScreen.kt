@@ -7,7 +7,8 @@ import android.util.Log
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -18,7 +19,6 @@ import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -29,6 +29,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -40,22 +41,30 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Favorite
-import androidx.compose.material.icons.filled.Key
-import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
+import androidx.compose.material.icons.filled.BrightnessAuto
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.DarkMode
+import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
+import androidx.compose.material.icons.outlined.AccountCircle
+import androidx.compose.material.icons.outlined.Badge
+import androidx.compose.material.icons.outlined.Key
+import androidx.compose.material.icons.outlined.Person
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -69,13 +78,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -91,7 +98,11 @@ import com.example.R
 import com.example.data.local.LocalAccountSessionManager
 import com.example.ui.components.ReceiptDashedDividerLine
 import com.example.ui.components.ReceiptTicketCard
+import com.example.ui.components.SquircleIconBadge
 import com.example.ui.components.ThemeModeSelectorBar
+import com.example.ui.theme.AppThemeMode
+import com.example.ui.theme.ReceiptMonoFontFamily
+import com.example.ui.theme.rememberAppHapticPerformer
 import com.google.android.libraries.identity.googleid.GetGoogleIdOption
 import com.google.android.libraries.identity.googleid.GetSignInWithGoogleOption
 import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
@@ -125,7 +136,8 @@ fun attemptAutoSignIn(
     scope: CoroutineScope
 ) {
     LocalAccountSessionManager.ensureInitialized(context)
-    if (Firebase.auth.currentUser != null || LocalAccountSessionManager.getCurrentUser(context) != null) {
+    val firebaseUser = runCatching { Firebase.auth.currentUser }.getOrNull()
+    if (firebaseUser != null || LocalAccountSessionManager.getCurrentUser(context) != null) {
         onAuthSuccess()
         return
     }
@@ -141,7 +153,6 @@ fun attemptAutoSignIn(
         .setAutoSelectEnabled(true)
         .build()
 
-    // Strictly one credential option per request for API 36 responsiveness
     val request = GetCredentialRequest.Builder()
         .addCredentialOption(googleIdOption)
         .build()
@@ -179,7 +190,6 @@ fun onGoogleSignInClicked(
         return
     }
 
-    // Strictly one credential option per request (GetSignInWithGoogleOption)
     val signInOption = GetSignInWithGoogleOption.Builder(serverClientId = clientId).build()
     val request = GetCredentialRequest.Builder()
         .addCredentialOption(signInOption)
@@ -228,13 +238,14 @@ fun signOut(
                 Log.w(TAG, "Failed to clear credential state: ${e.message}")
             } finally {
                 LocalAccountSessionManager.signOut(context)
-                Firebase.auth.signOut()
+                runCatching { Firebase.auth.signOut() }
                 onSignOutComplete()
             }
         }
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AuthScreen(
     onAuthSuccess: () -> Unit
@@ -243,6 +254,7 @@ fun AuthScreen(
     val coroutineScope = rememberCoroutineScope()
     val credentialManager = remember { CredentialManager.create(context) }
     val currentThemeMode by LocalAccountSessionManager.themeMode.collectAsStateWithLifecycle()
+    val performHaptic = rememberAppHapticPerformer()
 
     var isLoading by remember { mutableStateOf(false) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
@@ -264,10 +276,98 @@ fun AuthScreen(
         )
     }
 
+    val usernameError = when {
+        usernameInput.isEmpty() -> null
+        usernameInput.trim().length < 2 -> "Username must be at least 2 characters"
+        usernameInput.trim().length > 40 -> "Username must be 40 characters or fewer"
+        else -> null
+    }
+    val passwordError = when {
+        passwordInput.isEmpty() -> null
+        passwordInput.length < 3 -> "Password must be at least 3 characters"
+        else -> null
+    }
+    val displayNameError = when {
+        !isCreateAccountMode || displayNameInput.isEmpty() -> null
+        displayNameInput.trim().length < 2 -> "Name must be at least 2 characters"
+        displayNameInput.trim().length > 50 -> "Name must be 50 characters or fewer"
+        else -> null
+    }
+
+    val performUsernameSubmit: () -> Unit = {
+        performHaptic()
+        errorMessage = null
+        when {
+            usernameInput.isBlank() -> {
+                errorMessage = "Please enter your username."
+            }
+            passwordInput.isBlank() -> {
+                errorMessage = "Please enter your password."
+            }
+            usernameError != null || passwordError != null || displayNameError != null -> {
+                errorMessage = usernameError ?: passwordError ?: displayNameError
+            }
+            else -> {
+                val result = if (isCreateAccountMode) {
+                    LocalAccountSessionManager.registerUsernamePassword(
+                        context = context,
+                        rawUsername = usernameInput,
+                        rawPassword = passwordInput,
+                        rawDisplayName = displayNameInput
+                    )
+                } else {
+                    LocalAccountSessionManager.signInWithUsernamePassword(
+                        context = context,
+                        rawUsername = usernameInput,
+                        rawPassword = passwordInput
+                    )
+                }
+                result.onSuccess {
+                    runCatching { Firebase.auth.signOut() }
+                    onAuthSuccess()
+                }.onFailure { err ->
+                    errorMessage = err.localizedMessage ?: "Login failed."
+                }
+            }
+        }
+    }
+
+    val triggerGoogleSignIn: () -> Unit = {
+        performHaptic()
+        errorMessage = null
+        isLoading = true
+        onGoogleSignInClicked(
+            context = context,
+            credentialManager = credentialManager,
+            onAuthSuccess = {
+                isLoading = false
+                onAuthSuccess()
+            },
+            onAuthError = { msg ->
+                isLoading = false
+                errorMessage = msg
+            },
+            scope = coroutineScope,
+            onAuthCancelled = {
+                isLoading = false
+            }
+        )
+    }
+
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .statusBarsPadding(),
+            .background(
+                Brush.verticalGradient(
+                    colors = listOf(
+                        MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.42f),
+                        Color.Transparent,
+                        MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.22f)
+                    )
+                )
+            )
+            .statusBarsPadding()
+            .navigationBarsPadding(),
         contentAlignment = Alignment.Center
     ) {
         Column(
@@ -275,35 +375,50 @@ fun AuthScreen(
                 .fillMaxWidth()
                 .widthIn(max = 480.dp)
                 .verticalScroll(rememberScrollState())
-                .padding(horizontal = 20.dp, vertical = 14.dp),
+                .padding(horizontal = 20.dp, vertical = 18.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            // App Branding Header (Backed by the WhatsApp-style Finance Wallpaper)
+            // Editorial Welcome Hero (inspired by "Welcome to Rhythm" reference)
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(top = 12.dp, bottom = 8.dp),
+                    .padding(top = 8.dp, bottom = 10.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 Text(
-                    text = "One Family",
-                    style = MaterialTheme.typography.headlineMedium,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.onBackground
-                )
-                Text(
-                    text = "Smart Personal & Family Expense Tracker",
-                    style = MaterialTheme.typography.bodyMedium,
+                    text = "Welcome to",
+                    style = MaterialTheme.typography.headlineSmall.copy(fontStyle = FontStyle.Italic),
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
+                Spacer(modifier = Modifier.height(2.dp))
+                Text(
+                    text = "One Family",
+                    style = MaterialTheme.typography.displayLarge,
+                    fontWeight = FontWeight.ExtraBold,
+                    color = MaterialTheme.colorScheme.onBackground
+                )
+                Spacer(modifier = Modifier.height(6.dp))
+                Surface(
+                    shape = RoundedCornerShape(50),
+                    color = MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.88f)
+                ) {
+                    Text(
+                        text = "Personal & Family Paper Receipt Ledger",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 5.dp)
+                    )
+                }
             }
 
-            Spacer(modifier = Modifier.height(14.dp))
+            Spacer(modifier = Modifier.height(10.dp))
 
-            // Material 3 Theme Selector (System / Light / Dark)
             ThemeModeSelectorBar(
                 currentMode = currentThemeMode,
-                onSelectMode = { LocalAccountSessionManager.setThemeMode(context, it) }
+                onSelectMode = {
+                    performHaptic()
+                    LocalAccountSessionManager.setThemeMode(context, it)
+                }
             )
 
             Spacer(modifier = Modifier.height(14.dp))
@@ -311,7 +426,7 @@ fun AuthScreen(
             if (errorMessage != null) {
                 Surface(
                     color = MaterialTheme.colorScheme.errorContainer,
-                    shape = RoundedCornerShape(16.dp),
+                    shape = RoundedCornerShape(18.dp),
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(bottom = 12.dp)
@@ -320,97 +435,62 @@ fun AuthScreen(
                         text = errorMessage.orEmpty(),
                         color = MaterialTheme.colorScheme.onErrorContainer,
                         style = MaterialTheme.typography.bodySmall,
-                        modifier = Modifier.padding(12.dp)
+                        modifier = Modifier.padding(14.dp)
                     )
                 }
             }
 
-            // PLAYFUL PAPER RECEIPT LOGIN CARD (Adapts to Light & Dark M3 ColorScheme)
+            // Tactile Thermal Paper Receipt Slip
             ReceiptTicketCard(
-                modifier = Modifier.shadow(elevation = 4.dp, shape = RoundedCornerShape(12.dp), clip = false),
-                containerColor = MaterialTheme.colorScheme.surface,
+                containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
                 contentColor = MaterialTheme.colorScheme.onSurface
             ) {
                 Column(
-                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 14.dp),
+                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 16.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    // Top Pill Switcher: Log In vs New Member
-                    Surface(
-                        shape = RoundedCornerShape(50),
-                        color = MaterialTheme.colorScheme.surfaceVariant,
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(4.dp)
-                        ) {
-                            val loginSelected = !isCreateAccountMode
-                            Box(
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .clip(RoundedCornerShape(50))
-                                    .background(
-                                        if (loginSelected) MaterialTheme.colorScheme.primary else Color.Transparent
-                                    )
-                                    .clickable {
-                                        isCreateAccountMode = false
-                                        errorMessage = null
+                    // Material 3 Checkmark SingleChoiceSegmentedButtonRow: Log In | New Member
+                    SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+                        val modes = listOf(false to "Log In", true to "New Member")
+                        modes.forEachIndexed { idx, (createMode, label) ->
+                            val selected = isCreateAccountMode == createMode
+                            SegmentedButton(
+                                selected = selected,
+                                onClick = {
+                                    performHaptic()
+                                    isCreateAccountMode = createMode
+                                    errorMessage = null
+                                },
+                                shape = SegmentedButtonDefaults.itemShape(index = idx, count = modes.size),
+                                icon = {
+                                    SegmentedButtonDefaults.Icon(active = selected) {
+                                        Icon(
+                                            imageVector = Icons.Default.Check,
+                                            contentDescription = null,
+                                            modifier = Modifier.size(SegmentedButtonDefaults.IconSize)
+                                        )
                                     }
-                                    .padding(vertical = 10.dp),
-                                contentAlignment = Alignment.Center
+                                }
                             ) {
                                 Text(
-                                    text = "Log In",
+                                    text = label,
                                     style = MaterialTheme.typography.labelLarge,
-                                    fontWeight = FontWeight.Bold,
-                                    color = if (loginSelected) {
-                                        MaterialTheme.colorScheme.onPrimary
-                                    } else {
-                                        MaterialTheme.colorScheme.onSurfaceVariant
-                                    }
-                                )
-                            }
-
-                            Box(
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .clip(RoundedCornerShape(50))
-                                    .background(
-                                        if (!loginSelected) MaterialTheme.colorScheme.tertiary else Color.Transparent
-                                    )
-                                    .clickable {
-                                        isCreateAccountMode = true
-                                        errorMessage = null
-                                    }
-                                    .padding(vertical = 10.dp),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Text(
-                                    text = "New Member",
-                                    style = MaterialTheme.typography.labelLarge,
-                                    fontWeight = FontWeight.Bold,
-                                    color = if (!loginSelected) {
-                                        MaterialTheme.colorScheme.onTertiary
-                                    } else {
-                                        MaterialTheme.colorScheme.onSurfaceVariant
-                                    }
+                                    fontWeight = FontWeight.Bold
                                 )
                             }
                         }
                     }
 
-                    // Single-line 1-Tap Sunny Marigold Test User Pill (test / pass)
+                    // 1-Tap Mock User Receipt Ticket Stub (test / pass)
                     Surface(
-                        shape = RoundedCornerShape(16.dp),
+                        shape = RoundedCornerShape(18.dp),
                         color = MaterialTheme.colorScheme.secondaryContainer,
-                        border = BorderStroke(1.5.dp, MaterialTheme.colorScheme.secondary),
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clip(RoundedCornerShape(16.dp))
+                            .clip(RoundedCornerShape(18.dp))
                             .clickable {
+                                performHaptic()
                                 errorMessage = null
                                 usernameInput = LocalAccountSessionManager.DEFAULT_TEST_USERNAME
                                 passwordInput = LocalAccountSessionManager.DEFAULT_TEST_PASSWORD
@@ -423,68 +503,44 @@ fun AuthScreen(
                                 res.onSuccess {
                                     runCatching { Firebase.auth.signOut() }
                                     onAuthSuccess()
-                                }
-                                    .onFailure { errorMessage = it.localizedMessage }
+                                }.onFailure { errorMessage = it.localizedMessage }
                             }
                             .testTag("quick_test_login_button")
                     ) {
                         Row(
-                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 11.dp),
+                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
                             verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.Center
+                            horizontalArrangement = Arrangement.SpaceBetween
                         ) {
-                            Box(
-                                modifier = Modifier
-                                    .size(28.dp)
-                                    .clip(CircleShape)
-                                    .background(MaterialTheme.colorScheme.secondary),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Star,
-                                    contentDescription = null,
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                SquircleIconBadge(
+                                    icon = Icons.Default.Star,
                                     tint = MaterialTheme.colorScheme.onSecondary,
-                                    modifier = Modifier.size(16.dp)
+                                    containerColor = MaterialTheme.colorScheme.secondary,
+                                    size = 34.dp,
+                                    iconSize = 18.dp
+                                )
+                                Spacer(modifier = Modifier.width(10.dp))
+                                Text(
+                                    text = "Login as Mock User",
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onSecondaryContainer
                                 )
                             }
-                            Spacer(modifier = Modifier.width(10.dp))
-                            Text(
-                                text = "Login as Mock User",
-                                style = MaterialTheme.typography.titleSmall,
-                                fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.onSecondaryContainer
-                            )
-                            Spacer(modifier = Modifier.width(6.dp))
                             Surface(
-                                shape = RoundedCornerShape(8.dp),
-                                color = MaterialTheme.colorScheme.secondary.copy(alpha = 0.2f)
+                                shape = RoundedCornerShape(50),
+                                color = MaterialTheme.colorScheme.surface.copy(alpha = 0.55f)
                             ) {
                                 Text(
                                     text = "test/pass",
-                                    style = MaterialTheme.typography.labelSmall,
+                                    style = MaterialTheme.typography.labelSmall.copy(fontFamily = ReceiptMonoFontFamily),
+                                    fontWeight = FontWeight.Bold,
                                     color = MaterialTheme.colorScheme.onSecondaryContainer,
-                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
                                 )
                             }
                         }
-                    }
-
-                    val usernameError = when {
-                        usernameInput.isEmpty() -> null
-                        usernameInput.trim().length < 2 -> "Username must be at least 2 characters"
-                        usernameInput.trim().length > 40 -> "Username must be 40 characters or fewer"
-                        else -> null
-                    }
-                    val passwordError = when {
-                        passwordInput.isEmpty() -> null
-                        passwordInput.length < 3 -> "Password must be at least 3 characters"
-                        else -> null
-                    }
-                    val displayNameError = when {
-                        !isCreateAccountMode || displayNameInput.isEmpty() -> null
-                        displayNameInput.trim().length < 2 -> "Name must be at least 2 characters"
-                        displayNameInput.trim().length > 50 -> "Name must be 50 characters or fewer"
-                        else -> null
                     }
 
                     OutlinedTextField(
@@ -503,7 +559,7 @@ fun AuthScreen(
                         } else null,
                         leadingIcon = {
                             Icon(
-                                imageVector = Icons.Default.Person,
+                                imageVector = Icons.Outlined.Person,
                                 contentDescription = null,
                                 tint = MaterialTheme.colorScheme.primary
                             )
@@ -531,7 +587,7 @@ fun AuthScreen(
                         } else null,
                         leadingIcon = {
                             Icon(
-                                imageVector = Icons.Default.Key,
+                                imageVector = Icons.Outlined.Key,
                                 contentDescription = null,
                                 tint = MaterialTheme.colorScheme.primary
                             )
@@ -555,8 +611,12 @@ fun AuthScreen(
 
                     AnimatedVisibility(
                         visible = isCreateAccountMode,
-                        enter = slideInVertically(tween(200)) { -it / 3 } + expandVertically(tween(200)) + fadeIn(tween(180)),
-                        exit = slideOutVertically(tween(160)) { -it / 3 } + shrinkVertically(tween(160)) + fadeOut(tween(140))
+                        enter = slideInVertically(
+                            spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessMediumLow)
+                        ) { -it / 3 } + expandVertically() + fadeIn(),
+                        exit = slideOutVertically(
+                            spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessMedium)
+                        ) { -it / 3 } + shrinkVertically() + fadeOut()
                     ) {
                         OutlinedTextField(
                             value = displayNameInput,
@@ -567,6 +627,13 @@ fun AuthScreen(
                                 }
                             },
                             label = { Text("Name") },
+                            leadingIcon = {
+                                Icon(
+                                    imageVector = Icons.Outlined.Badge,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary
+                                )
+                            },
                             isError = displayNameError != null,
                             supportingText = if (displayNameError != null) {
                                 { Text(displayNameError) }
@@ -579,113 +646,13 @@ fun AuthScreen(
                         )
                     }
 
-                    val submitBtnColor by animateColorAsState(
-                        targetValue = if (isCreateAccountMode) {
-                            MaterialTheme.colorScheme.tertiary
-                        } else {
-                            MaterialTheme.colorScheme.primary
-                        },
-                        animationSpec = tween(200),
-                        label = "auth_submit_btn_color"
-                    )
-
-                    Button(
-                        onClick = {
-                            errorMessage = null
-                            if (usernameInput.isBlank()) {
-                                errorMessage = "Please enter your username."
-                                return@Button
-                            }
-                            if (passwordInput.isBlank()) {
-                                errorMessage = "Please enter your password."
-                                return@Button
-                            }
-                            if (usernameError != null || passwordError != null || displayNameError != null) {
-                                errorMessage = usernameError ?: passwordError ?: displayNameError
-                                return@Button
-                            }
-                            val result = if (isCreateAccountMode) {
-                                LocalAccountSessionManager.registerUsernamePassword(
-                                    context = context,
-                                    rawUsername = usernameInput,
-                                    rawPassword = passwordInput,
-                                    rawDisplayName = displayNameInput
-                                )
-                            } else {
-                                LocalAccountSessionManager.signInWithUsernamePassword(
-                                    context = context,
-                                    rawUsername = usernameInput,
-                                    rawPassword = passwordInput
-                                )
-                            }
-                            result.onSuccess {
-                                runCatching { Firebase.auth.signOut() }
-                                onAuthSuccess()
-                            }.onFailure { err ->
-                                errorMessage = err.localizedMessage ?: "Login failed."
-                            }
-                        },
-                        enabled = !isLoading,
-                        shape = RoundedCornerShape(16.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = submitBtnColor),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(52.dp)
-                            .testTag("username_sign_in_button")
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Favorite,
-                            contentDescription = null,
-                            modifier = Modifier.size(18.dp)
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        AnimatedContent(
-                            targetState = isCreateAccountMode,
-                            transitionSpec = {
-                                if (targetState) {
-                                    (slideInHorizontally(tween(200)) { it / 2 } + fadeIn(tween(180)))
-                                        .togetherWith(slideOutHorizontally(tween(160)) { -it / 2 } + fadeOut(tween(140)))
-                                } else {
-                                    (slideInHorizontally(tween(200)) { -it / 2 } + fadeIn(tween(180)))
-                                        .togetherWith(slideOutHorizontally(tween(160)) { it / 2 } + fadeOut(tween(140)))
-                                }
-                            },
-                            label = "auth_submit_label_shift"
-                        ) { createMode ->
-                            Text(
-                                text = if (createMode) "Join Home" else "Enter Home",
-                                style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.Bold
-                            )
-                        }
-                    }
-
                     ReceiptDashedDividerLine()
 
                     OutlinedButton(
-                        onClick = {
-                            errorMessage = null
-                            isLoading = true
-                            onGoogleSignInClicked(
-                                context = context,
-                                credentialManager = credentialManager,
-                                onAuthSuccess = {
-                                    isLoading = false
-                                    onAuthSuccess()
-                                },
-                                onAuthError = { msg ->
-                                    isLoading = false
-                                    errorMessage = msg
-                                },
-                                scope = coroutineScope,
-                                onAuthCancelled = {
-                                    isLoading = false
-                                }
-                            )
-                        },
+                        onClick = triggerGoogleSignIn,
                         enabled = !isLoading,
                         shape = RoundedCornerShape(16.dp),
-                        border = BorderStroke(1.5.dp, MaterialTheme.colorScheme.outlineVariant),
+                        border = BorderStroke(1.2.dp, MaterialTheme.colorScheme.outlineVariant),
                         modifier = Modifier
                             .fillMaxWidth()
                             .height(50.dp)
@@ -698,6 +665,13 @@ fun AuthScreen(
                                 strokeWidth = 2.dp
                             )
                         } else {
+                            Icon(
+                                imageVector = Icons.Outlined.AccountCircle,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(20.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
                             Text(
                                 text = "Sign in with Google",
                                 style = MaterialTheme.typography.titleSmall,
@@ -705,6 +679,126 @@ fun AuthScreen(
                                 color = MaterialTheme.colorScheme.onSurface
                             )
                         }
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(18.dp))
+
+            // Symmetrical M3 Expressive Bottom Action Row (56dp Circle | Stadium CTA | 56dp Circle)
+            val submitBtnColor by animateColorAsState(
+                targetValue = if (isCreateAccountMode) {
+                    MaterialTheme.colorScheme.tertiary
+                } else {
+                    MaterialTheme.colorScheme.primary
+                },
+                animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
+                label = "auth_submit_btn_color"
+            )
+            val submitTextColor by animateColorAsState(
+                targetValue = if (isCreateAccountMode) {
+                    MaterialTheme.colorScheme.onTertiary
+                } else {
+                    MaterialTheme.colorScheme.onPrimary
+                },
+                animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
+                label = "auth_submit_txt_color"
+            )
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Surface(
+                    onClick = {
+                        performHaptic()
+                        val nextMode = when (currentThemeMode) {
+                            AppThemeMode.SYSTEM -> AppThemeMode.LIGHT
+                            AppThemeMode.LIGHT -> AppThemeMode.DARK
+                            AppThemeMode.DARK -> AppThemeMode.SYSTEM
+                        }
+                        LocalAccountSessionManager.setThemeMode(context, nextMode)
+                    },
+                    shape = CircleShape,
+                    color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                    contentColor = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier
+                        .size(56.dp)
+                        .testTag("auth_quick_theme_cycle_button")
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        val modeIcon = when (currentThemeMode) {
+                            AppThemeMode.LIGHT -> Icons.Default.LightMode
+                            AppThemeMode.DARK -> Icons.Default.DarkMode
+                            AppThemeMode.SYSTEM -> Icons.Default.BrightnessAuto
+                        }
+                        Icon(
+                            imageVector = modeIcon,
+                            contentDescription = "Cycle Theme Mode",
+                            modifier = Modifier.size(22.dp)
+                        )
+                    }
+                }
+
+                Button(
+                    onClick = performUsernameSubmit,
+                    enabled = !isLoading,
+                    shape = CircleShape,
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = submitBtnColor,
+                        contentColor = submitTextColor
+                    ),
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(58.dp)
+                        .testTag("username_sign_in_button")
+                ) {
+                    AnimatedContent(
+                        targetState = isCreateAccountMode,
+                        transitionSpec = {
+                            if (targetState) {
+                                (slideInHorizontally { it / 2 } + fadeIn())
+                                    .togetherWith(slideOutHorizontally { -it / 2 } + fadeOut())
+                            } else {
+                                (slideInHorizontally { -it / 2 } + fadeIn())
+                                    .togetherWith(slideOutHorizontally { it / 2 } + fadeOut())
+                            }
+                        },
+                        label = "auth_submit_label_shift"
+                    ) { createMode ->
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                text = if (createMode) "Join Home" else "Enter Home",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.ArrowForward,
+                                contentDescription = null,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
+                    }
+                }
+
+                Surface(
+                    onClick = triggerGoogleSignIn,
+                    enabled = !isLoading,
+                    shape = CircleShape,
+                    color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                    contentColor = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier
+                        .size(56.dp)
+                        .testTag("auth_quick_google_circle_button")
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(
+                            imageVector = Icons.Outlined.AccountCircle,
+                            contentDescription = "Google Sign In",
+                            modifier = Modifier.size(22.dp)
+                        )
                     }
                 }
             }

@@ -5,8 +5,6 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
-import android.os.Handler
-import android.os.Looper
 import android.provider.Telephony
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
@@ -16,29 +14,25 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.spring
-import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
-import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
 import androidx.compose.animation.slideInVertically
-import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
-import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
@@ -47,7 +41,6 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AccountBalanceWallet
@@ -56,9 +49,21 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.PieChart
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.outlined.AccountBalanceWallet
+import androidx.compose.material.icons.outlined.Home
+import androidx.compose.material.icons.outlined.PieChart
+import androidx.compose.material.icons.outlined.Settings
+import androidx.compose.material3.ExtendedFloatingActionButton
+import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.NavigationBarItemDefaults
+import androidx.compose.material3.NavigationRail
+import androidx.compose.material3.NavigationRailItem
+import androidx.compose.material3.NavigationRailItemDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -74,8 +79,6 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -103,6 +106,7 @@ import com.example.ui.components.AppDecoratedBackground
 import com.example.ui.components.MonthPeriodSelectorBar
 import com.example.ui.screens.AddAccountDialog
 import com.example.ui.screens.AddCategoryBudgetDialog
+import com.example.ui.screens.AddCustomCategoryDialog
 import com.example.ui.screens.AddTransactionDialog
 import com.example.ui.screens.AnalyticsTabScreen
 import com.example.ui.screens.BudgetsTabScreen
@@ -114,11 +118,12 @@ import com.example.ui.screens.HomeTabScreen
 import com.example.ui.screens.HouseholdTabScreen
 import com.example.ui.screens.LinkDuplicateTransactionDialog
 import com.example.ui.screens.QuickCategoryPickerDialog
-import com.example.ui.theme.OneFamilyTheme
 import com.example.ui.theme.LocalAppDimens
-import com.example.ui.viewmodel.OneFamilyViewModel
+import com.example.ui.theme.OneFamilyTheme
+import com.example.ui.theme.rememberAppHapticPerformer
 import com.example.ui.viewmodel.CategorySpendProgress
 import com.example.ui.viewmodel.DateRangePreset
+import com.example.ui.viewmodel.OneFamilyViewModel
 import com.example.ui.viewmodel.YearMonthPeriod
 import com.google.firebase.Firebase
 import com.google.firebase.auth.FirebaseAuth
@@ -208,16 +213,19 @@ fun AppNavigation(
     AnimatedContent(
         targetState = activeUid,
         transitionSpec = {
+            val spatialSpring = spring<androidx.compose.ui.unit.IntOffset>(
+                dampingRatio = Spring.DampingRatioNoBouncy,
+                stiffness = Spring.StiffnessMediumLow
+            )
+            val alphaSpring = spring<Float>(stiffness = Spring.StiffnessMedium)
             if (targetState != null && initialState == null) {
-                // Signing in: Main Shell moves UP into view
-                (slideInVertically(tween(240)) { it / 6 } + fadeIn(tween(200)))
-                    .togetherWith(slideOutVertically(tween(180)) { -it / 8 } + fadeOut(tween(150)))
+                (slideInVertically(spatialSpring) { it / 6 } + fadeIn(alphaSpring))
+                    .togetherWith(slideOutVertically(spatialSpring) { -it / 8 } + fadeOut(alphaSpring))
             } else if (targetState == null && initialState != null) {
-                // Signing out: Auth screen moves DOWN into view
-                (slideInVertically(tween(240)) { -it / 6 } + fadeIn(tween(200)))
-                    .togetherWith(slideOutVertically(tween(180)) { it / 6 } + fadeOut(tween(150)))
+                (slideInVertically(spatialSpring) { -it / 6 } + fadeIn(alphaSpring))
+                    .togetherWith(slideOutVertically(spatialSpring) { it / 6 } + fadeOut(alphaSpring))
             } else {
-                fadeIn(tween(180)).togetherWith(fadeOut(tween(150)))
+                fadeIn(alphaSpring).togetherWith(fadeOut(alphaSpring))
             }
         },
         label = "app_auth_shell_transition"
@@ -240,11 +248,18 @@ fun AppNavigation(
     }
 }
 
-enum class OneFamilyNavTab(val label: String, val icon: ImageVector) {
-    HOME("Home", Icons.Default.Home),
-    ANALYSIS("Analysis", Icons.Default.PieChart),
-    BUDGETS("Budgets", Icons.Default.AccountBalanceWallet),
-    ACCOUNT("Settings", Icons.Default.Settings)
+enum class OneFamilyNavTab(
+    val label: String,
+    val selectedIcon: ImageVector,
+    val unselectedIcon: ImageVector
+) {
+    HOME("Home", Icons.Filled.Home, Icons.Outlined.Home),
+    ANALYSIS("Analysis", Icons.Filled.PieChart, Icons.Outlined.PieChart),
+    BUDGETS("Budgets", Icons.Filled.AccountBalanceWallet, Icons.Outlined.AccountBalanceWallet),
+    ACCOUNT("Settings", Icons.Filled.Settings, Icons.Outlined.Settings);
+
+    val icon: ImageVector
+        get() = selectedIcon
 }
 
 @Composable
@@ -260,6 +275,7 @@ fun OneFamilyMainShell(
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
     val credentialManager = remember { CredentialManager.create(context) }
+    val performHaptic = rememberAppHapticPerformer()
 
     val viewModel: OneFamilyViewModel = viewModel(
         key = currentUserId,
@@ -300,6 +316,7 @@ fun OneFamilyMainShell(
     var showAddTransactionDialog by rememberSaveable { mutableStateOf(false) }
     var showAddAccountDialog by rememberSaveable { mutableStateOf(false) }
     var showEditOverallBudgetDialog by rememberSaveable { mutableStateOf(false) }
+    var showAddCustomCategoryDialog by rememberSaveable { mutableStateOf(false) }
     var showExportCsvDialog by rememberSaveable { mutableStateOf(false) }
     var pendingCsvExport by remember { mutableStateOf<Triple<String, Int, String>?>(null) }
     var editingCategoryBudget by remember { mutableStateOf<Pair<Boolean, CategorySpendProgress?>>(false to null) }
@@ -307,7 +324,6 @@ fun OneFamilyMainShell(
     var quickCategoryTransaction by remember { mutableStateOf<ExpenseTransaction?>(null) }
     var linkingDuplicateTransaction by remember { mutableStateOf<ExpenseTransaction?>(null) }
 
-    // Zero-permission Storage Access Framework launcher for saving CSV exports
     val createCsvDocumentLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.CreateDocument("text/csv")
     ) { uri ->
@@ -330,7 +346,6 @@ fun OneFamilyMainShell(
         }
     }
 
-    // Open EditTransactionDialog automatically when user taps a real-time SMS notification
     LaunchedEffect(deepLinkExpenseId, uiState.personalExpenses, uiState.sharedExpenses) {
         if (!deepLinkExpenseId.isNullOrBlank()) {
             val allTxs = uiState.sharedExpenses + uiState.personalExpenses
@@ -342,7 +357,6 @@ fun OneFamilyMainShell(
         }
     }
 
-    // Multi-permission launcher for READ_SMS, RECEIVE_SMS, and POST_NOTIFICATIONS
     val permissionsLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestMultiplePermissions()
     ) { grantMap ->
@@ -355,7 +369,6 @@ fun OneFamilyMainShell(
         }
     }
 
-    // Register ContentObserver on content://sms so any new incoming SMS is immediately parsed & notified
     DisposableEffect(context, currentUserId, hasReadSmsPermission) {
         val observer = if (hasReadSmsPermission) {
             runCatching {
@@ -405,19 +418,35 @@ fun OneFamilyMainShell(
         startOrRequestSmsSync()
     }
 
+    val navigateToTab: (OneFamilyNavTab) -> Unit = { tab ->
+        performHaptic()
+        coroutineScope.launch {
+            pagerState.animateScrollToPage(
+                page = tab.ordinal,
+                animationSpec = spring(
+                    dampingRatio = Spring.DampingRatioNoBouncy,
+                    stiffness = Spring.StiffnessMediumLow
+                )
+            )
+        }
+    }
+
     val currency = uiState.activeCurrencySymbol
 
     AnimatedContent(
         targetState = showSmsSyncScreen,
         transitionSpec = {
+            val spatialSpring = spring<androidx.compose.ui.unit.IntOffset>(
+                dampingRatio = Spring.DampingRatioNoBouncy,
+                stiffness = Spring.StiffnessMediumLow
+            )
+            val alphaSpring = spring<Float>(stiffness = Spring.StiffnessMedium)
             if (targetState) {
-                // Opening SMS Sync screen: moves UP into view
-                (slideInVertically(tween(240)) { it / 5 } + fadeIn(tween(180)))
-                    .togetherWith(slideOutVertically(tween(180)) { -it / 8 } + fadeOut(tween(140)))
+                (slideInVertically(spatialSpring) { it / 5 } + fadeIn(alphaSpring))
+                    .togetherWith(slideOutVertically(spatialSpring) { -it / 8 } + fadeOut(alphaSpring))
             } else {
-                // Continuing / skipping to Dashboard: SMS Sync moves DOWN out of view
-                (slideInVertically(tween(240)) { -it / 8 } + fadeIn(tween(180)))
-                    .togetherWith(slideOutVertically(tween(200)) { it / 5 } + fadeOut(tween(150)))
+                (slideInVertically(spatialSpring) { -it / 8 } + fadeIn(alphaSpring))
+                    .togetherWith(slideOutVertically(spatialSpring) { it / 5 } + fadeOut(alphaSpring))
             }
         },
         label = "sms_sync_dashboard_transition"
@@ -441,35 +470,30 @@ fun OneFamilyMainShell(
         } else {
             if (currentTab != OneFamilyNavTab.HOME) {
                 BackHandler {
-                    coroutineScope.launch {
-                        pagerState.animateScrollToPage(
-                            page = OneFamilyNavTab.HOME.ordinal,
-                            animationSpec = spring(
-                                dampingRatio = Spring.DampingRatioNoBouncy,
-                                stiffness = Spring.StiffnessMediumLow
-                            )
-                        )
-                    }
+                    navigateToTab(OneFamilyNavTab.HOME)
                 }
             }
 
-            Scaffold(
-                contentWindowInsets = WindowInsets.safeDrawing,
-                containerColor = Color.Transparent,
-                topBar = {
+            BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+                val isWideScreen = maxWidth >= 600.dp
+
+                val topDateSelector: @Composable () -> Unit = {
                     val isDateBarApplicable = currentTab == OneFamilyNavTab.HOME || currentTab == OneFamilyNavTab.ANALYSIS
                     AnimatedVisibility(
                         visible = isDateBarApplicable,
-                        enter = slideInVertically(tween(220)) { -it } + fadeIn(tween(180)),
-                        exit = slideOutVertically(tween(180)) { -it } + fadeOut(tween(140))
+                        enter = slideInVertically(
+                            spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessMediumLow)
+                        ) { -it } + fadeIn(),
+                        exit = slideOutVertically(
+                            spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessMedium)
+                        ) { -it } + fadeOut()
                     ) {
-                        // Top Gesture Date Bar (Year on top, Month name below; full-bar swap animation)
                         Surface(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .statusBarsPadding()
-                                .padding(vertical = dimens.itemSpacing * 0.45f),
-                            color = MaterialTheme.colorScheme.background
+                                .padding(vertical = dimens.itemSpacing * 0.35f),
+                            color = Color.Transparent
                         ) {
                             MonthPeriodSelectorBar(
                                 selectedPeriod = uiState.selectedPeriod,
@@ -494,223 +518,236 @@ fun OneFamilyMainShell(
                         }
                     }
                 }
-            ) { innerPadding ->
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(innerPadding)
-                ) {
-                    Column(modifier = Modifier.fillMaxSize()) {
-                        // Status / Error Banner (with Undo button for unwanted swipes)
-                        val bannerMsg = uiState.errorMessage ?: uiState.statusBannerMessage
-                        AnimatedVisibility(
-                            visible = bannerMsg != null,
-                            enter = slideInVertically(tween(200)) { -it / 2 } + fadeIn(tween(160)),
-                            exit = slideOutVertically(tween(180)) { -it / 2 } + fadeOut(tween(140))
-                        ) {
-                            if (bannerMsg != null) {
-                                val isErr = uiState.errorMessage != null
-                                Surface(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(
-                                            horizontal = dimens.horizontalPadding,
-                                            vertical = dimens.itemSpacing * 0.35f
-                                        )
-                                        .testTag("status_banner_surface"),
-                                    shape = RoundedCornerShape(dimens.smallCornerRadius),
-                                    color = if (isErr) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.primaryContainer
-                                ) {
-                                    Row(
-                                        modifier = Modifier.padding(
-                                            horizontal = dimens.horizontalPadding * 0.85f,
-                                            vertical = dimens.itemSpacing * 0.55f
-                                        ),
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.SpaceBetween
-                                    ) {
-                                        Text(
-                                            text = bannerMsg,
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = if (isErr) MaterialTheme.colorScheme.onErrorContainer else MaterialTheme.colorScheme.onPrimaryContainer,
-                                            modifier = Modifier.weight(1f)
-                                        )
-                                        if (uiState.canUndoLastAction && !isErr) {
-                                            Spacer(modifier = Modifier.width(dimens.horizontalPadding * 0.35f))
-                                            TextButton(
-                                                onClick = { viewModel.undoLastSwipeAction() },
-                                                modifier = Modifier.testTag("undo_swipe_action_button")
-                                            ) {
-                                                Text(
-                                                    text = "UNDO",
-                                                    style = MaterialTheme.typography.labelLarge,
-                                                    fontWeight = FontWeight.ExtraBold,
-                                                    color = MaterialTheme.colorScheme.primary
-                                                )
-                                            }
-                                        }
-                                        Spacer(modifier = Modifier.width(dimens.horizontalPadding * 0.35f))
-                                        IconButton(
-                                            onClick = { viewModel.dismissBanner() },
-                                            modifier = Modifier
-                                                .size(dimens.rowIconSize)
-                                                .testTag("dismiss_banner_button")
-                                        ) {
-                                            Icon(
-                                                imageVector = Icons.Default.Close,
-                                                contentDescription = "Dismiss",
-                                                modifier = Modifier.size(dimens.rowIconSize * 0.72f)
-                                            )
-                                        }
-                                    }
-                                }
-                            }
-                        }
 
-                        // Gesture-Enabled HorizontalPager across tabs (shifting left & right smoothly)
-                        HorizontalPager(
-                            state = pagerState,
+                val pagerContent: @Composable (Modifier) -> Unit = { pagerModifier ->
+                    HorizontalPager(
+                        state = pagerState,
+                        modifier = pagerModifier
+                    ) { pageIndex ->
+                        Box(
                             modifier = Modifier
-                                .weight(1f)
-                                .fillMaxWidth()
-                        ) { pageIndex ->
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxSize()
-                                    .graphicsLayer {
-                                        val pageOffset = ((pagerState.currentPage - pageIndex) + pagerState.currentPageOffsetFraction)
-                                        val absOffset = kotlin.math.abs(pageOffset).coerceIn(0f, 1f)
-                                        alpha = 1f - absOffset * 0.18f
-                                        val scale = 1f - absOffset * 0.03f
-                                        scaleX = scale
-                                        scaleY = scale
-                                    }
-                            ) {
-                                when (tabs[pageIndex]) {
-                                    OneFamilyNavTab.HOME -> HomeTabScreen(
-                                        uiState = uiState,
-                                        onScopeSelected = { viewModel.selectScope(it) },
-                                        onSelectDateRangePreset = { viewModel.selectDateRangePreset(it) },
-                                        onSelectCustomDateRange = { s, e -> viewModel.selectCustomDateRange(s, e) },
-                                        onEditMonthlyBudget = { showEditOverallBudgetDialog = true },
-                                        onSearchQueryChange = { viewModel.updateSearchQuery(it) },
-                                        onSelectType = { viewModel.selectTypeFilter(it) },
-                                        onSelectCategory = { viewModel.selectCategoryFilter(it) },
-                                        onSelectPaymentMode = { viewModel.selectPaymentModeFilter(it) },
-                                        onSelectAccount = { viewModel.selectAccountFilter(it) },
-                                        onSelectTag = { viewModel.selectTagFilter(it) },
-                                        onSelectMember = { viewModel.selectMemberFilter(it) },
-                                        onSelectSortOrder = { viewModel.selectSortOrder(it) },
-                                        onClearFilters = { viewModel.clearFilters() },
-                                        onScanSmsClick = triggerSmsSync,
-                                        onExportCsvClick = { showExportCsvDialog = true },
-                                        onAddTransactionClick = { showAddTransactionDialog = true },
-                                        onAcceptEmailInvite = { viewModel.acceptEmailInvitation(it) },
-                                        onEditTransaction = { editingTransaction = it },
-                                        onQuickChangeCategory = { quickCategoryTransaction = it },
-                                        onToggleTransactionPrivacy = { viewModel.toggleTransactionPrivacy(it) },
-                                        onDeleteTransaction = { viewModel.deleteTransaction(it) },
-                                        onLinkDuplicateTransaction = { linkingDuplicateTransaction = it },
-                                        onUndoLastSwipeAction = { viewModel.undoLastSwipeAction() }
-                                    )
-
-                                    OneFamilyNavTab.ANALYSIS -> AnalyticsTabScreen(
-                                        uiState = uiState,
-                                        onStepMonth = { viewModel.stepMonth(it) },
-                                        onSelectPeriod = { viewModel.selectPeriod(it) },
-                                        onSelectCategory = { viewModel.selectCategoryFilter(it) },
-                                        onEditTransaction = { editingTransaction = it },
-                                        onQuickChangeCategory = { quickCategoryTransaction = it },
-                                        onToggleTransactionPrivacy = { viewModel.toggleTransactionPrivacy(it) },
-                                        onDeleteTransaction = { viewModel.deleteTransaction(it) },
-                                        onLinkDuplicateTransaction = { linkingDuplicateTransaction = it }
-                                    )
-
-                                    OneFamilyNavTab.BUDGETS -> BudgetsTabScreen(
-                                        uiState = uiState,
-                                        onEditOverallBudgetClick = { showEditOverallBudgetDialog = true },
-                                        onAddOrEditCategoryBudgetClick = { catProg ->
-                                            editingCategoryBudget = true to catProg
-                                        }
-                                    )
-
-                                    OneFamilyNavTab.ACCOUNT -> HouseholdTabScreen(
-                                        uiState = uiState,
-                                        currentUserName = currentUserName,
-                                        currentUserEmail = currentUserEmail,
-                                        onUpdateUserName = { newName ->
-                                            viewModel.updateUserName(context, newName)
-                                        },
-                                        onUpdatePreferredCurrency = { newCurrency ->
-                                            viewModel.updatePreferredCurrency(newCurrency)
-                                        },
-                                        onAddAccountClick = { showAddAccountDialog = true },
-                                        onScanSmsClick = triggerSmsSync,
-                                        onExportCsvClick = { showExportCsvDialog = true },
-                                        onSendTestFcmAlertClick = {
-                                            viewModel.sendTestFcmPushAlert(context)
-                                        },
-                                        onRunStabilityCheckClick = {
-                                            viewModel.runCrashlyticsStabilityCheck(context)
-                                        },
-                                        onSignOutClick = {
-                                            signOut(
-                                                context = context,
-                                                credentialManager = credentialManager,
-                                                onSignOutComplete = onSignOut,
-                                                scope = coroutineScope
-                                            )
-                                        },
-                                        onCreateHousehold = { name, limit ->
-                                            viewModel.createFamilyHousehold(name, limit)
-                                        },
-                                        onJoinByCode = { code ->
-                                            viewModel.joinHouseholdWithCode(code)
-                                        },
-                                        onInviteByEmail = { email ->
-                                            viewModel.inviteFamilyMemberByEmail(email)
-                                        },
-                                        onAcceptEmailInvite = { household ->
-                                            viewModel.acceptEmailInvitation(household)
-                                        }
-                                    )
+                                .fillMaxSize()
+                                .graphicsLayer {
+                                    val pageOffset = ((pagerState.currentPage - pageIndex) + pagerState.currentPageOffsetFraction)
+                                    val absOffset = kotlin.math.abs(pageOffset).coerceIn(0f, 1f)
+                                    alpha = 1f - absOffset * 0.16f
+                                    val scale = 1f - absOffset * 0.025f
+                                    scaleX = scale
+                                    scaleY = scale
                                 }
+                        ) {
+                            when (tabs[pageIndex]) {
+                                OneFamilyNavTab.HOME -> HomeTabScreen(
+                                    uiState = uiState,
+                                    onScopeSelected = { viewModel.selectScope(it) },
+                                    onSelectDateRangePreset = { viewModel.selectDateRangePreset(it) },
+                                    onSelectCustomDateRange = { s, e -> viewModel.selectCustomDateRange(s, e) },
+                                    onEditMonthlyBudget = { navigateToTab(OneFamilyNavTab.BUDGETS) },
+                                    onSearchQueryChange = { viewModel.updateSearchQuery(it) },
+                                    onSelectType = { viewModel.selectTypeFilter(it) },
+                                    onSelectCategory = { viewModel.selectCategoryFilter(it) },
+                                    onSelectPaymentMode = { viewModel.selectPaymentModeFilter(it) },
+                                    onSelectAccount = { viewModel.selectAccountFilter(it) },
+                                    onSelectTag = { viewModel.selectTagFilter(it) },
+                                    onSelectMember = { viewModel.selectMemberFilter(it) },
+                                    onSelectSortOrder = { viewModel.selectSortOrder(it) },
+                                    onClearFilters = { viewModel.clearFilters() },
+                                    onScanSmsClick = triggerSmsSync,
+                                    onExportCsvClick = { showExportCsvDialog = true },
+                                    onAddTransactionClick = { showAddTransactionDialog = true },
+                                    onAcceptEmailInvite = { viewModel.acceptEmailInvitation(it) },
+                                    onEditTransaction = { editingTransaction = it },
+                                    onQuickChangeCategory = { quickCategoryTransaction = it },
+                                    onToggleTransactionPrivacy = { viewModel.toggleTransactionPrivacy(it) },
+                                    onDeleteTransaction = { viewModel.deleteTransaction(it) },
+                                    onLinkDuplicateTransaction = { linkingDuplicateTransaction = it },
+                                    onUndoLastSwipeAction = { viewModel.undoLastSwipeAction() }
+                                )
+
+                                OneFamilyNavTab.ANALYSIS -> AnalyticsTabScreen(
+                                    uiState = uiState,
+                                    onStepMonth = { viewModel.stepMonth(it) },
+                                    onSelectPeriod = { viewModel.selectPeriod(it) },
+                                    onSelectCategory = { viewModel.selectCategoryFilter(it) },
+                                    onEditTransaction = { editingTransaction = it },
+                                    onQuickChangeCategory = { quickCategoryTransaction = it },
+                                    onToggleTransactionPrivacy = { viewModel.toggleTransactionPrivacy(it) },
+                                    onDeleteTransaction = { viewModel.deleteTransaction(it) },
+                                    onLinkDuplicateTransaction = { linkingDuplicateTransaction = it }
+                                )
+
+                                OneFamilyNavTab.BUDGETS -> BudgetsTabScreen(
+                                    uiState = uiState,
+                                    onEditOverallBudgetClick = { showEditOverallBudgetDialog = true },
+                                    onSaveCategoryBudgetInline = { category, limit ->
+                                        viewModel.saveCategoryBudget(
+                                            category = category,
+                                            monthlyLimit = limit,
+                                            alertThresholdPercent = 80,
+                                            isShared = uiState.householdFeatureEnabled &&
+                                                uiState.selectedScope != BudgetScope.PERSONAL_ONLY
+                                        )
+                                    },
+                                    onAddCustomCategoryClick = { showAddCustomCategoryDialog = true }
+                                )
+
+                                OneFamilyNavTab.ACCOUNT -> HouseholdTabScreen(
+                                    uiState = uiState,
+                                    currentUserName = currentUserName,
+                                    currentUserEmail = currentUserEmail,
+                                    onUpdateUserName = { newName ->
+                                        viewModel.updateUserName(context, newName)
+                                    },
+                                    onUpdatePreferredCurrency = { newCurrency ->
+                                        viewModel.updatePreferredCurrency(newCurrency)
+                                    },
+                                    onAddAccountClick = { showAddAccountDialog = true },
+                                    onScanSmsClick = triggerSmsSync,
+                                    onExportCsvClick = { showExportCsvDialog = true },
+                                    onSendTestFcmAlertClick = {
+                                        viewModel.sendTestFcmPushAlert(context)
+                                    },
+                                    onRunStabilityCheckClick = {
+                                        viewModel.runCrashlyticsStabilityCheck(context)
+                                    },
+                                    onSignOutClick = {
+                                        signOut(
+                                            context = context,
+                                            credentialManager = credentialManager,
+                                            onSignOutComplete = onSignOut,
+                                            scope = coroutineScope
+                                        )
+                                    },
+                                    onCreateHousehold = { name, limit ->
+                                        viewModel.createFamilyHousehold(name, limit)
+                                    },
+                                    onJoinByCode = { code ->
+                                        viewModel.joinHouseholdWithCode(code)
+                                    },
+                                    onInviteByEmail = { email ->
+                                        viewModel.inviteFamilyMemberByEmail(email)
+                                    },
+                                    onAcceptEmailInvite = { household ->
+                                        viewModel.acceptEmailInvitation(household)
+                                    }
+                                )
                             }
                         }
                     }
+                }
 
-                    // Floating Bottom Navigation Pill Bar (Add button shown ONLY on the Home Screen)
-                    FloatingBottomNavBar(
-                        tabs = tabs,
-                        selectedTab = currentTab,
-                        showAddButton = currentTab == OneFamilyNavTab.HOME,
-                        onSelectTab = { tab ->
-                            coroutineScope.launch {
-                                pagerState.animateScrollToPage(
-                                    page = tab.ordinal,
-                                    animationSpec = spring(
-                                        dampingRatio = Spring.DampingRatioNoBouncy,
-                                        stiffness = Spring.StiffnessMediumLow
-                                    )
+                val bannerMsg = uiState.errorMessage ?: uiState.statusBannerMessage
+                val isBannerErr = uiState.errorMessage != null
+
+                if (isWideScreen) {
+                    Row(modifier = Modifier.fillMaxSize()) {
+                        M3DockedNavigationRail(
+                            tabs = tabs,
+                            selectedTab = currentTab,
+                            showAddButton = currentTab == OneFamilyNavTab.HOME,
+                            onSelectTab = navigateToTab,
+                            onAddClick = {
+                                performHaptic()
+                                showAddTransactionDialog = true
+                            }
+                        )
+                        Scaffold(
+                            modifier = Modifier.weight(1f),
+                            contentWindowInsets = WindowInsets.safeDrawing,
+                            containerColor = Color.Transparent,
+                            topBar = topDateSelector,
+                            bottomBar = {
+                                ContextualFloatingStatusPill(
+                                    message = bannerMsg,
+                                    isError = isBannerErr,
+                                    canUndo = uiState.canUndoLastAction && !isBannerErr,
+                                    onUndo = { viewModel.undoLastSwipeAction() },
+                                    onDismiss = { viewModel.dismissBanner() },
+                                    modifier = Modifier.navigationBarsPadding()
+                                )
+                            }
+                        ) { innerPadding ->
+                            pagerContent(
+                                Modifier
+                                    .fillMaxSize()
+                                    .padding(innerPadding)
+                            )
+                        }
+                    }
+                } else {
+                    Scaffold(
+                        contentWindowInsets = WindowInsets.safeDrawing,
+                        containerColor = Color.Transparent,
+                        topBar = topDateSelector,
+                        floatingActionButton = {
+                            AnimatedVisibility(
+                                visible = currentTab == OneFamilyNavTab.HOME,
+                                enter = scaleIn(
+                                    spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessMedium)
+                                ) + fadeIn(),
+                                exit = scaleOut(
+                                    spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessMedium)
+                                ) + fadeOut()
+                            ) {
+                                ExtendedFloatingActionButton(
+                                    onClick = {
+                                        performHaptic()
+                                        showAddTransactionDialog = true
+                                    },
+                                    icon = {
+                                        Icon(
+                                            imageVector = Icons.Filled.Add,
+                                            contentDescription = "Add Receipt"
+                                        )
+                                    },
+                                    text = {
+                                        Text(
+                                            text = "Add Receipt",
+                                            style = MaterialTheme.typography.labelLarge,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                    },
+                                    shape = RoundedCornerShape(20.dp),
+                                    containerColor = MaterialTheme.colorScheme.primaryContainer,
+                                    contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                                    modifier = Modifier.testTag("fab_add_expense")
                                 )
                             }
                         },
-                        onAddClick = { showAddTransactionDialog = true },
-                        modifier = Modifier
-                            .align(Alignment.BottomCenter)
-                            .navigationBarsPadding()
-                            .padding(bottom = dimens.itemSpacing)
-                    )
+                        bottomBar = {
+                            Column(modifier = Modifier.fillMaxWidth()) {
+                                ContextualFloatingStatusPill(
+                                    message = bannerMsg,
+                                    isError = isBannerErr,
+                                    canUndo = uiState.canUndoLastAction && !isBannerErr,
+                                    onUndo = { viewModel.undoLastSwipeAction() },
+                                    onDismiss = { viewModel.dismissBanner() }
+                                )
+                                M3DockedNavigationBar(
+                                    tabs = tabs,
+                                    selectedTab = currentTab,
+                                    onSelectTab = navigateToTab
+                                )
+                            }
+                        }
+                    ) { innerPadding ->
+                        pagerContent(
+                            Modifier
+                                .fillMaxSize()
+                                .padding(innerPadding)
+                        )
+                    }
                 }
             }
         }
     }
 
-    // Dialogs & Sheets
+    val activeHasHousehold = uiState.householdFeatureEnabled && uiState.household != null
+
     if (showAddTransactionDialog) {
         AddTransactionDialog(
-            hasHousehold = uiState.household != null,
-            defaultShared = uiState.selectedScope != BudgetScope.PERSONAL_ONLY,
+            hasHousehold = activeHasHousehold,
+            defaultShared = activeHasHousehold && uiState.selectedScope != BudgetScope.PERSONAL_ONLY,
             accounts = uiState.accounts,
             availableCategories = uiState.availableCategories,
             currencySymbol = currency,
@@ -738,7 +775,7 @@ fun OneFamilyMainShell(
         val txToEdit = editingTransaction!!
         EditTransactionDialog(
             transaction = txToEdit,
-            hasHousehold = uiState.household != null,
+            hasHousehold = activeHasHousehold,
             availableCategories = uiState.availableCategories,
             currencySymbol = currency,
             onDismiss = { editingTransaction = null },
@@ -803,8 +840,8 @@ fun OneFamilyMainShell(
     if (editingCategoryBudget.first) {
         AddCategoryBudgetDialog(
             initialProgress = editingCategoryBudget.second,
-            hasHousehold = uiState.household != null,
-            defaultShared = uiState.selectedScope != BudgetScope.PERSONAL_ONLY,
+            hasHousehold = activeHasHousehold,
+            defaultShared = activeHasHousehold && uiState.selectedScope != BudgetScope.PERSONAL_ONLY,
             currencySymbol = currency,
             onDismiss = { editingCategoryBudget = false to null },
             onSave = { category, limit, alertPct, isShared ->
@@ -814,10 +851,29 @@ fun OneFamilyMainShell(
         )
     }
 
+    if (showAddCustomCategoryDialog) {
+        AddCustomCategoryDialog(
+            hasHousehold = activeHasHousehold,
+            defaultShared = activeHasHousehold && uiState.selectedScope != BudgetScope.PERSONAL_ONLY,
+            currencySymbol = currency,
+            onDismiss = { showAddCustomCategoryDialog = false },
+            onSave = { categoryName, optionalLimit, alertPct, isShared ->
+                viewModel.addCustomCategoryWithOptionalBudget(
+                    categoryName = categoryName,
+                    optionalMonthlyLimit = optionalLimit ?: 0.0,
+                    alertThresholdPercent = alertPct,
+                    isShared = isShared,
+                    context = context
+                )
+                showAddCustomCategoryDialog = false
+            }
+        )
+    }
+
     if (showEditOverallBudgetDialog) {
         EditOverallBudgetDialog(
             personalBudget = uiState.userProfile?.personalMonthlyBudget ?: 0.0,
-            householdBudget = uiState.household?.monthlyBudgetLimit,
+            householdBudget = if (uiState.householdFeatureEnabled) uiState.household?.monthlyBudgetLimit else null,
             currencySymbol = currency,
             onDismiss = { showEditOverallBudgetDialog = false },
             onSave = { pLimit, hLimit, curr ->
@@ -878,94 +934,223 @@ fun OneFamilyMainShell(
     }
 }
 
+/**
+ * Floating contextual Undo / Status pill hovering right above the docked M3 NavigationBar
+ * (inspired by Screenshot 2 & Screenshot 3's floating mini contextual bar).
+ */
 @Composable
-private fun FloatingBottomNavBar(
-    tabs: List<OneFamilyNavTab>,
-    selectedTab: OneFamilyNavTab,
-    showAddButton: Boolean,
-    onSelectTab: (OneFamilyNavTab) -> Unit,
-    onAddClick: () -> Unit,
+private fun ContextualFloatingStatusPill(
+    message: String?,
+    isError: Boolean,
+    canUndo: Boolean,
+    onUndo: () -> Unit,
+    onDismiss: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val dimens = LocalAppDimens.current
-    Surface(
-        modifier = modifier
-            .shadow(
-                elevation = 16.dp,
-                shape = RoundedCornerShape(50),
-                ambientColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.25f),
-                spotColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)
-            )
-            .testTag("floating_bottom_nav_bar"),
-        shape = RoundedCornerShape(50),
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.96f),
-        border = BorderStroke(
-            width = 1.dp,
-            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f)
-        )
+    val performHaptic = rememberAppHapticPerformer()
+    AnimatedVisibility(
+        visible = message != null,
+        enter = slideInVertically(
+            spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessMediumLow)
+        ) { it / 2 } + fadeIn(),
+        exit = slideOutVertically(
+            spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessMedium)
+        ) { it / 2 } + fadeOut()
     ) {
-        Row(
-            modifier = Modifier.padding(
-                horizontal = dimens.horizontalPadding * 0.6f,
-                vertical = dimens.itemSpacing * 0.65f
-            ),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(dimens.horizontalPadding * 0.45f)
-        ) {
-            tabs.forEach { tab ->
-                val isSelected = selectedTab == tab
-                val bgColor by animateColorAsState(
-                    targetValue = if (isSelected) MaterialTheme.colorScheme.primary else Color.Transparent,
-                    label = "floating_nav_bg"
-                )
-                val contentColor by animateColorAsState(
-                    targetValue = if (isSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
-                    label = "floating_nav_fg"
-                )
-
-                Box(
-                    modifier = Modifier
-                        .height(dimens.navPillHeight)
-                        .width(dimens.navItemWidth)
-                        .clip(RoundedCornerShape(50))
-                        .background(bgColor)
-                        .clickable { onSelectTab(tab) }
-                        .testTag("nav_tab_${tab.name.lowercase()}"),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        imageVector = tab.icon,
-                        contentDescription = tab.label,
-                        tint = contentColor,
-                        modifier = Modifier.size(dimens.rowIconSize)
-                    )
-                }
-            }
-
-            // Show the Add button ONLY on the Home Screen (shifts right/left cleanly)
-            AnimatedVisibility(
-                visible = showAddButton,
-                enter = slideInHorizontally(tween(200)) { it / 2 } + fadeIn(tween(180)),
-                exit = slideOutHorizontally(tween(160)) { it / 2 } + fadeOut(tween(140))
+        if (message != null) {
+            Surface(
+                modifier = modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = dimens.horizontalPadding, vertical = 6.dp)
+                    .testTag("status_banner_surface"),
+                shape = RoundedCornerShape(22.dp),
+                color = if (isError) {
+                    MaterialTheme.colorScheme.errorContainer
+                } else {
+                    MaterialTheme.colorScheme.tertiaryContainer
+                },
+                tonalElevation = 4.dp
             ) {
-                Surface(
-                    onClick = onAddClick,
-                    modifier = Modifier
-                        .size(dimens.navPillHeight)
-                        .testTag("fab_add_expense"),
-                    shape = CircleShape,
-                    color = MaterialTheme.colorScheme.tertiaryContainer,
-                    contentColor = MaterialTheme.colorScheme.onTertiaryContainer
+                Row(
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
                 ) {
-                    Box(contentAlignment = Alignment.Center) {
+                    Text(
+                        text = message,
+                        style = MaterialTheme.typography.bodySmall,
+                        fontWeight = FontWeight.Medium,
+                        color = if (isError) {
+                            MaterialTheme.colorScheme.onErrorContainer
+                        } else {
+                            MaterialTheme.colorScheme.onTertiaryContainer
+                        },
+                        modifier = Modifier.weight(1f)
+                    )
+                    if (canUndo) {
+                        Spacer(modifier = Modifier.width(6.dp))
+                        TextButton(
+                            onClick = {
+                                performHaptic()
+                                onUndo()
+                            },
+                            modifier = Modifier.testTag("undo_swipe_action_button")
+                        ) {
+                            Text(
+                                text = "UNDO",
+                                style = MaterialTheme.typography.labelLarge,
+                                fontWeight = FontWeight.ExtraBold,
+                                color = MaterialTheme.colorScheme.onTertiaryContainer
+                            )
+                        }
+                    }
+                    IconButton(
+                        onClick = {
+                            performHaptic()
+                            onDismiss()
+                        },
+                        modifier = Modifier
+                            .size(36.dp)
+                            .testTag("dismiss_banner_button")
+                    ) {
                         Icon(
-                            imageVector = Icons.Default.Add,
-                            contentDescription = "Add",
-                            modifier = Modifier.size(dimens.rowIconSize)
+                            imageVector = Icons.Filled.Close,
+                            contentDescription = "Dismiss",
+                            tint = if (isError) {
+                                MaterialTheme.colorScheme.onErrorContainer
+                            } else {
+                                MaterialTheme.colorScheme.onTertiaryContainer
+                            },
+                            modifier = Modifier.size(18.dp)
                         )
                     }
                 }
             }
         }
+    }
+}
+
+/**
+ * Rounded 28dp top-corner docked M3 NavigationBar with stadium active indicator pills,
+ * Filled selected icons, Outlined unselected icons, and crisp labels.
+ */
+@Composable
+private fun M3DockedNavigationBar(
+    tabs: List<OneFamilyNavTab>,
+    selectedTab: OneFamilyNavTab,
+    onSelectTab: (OneFamilyNavTab) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        modifier = modifier
+            .fillMaxWidth()
+            .testTag("floating_bottom_nav_bar"),
+        shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
+        color = MaterialTheme.colorScheme.surfaceContainer,
+        tonalElevation = 2.dp
+    ) {
+        NavigationBar(
+            containerColor = Color.Transparent,
+            tonalElevation = 0.dp
+        ) {
+            tabs.forEach { tab ->
+                val isSelected = selectedTab == tab
+                NavigationBarItem(
+                    selected = isSelected,
+                    onClick = { onSelectTab(tab) },
+                    icon = {
+                        Icon(
+                            imageVector = if (isSelected) tab.selectedIcon else tab.unselectedIcon,
+                            contentDescription = tab.label
+                        )
+                    },
+                    label = {
+                        Text(
+                            text = tab.label,
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
+                        )
+                    },
+                    colors = NavigationBarItemDefaults.colors(
+                        selectedIconColor = MaterialTheme.colorScheme.onSecondaryContainer,
+                        selectedTextColor = MaterialTheme.colorScheme.onSurface,
+                        indicatorColor = MaterialTheme.colorScheme.secondaryContainer,
+                        unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                        unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant
+                    ),
+                    modifier = Modifier.testTag("nav_tab_${tab.name.lowercase()}")
+                )
+            }
+        }
+    }
+}
+
+/**
+ * Adaptive Material 3 NavigationRail for tablets and unfolded foldables (>= 600.dp).
+ */
+@Composable
+private fun M3DockedNavigationRail(
+    tabs: List<OneFamilyNavTab>,
+    selectedTab: OneFamilyNavTab,
+    showAddButton: Boolean,
+    onSelectTab: (OneFamilyNavTab) -> Unit,
+    onAddClick: () -> Unit
+) {
+    NavigationRail(
+        containerColor = MaterialTheme.colorScheme.surfaceContainer,
+        modifier = Modifier
+            .fillMaxHeight()
+            .statusBarsPadding()
+            .testTag("floating_bottom_nav_bar"),
+        header = {
+            AnimatedVisibility(visible = showAddButton) {
+                FloatingActionButton(
+                    onClick = onAddClick,
+                    shape = RoundedCornerShape(18.dp),
+                    containerColor = MaterialTheme.colorScheme.primaryContainer,
+                    contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                    modifier = Modifier
+                        .padding(vertical = 8.dp)
+                        .testTag("fab_add_expense")
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Add,
+                        contentDescription = "Add Receipt"
+                    )
+                }
+            }
+        }
+    ) {
+        Spacer(modifier = Modifier.weight(1f))
+        tabs.forEach { tab ->
+            val isSelected = selectedTab == tab
+            NavigationRailItem(
+                selected = isSelected,
+                onClick = { onSelectTab(tab) },
+                icon = {
+                    Icon(
+                        imageVector = if (isSelected) tab.selectedIcon else tab.unselectedIcon,
+                        contentDescription = tab.label
+                    )
+                },
+                label = {
+                    Text(
+                        text = tab.label,
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
+                    )
+                },
+                colors = NavigationRailItemDefaults.colors(
+                    selectedIconColor = MaterialTheme.colorScheme.onSecondaryContainer,
+                    selectedTextColor = MaterialTheme.colorScheme.onSurface,
+                    indicatorColor = MaterialTheme.colorScheme.secondaryContainer,
+                    unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                    unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant
+                ),
+                modifier = Modifier.testTag("nav_tab_${tab.name.lowercase()}")
+            )
+        }
+        Spacer(modifier = Modifier.weight(1f))
     }
 }

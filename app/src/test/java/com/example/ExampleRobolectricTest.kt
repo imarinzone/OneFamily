@@ -43,12 +43,20 @@ import com.example.ui.components.MonthlyBarGraph
 import com.example.ui.components.categoryIcon
 import com.example.ui.components.formatCompactCurrency
 import com.example.ui.components.formatCurrency
+import androidx.compose.ui.test.performTextReplacement
+import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.swipeRight
+import com.example.ui.screens.AddCustomCategoryDialog
+import com.example.ui.screens.AddTransactionDialog
+import com.example.ui.screens.AnalyticsTabScreen
+import com.example.ui.screens.BudgetsTabScreen
 import com.example.ui.screens.ExportTransactionsCsvDialog
 import com.example.ui.screens.FirstTimeSmsSyncScreen
 import com.example.ui.screens.HomeTabScreen
 import com.example.ui.screens.HouseholdTabScreen
 import com.example.ui.screens.LinkDuplicateTransactionDialog
 import com.example.ui.screens.mergeSelectedDatePreservingTime
+import com.example.ui.viewmodel.CategorySpendProgress
 import com.ritesh.parser.core.bank.BankParserFactory
 import com.example.ui.screens.mergeSelectedTimePreservingDate
 import com.example.ui.screens.sanitizeDecimalInput
@@ -59,11 +67,15 @@ import com.example.ui.screens.validateEmailAddress
 import com.example.ui.screens.validateHouseholdJoinCode
 import com.example.ui.screens.validateNonNegativeAmount
 import com.example.ui.screens.validatePositiveAmount
+import androidx.compose.ui.graphics.Color
+import com.example.ui.auth.AuthScreen
 import com.example.ui.theme.AppPrimaryColorOption
 import com.example.ui.theme.AppThemeMode
 import com.example.ui.theme.KiwiPrimaryDark
 import com.example.ui.theme.KiwiPrimaryLight
 import com.example.ui.theme.OneFamilyTheme
+import com.example.ui.theme.PlusJakartaSansFontFamily
+import com.example.ui.theme.ReceiptMonoFontFamily
 import com.example.ui.theme.buildResponsiveTypography
 import com.example.ui.theme.resolveAppColorScheme
 import com.example.ui.viewmodel.DateRangeFilterUtils
@@ -1778,7 +1790,8 @@ class ExampleRobolectricTest {
         // 3. Selecting the second candidate dynamically updates the top Selected SMS verification box
         composeTestRule.onNodeWithTag("link_candidate_row_dup_cand_2").performScrollTo().performClick()
         composeTestRule.waitForIdle()
-        composeTestRule.onNodeWithText("TailMarkerCandidateTwoFullText883", substring = true).assertIsDisplayed()
+        composeTestRule.onNodeWithTag("link_duplicate_selected_sms_box").performScrollTo().assertIsDisplayed()
+        composeTestRule.onNodeWithText("TailMarkerCandidateTwoFullText883", substring = true).performScrollTo().assertIsDisplayed()
     }
 
     @Test
@@ -1875,6 +1888,548 @@ class ExampleRobolectricTest {
         assertFalse(notifTitle.contains("7308080808"))
         assertFalse(notifTitle.contains("18002586161"))
         assertTrue(notifBody.contains("Food & Dining"))
+    }
+
+    @Test
+    fun `test BudgetsTabScreen supports inline category budget editing, removes duplicate trend graph, and supports custom category with optional budget`() {
+        var savedCategoryAndLimit: Pair<String, Double>? = null
+        var showCustomDialog by mutableStateOf(false)
+        var createdCustomCategory: Pair<String, Double?>? = null
+
+        var uiState by mutableStateOf(
+            OneFamilyDashboardUiState(
+                isLoading = false,
+                userProfile = UserProfile(
+                    uid = "local_user_budget",
+                    displayName = "Alex",
+                    personalMonthlyBudget = 45000.0,
+                    currencySymbol = "₹"
+                ),
+                categoryProgressList = listOf(
+                    CategorySpendProgress(
+                        category = "Groceries",
+                        spent = 4200.0,
+                        limit = 0.0,
+                        alertThresholdPercent = 80,
+                        budgetDoc = null,
+                        memberBreakdown = emptyMap()
+                    ),
+                    CategorySpendProgress(
+                        category = "Dining",
+                        spent = 2500.0,
+                        limit = 6000.0,
+                        alertThresholdPercent = 80,
+                        budgetDoc = null,
+                        memberBreakdown = emptyMap()
+                    )
+                ),
+                monthlyTrendBars = listOf(
+                    MonthlySpendBar(
+                        period = YearMonthPeriod(2026, 10),
+                        label = "Nov",
+                        expenseTotal = 6700.0,
+                        incomeTotal = 85000.0,
+                        isSelected = true
+                    )
+                )
+            )
+        )
+
+        composeTestRule.setContent {
+            OneFamilyTheme {
+                BudgetsTabScreen(
+                    uiState = uiState,
+                    onEditOverallBudgetClick = {},
+                    onSaveCategoryBudgetInline = { category, limit ->
+                        savedCategoryAndLimit = category to limit
+                        uiState = uiState.copy(
+                            categoryProgressList = uiState.categoryProgressList.map {
+                                if (it.category == category) it.copy(limit = limit) else it
+                            }
+                        )
+                    },
+                    onAddCustomCategoryClick = { showCustomDialog = true }
+                )
+                if (showCustomDialog) {
+                    AddCustomCategoryDialog(
+                        hasHousehold = false,
+                        defaultShared = false,
+                        currencySymbol = "₹",
+                        onDismiss = { showCustomDialog = false },
+                        onSave = { catName, optionalLimit, _, _ ->
+                            createdCustomCategory = catName to optionalLimit
+                            showCustomDialog = false
+                        }
+                    )
+                }
+            }
+        }
+        composeTestRule.waitForIdle()
+
+        // 1. Duplicate MonthlyBarGraph must NOT be rendered on BudgetsTabScreen
+        assertTrue(composeTestRule.onAllNodesWithTag("monthly_bar_graph_scroll_container").fetchSemanticsNodes().isEmpty())
+        assertTrue(composeTestRule.onAllNodesWithTag("salary_income_trend_canvas").fetchSemanticsNodes().isEmpty())
+
+        // 2. User taps Set Budget on Groceries -> expands inline numeric field inside the card without opening any modal screen
+        composeTestRule.onNodeWithTag("budgets_tab_list")
+            .performScrollToNode(hasTestTag("category_budget_card_groceries"))
+        composeTestRule.onNodeWithTag("set_category_budget_groceries").performClick()
+        composeTestRule.waitForIdle()
+
+        assertTrue(composeTestRule.onAllNodesWithTag("add_custom_category_dialog").fetchSemanticsNodes().isEmpty())
+        assertTrue(composeTestRule.onAllNodesWithTag("category_budget_limit_input").fetchSemanticsNodes().isEmpty())
+        composeTestRule.onNodeWithTag("inline_category_budget_input_groceries").assertIsDisplayed()
+
+        composeTestRule.onNodeWithTag("inline_category_budget_input_groceries")
+            .performTextReplacement("12000")
+        composeTestRule.waitForIdle()
+
+        composeTestRule.onNodeWithTag("inline_save_category_budget_groceries").performClick()
+        composeTestRule.waitForIdle()
+        assertEquals("Groceries" to 12000.0, savedCategoryAndLimit)
+
+        // 3. Tapping "Custom Category" opens AddCustomCategoryDialog where Monthly Budget is optional
+        composeTestRule.onNodeWithTag("budgets_tab_list")
+            .performScrollToNode(hasTestTag("add_category_budget_button"))
+        composeTestRule.onNodeWithTag("add_category_budget_button").performClick()
+        composeTestRule.waitForIdle()
+
+        composeTestRule.onNodeWithTag("add_custom_category_dialog").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("custom_category_name_input").performTextReplacement("Pet Care")
+        // Leave optional budget blank -> saves with null optional limit
+        composeTestRule.onNodeWithTag("save_custom_category_button").performClick()
+        composeTestRule.waitForIdle()
+        assertEquals("Pet Care" to null, createdCustomCategory)
+    }
+
+    @Test
+    fun `test manual in-app expense addition does not trigger notification while incoming SMS does`() = runBlocking {
+        val app = ApplicationProvider.getApplicationContext<Application>()
+        shadowOf(app).grantPermissions(Manifest.permission.POST_NOTIFICATIONS)
+        val nm = app.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        nm.cancelAll()
+
+        LocalAccountSessionManager.signInWithUsernamePassword(app, "test", "pass")
+        val user = LocalAccountSessionManager.getCurrentUser(app)!!
+        LocalAccountSessionManager.setHouseholdFeatureEnabled(app, false)
+
+        val repo = OneFamilyRepository(app)
+        repo.ensureUserProfile(user.displayName, user.email)
+        val smsReader = SmsInboxReader(app)
+        val vm = OneFamilyViewModel(
+            repository = repo,
+            smsInboxReader = smsReader,
+            currentUserId = user.uid,
+            currentUserName = user.displayName,
+            currentUserEmail = user.email
+        )
+
+        val uniqueManualTitle = "Manual Coffee Shop ${System.currentTimeMillis()}"
+        // 1. Add manual expense in-app -> must NOT trigger any system notification
+        vm.addManualTransaction(
+            title = uniqueManualTitle,
+            amount = 280.0,
+            type = "EXPENSE",
+            category = "Food & Dining",
+            accountName = "Cash Wallet",
+            paymentMode = "CASH",
+            tagsInput = "",
+            notes = "",
+            isShared = false,
+            transactionDateMillis = System.currentTimeMillis(),
+            context = app
+        )
+
+        // Wait briefly for IO coroutine to complete
+        val savedManual = kotlinx.coroutines.withTimeout(3000L) {
+            repo.observePersonalExpenses(user.uid).first { list -> list.any { it.title == uniqueManualTitle } }
+        }
+        assertTrue(savedManual.any { it.title == uniqueManualTitle })
+        assertTrue(
+            "Manual in-app expense entry must NOT fire a system notification",
+            shadowOf(nm).allNotifications.isEmpty()
+        )
+
+        // 2. Incoming SMS transaction -> MUST fire a system notification
+        val refNo = System.currentTimeMillis() % 1_000_000_000L
+        val smsRow = RawSmsRow(
+            sender = "VM-HDFCBK",
+            body = "Amt Sent Rs.740.00\nFrom HDFC Bank A/C *4821\nTo FreshMart Grocery\nOn 12-11-26 Ref $refNo",
+            timestamp = System.currentTimeMillis()
+        )
+        val candidates = smsReader.parseSmsBatchesInParallel(
+            rawRows = listOf(smsRow),
+            existingSignatures = emptySet()
+        )
+        assertEquals(1, candidates.size)
+        TransactionNotificationHelper.processIncomingSmsCandidateAndNotify(
+            context = app,
+            candidate = candidates.first()
+        )
+        assertTrue(
+            "Incoming SMS transaction must fire a system notification",
+            shadowOf(nm).allNotifications.isNotEmpty()
+        )
+    }
+
+    @Test
+    fun `test AnalyticsTabScreen graph scrolls without changing month, tap selects month and shows transactions, and salary income shows in graph`() {
+        val octPeriod = YearMonthPeriod(2026, 9) // Oct 2026 (0-indexed month = 9)
+        val novPeriod = YearMonthPeriod(2026, 10) // Nov 2026 (0-indexed month = 10)
+        val octMillis = Calendar.getInstance().apply {
+            set(2026, Calendar.OCTOBER, 15, 11, 0, 0)
+        }.timeInMillis
+        val novMillis = Calendar.getInstance().apply {
+            set(2026, Calendar.NOVEMBER, 10, 14, 30, 0)
+        }.timeInMillis
+
+        val octTx = ExpenseTransaction(
+            id = "oct_tx_1",
+            userId = "u1",
+            userName = "Alex",
+            title = "October Diwali Shopping",
+            amount = 6400.0,
+            type = "EXPENSE",
+            category = "Shopping",
+            accountName = "HDFC ••4821",
+            paymentMode = "CARD",
+            transactionDateMillis = octMillis
+        )
+        val novSalaryTx = ExpenseTransaction(
+            id = "nov_sal_1",
+            userId = "u1",
+            userName = "Alex",
+            title = "Monthly Tech Salary",
+            amount = 95000.0,
+            type = "INCOME",
+            category = "Salary & Income",
+            accountName = "HDFC ••4821",
+            paymentMode = "BANK",
+            transactionDateMillis = novMillis
+        )
+        val novExpenseTx = ExpenseTransaction(
+            id = "nov_exp_1",
+            userId = "u1",
+            userName = "Alex",
+            title = "November Organic Groceries",
+            amount = 3200.0,
+            type = "EXPENSE",
+            category = "Groceries",
+            accountName = "HDFC ••4821",
+            paymentMode = "UPI",
+            transactionDateMillis = novMillis
+        )
+        val allTxs = listOf(octTx, novSalaryTx, novExpenseTx)
+
+        // Build 12 months ending at Nov 2026 so the graph is genuinely horizontally scrollable
+        val twelveMonths = (11 downTo 0).map { offset ->
+            var p = novPeriod
+            repeat(offset) { p = p.previousMonth() }
+            p
+        }
+
+        var selectedPeriod by mutableStateOf(novPeriod)
+        var savedFromDialogType: String? = null
+        var showAddSheet by mutableStateOf(true)
+
+        composeTestRule.setContent {
+            val activeMonthTxs = allTxs.filter { YearMonthPeriod.fromMillis(it.transactionDateMillis) == selectedPeriod }
+            val bars = twelveMonths.map { p ->
+                val pTxs = allTxs.filter { YearMonthPeriod.fromMillis(it.transactionDateMillis) == p }
+                MonthlySpendBar(
+                    period = p,
+                    label = p.formatShortMonth(),
+                    expenseTotal = pTxs.filter { it.type == "EXPENSE" }.sumOf { it.amount },
+                    incomeTotal = pTxs.filter { it.type == "INCOME" }.sumOf { it.amount },
+                    isSelected = p == selectedPeriod
+                )
+            }
+            val state = OneFamilyDashboardUiState(
+                isLoading = false,
+                selectedPeriod = selectedPeriod,
+                periodLabel = selectedPeriod.formatDisplay(),
+                activeExpenses = activeMonthTxs,
+                allScopedExpenses = allTxs,
+                filteredExpenses = activeMonthTxs,
+                monthlyTrendBars = bars,
+                totalMonthlySpent = activeMonthTxs.filter { it.type == "EXPENSE" }.sumOf { it.amount },
+                totalMonthlyIncome = activeMonthTxs.filter { it.type == "INCOME" }.sumOf { it.amount }
+            )
+            OneFamilyTheme {
+                AnalyticsTabScreen(
+                    uiState = state,
+                    onStepMonth = {},
+                    onSelectPeriod = { if (it != null) selectedPeriod = it },
+                    onSelectCategory = {}
+                )
+                if (showAddSheet) {
+                    AddTransactionDialog(
+                        hasHousehold = false,
+                        defaultShared = false,
+                        accounts = emptyList(),
+                        availableCategories = ExpenseCategories.ALL,
+                        currencySymbol = "₹",
+                        onDismiss = { showAddSheet = false },
+                        onSave = { _, _, type, _, _, _, _, _, _, _ ->
+                            savedFromDialogType = type
+                            showAddSheet = false
+                        }
+                    )
+                }
+            }
+        }
+        composeTestRule.waitForIdle()
+
+        // 1. Verify selecting "Salary & Income" category in AddTransactionDialog auto-switches type to INCOME
+        composeTestRule.onNodeWithTag("add_tx_amount_input").performTextReplacement("85000")
+        composeTestRule.onNodeWithTag("add_tx_title_input").performTextReplacement("Employer Payroll")
+        composeTestRule.onNodeWithTag("receipt_category_chip_salary_income").performScrollTo().performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("save_transaction_button").performScrollTo().performClick()
+        composeTestRule.waitForIdle()
+        assertEquals("INCOME", savedFromDialogType)
+
+        // 2. Verify Salary / Income bar and trend canvas render in MonthlyBarGraph
+        composeTestRule.onNodeWithTag("monthly_income_trend_legend").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("salary_income_trend_canvas").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("month_income_bar_2026_10", useUnmergedTree = true).assertExists()
+        composeTestRule.onNodeWithTag("month_income_label_2026_10", useUnmergedTree = true).assertExists()
+
+        // 3. Horizontally scroll the bar graph -> selectedPeriod MUST NOT change on scroll!
+        composeTestRule.onNodeWithTag("monthly_bar_graph_scroll_container")
+            .performTouchInput { swipeRight() }
+        composeTestRule.waitForIdle()
+        assertEquals(
+            "Scrolling the monthly trend graph must not change the selected month",
+            novPeriod,
+            selectedPeriod
+        )
+        composeTestRule.onNodeWithText("November Organic Groceries").assertExists()
+
+        // 4. Tap October's month column -> selectedPeriod updates to Oct 2026 and shows October's transactions!
+        composeTestRule.onNodeWithTag("month_bar_column_2026_9").performScrollTo().performClick()
+        composeTestRule.waitForIdle()
+        assertEquals(octPeriod, selectedPeriod)
+
+        composeTestRule.onNodeWithTag("analytics_tab_list")
+            .performScrollToNode(hasTestTag("analytics_selected_month_transactions_card"))
+        composeTestRule.onNodeWithText("October Diwali Shopping").assertIsDisplayed()
+    }
+
+    @Test
+    fun `test Home screen budget action navigates to Budgets tab instead of opening budget dialog and Settings toggle gates Household UI`() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        LocalAccountSessionManager.ensureInitialized(context)
+        LocalAccountSessionManager.signInWithUsernamePassword(context, "test", "pass")
+        val user = LocalAccountSessionManager.getCurrentUser(context)!!
+        runBlocking {
+            OneFamilyRepository(context).ensureUserProfile(user.displayName, user.email)
+        }
+        LocalAccountSessionManager.setInitialSmsSyncCompleted(context, user.uid, true)
+        LocalAccountSessionManager.setHouseholdFeatureEnabled(context, false)
+
+        composeTestRule.setContent {
+            OneFamilyTheme {
+                OneFamilyMainShell(
+                    currentUserId = user.uid,
+                    currentUserName = user.displayName,
+                    currentUserEmail = user.email
+                )
+            }
+        }
+        composeTestRule.waitForIdle()
+        shadowOf(Looper.getMainLooper()).idle()
+        composeTestRule.waitForIdle()
+
+        // 1. With Household feature OFF by default, Home screen does NOT show Household scope chips even when user has a household
+        assertTrue(composeTestRule.onAllNodesWithTag("scope_chip_household").fetchSemanticsNodes().isEmpty())
+
+        // 2. Tapping Set Budget / Budgets button on Home navigates to Budgets tab instead of opening EditOverallBudgetDialog
+        composeTestRule.onNodeWithTag("edit_monthly_budget_button").performClick()
+        composeTestRule.waitForIdle()
+
+        assertTrue(
+            "Home screen must not open EditOverallBudgetDialog directly",
+            composeTestRule.onAllNodesWithTag("overall_personal_budget_input").fetchSemanticsNodes().isEmpty()
+        )
+        composeTestRule.onNodeWithTag("budgets_tab_list").assertIsDisplayed()
+
+        // 3. Navigate to Settings tab and verify Household cards are hidden when Household toggle is OFF
+        composeTestRule.onNodeWithTag("nav_tab_account").performClick()
+        composeTestRule.waitForIdle()
+
+        // Scroll directly to household_feature_settings_card in the M3 Settings list
+        composeTestRule.onNodeWithTag("household_tab_list")
+            .performScrollToNode(hasTestTag("household_feature_settings_card"))
+        composeTestRule.onNodeWithTag("household_feature_enable_switch").assertIsDisplayed()
+        assertTrue(composeTestRule.onAllNodesWithTag("household_active_details_card").fetchSemanticsNodes().isEmpty())
+        assertTrue(composeTestRule.onAllNodesWithTag("household_create_card").fetchSemanticsNodes().isEmpty())
+        assertTrue(composeTestRule.onAllNodesWithTag("household_join_code_card").fetchSemanticsNodes().isEmpty())
+
+        // 4. Turn ON Household feature switch in Settings -> Household collaboration card immediately appears!
+        composeTestRule.onNodeWithTag("household_feature_enable_switch").performClick()
+        composeTestRule.waitForIdle()
+        shadowOf(Looper.getMainLooper()).idle()
+        composeTestRule.waitForIdle()
+        assertTrue(LocalAccountSessionManager.householdFeatureEnabled.value)
+
+        composeTestRule.onNodeWithTag("household_tab_list")
+            .performScrollToNode(hasTestTag("household_active_details_card"))
+        composeTestRule.onNodeWithTag("household_active_details_card").assertExists()
+
+        // Reset back to default false for clean test isolation
+        LocalAccountSessionManager.setHouseholdFeatureEnabled(context, false)
+        LocalAccountSessionManager.signOut(context)
+    }
+
+    @Test
+    fun `test M3 Expressive Settings Appearance cutout hero, segmented theme row, AMOLED pure black mode, and haptic feedback toggle`() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        LocalAccountSessionManager.ensureInitialized(context)
+        LocalAccountSessionManager.setThemeMode(context, AppThemeMode.SYSTEM)
+        LocalAccountSessionManager.setAmoledDarkEnabled(context, false)
+        LocalAccountSessionManager.setHapticFeedbackEnabled(context, true)
+        LocalAccountSessionManager.setPrimaryColorOption(context, AppPrimaryColorOption.KIWI_GREEN)
+
+        // 1. Verify bundled Google Fonts (Plus Jakarta Sans & JetBrains Mono) + AMOLED pure-black vs Tonal Dark surface hierarchy
+        val typo = buildResponsiveTypography(1.0f)
+        assertEquals(PlusJakartaSansFontFamily, typo.displayLarge.fontFamily)
+        assertEquals(PlusJakartaSansFontFamily, typo.displayMedium.fontFamily)
+        assertNotNull(ReceiptMonoFontFamily)
+
+        val tonalDarkScheme = resolveAppColorScheme(
+            context = context,
+            darkTheme = true,
+            primaryColorOption = AppPrimaryColorOption.KIWI_GREEN,
+            customPrimaryColorArgb = 0xFF65A30DL,
+            amoledDark = false
+        )
+        val amoledDarkScheme = resolveAppColorScheme(
+            context = context,
+            darkTheme = true,
+            primaryColorOption = AppPrimaryColorOption.KIWI_GREEN,
+            customPrimaryColorArgb = 0xFF65A30DL,
+            amoledDark = true
+        )
+        assertEquals(Color(0xFF11130F), tonalDarkScheme.background)
+        assertEquals(Color(0xFF000000), amoledDarkScheme.background)
+        assertEquals(Color(0xFF000000), amoledDarkScheme.surfaceContainerLowest)
+        assertEquals(Color(0xFF080908), amoledDarkScheme.surface)
+
+        // 2. Render HouseholdTabScreen and verify Cutout Hero, Segmented Theme Row, AMOLED Mode, and Haptic Feedback
+        val uiState = OneFamilyDashboardUiState(
+            isLoading = false,
+            userProfile = UserProfile(uid = "local_user_m3", displayName = "Riya Verma", currencySymbol = "₹")
+        )
+        composeTestRule.setContent {
+            OneFamilyTheme {
+                HouseholdTabScreen(
+                    uiState = uiState,
+                    currentUserName = "Riya Verma",
+                    currentUserEmail = "riya@onefamily.app",
+                    onCreateHousehold = { _, _ -> },
+                    onJoinByCode = {},
+                    onInviteByEmail = {},
+                    onAcceptEmailInvite = {}
+                )
+            }
+        }
+        composeTestRule.waitForIdle()
+
+        // Verify Asymmetric Cutout Appearance Hero Card & Quick Theme Emblem
+        composeTestRule.onNodeWithTag("appearance_cutout_hero_card").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("appearance_cutout_theme_emblem").assertIsDisplayed()
+
+        // Verify M3 Checkmark SingleChoiceSegmentedButtonRow (Light | Auto | Dark)
+        composeTestRule.onNodeWithTag("household_tab_list")
+            .performScrollToNode(hasTestTag("theme_and_wallpaper_card"))
+        composeTestRule.onNodeWithTag("appearance_segment_dark").performClick()
+        composeTestRule.waitForIdle()
+        assertEquals(AppThemeMode.DARK, LocalAccountSessionManager.themeMode.value)
+
+        composeTestRule.onNodeWithTag("appearance_segment_light").performClick()
+        composeTestRule.waitForIdle()
+        assertEquals(AppThemeMode.LIGHT, LocalAccountSessionManager.themeMode.value)
+
+        composeTestRule.onNodeWithTag("appearance_segment_auto").performClick()
+        composeTestRule.waitForIdle()
+        assertEquals(AppThemeMode.SYSTEM, LocalAccountSessionManager.themeMode.value)
+
+        // Verify AMOLED Mode & Haptic Feedback connected M3 cards and checkmark switches
+        composeTestRule.onNodeWithTag("household_tab_list")
+            .performScrollToNode(hasTestTag("amoled_mode_card"))
+        composeTestRule.onNodeWithTag("amoled_mode_switch").performClick()
+        composeTestRule.waitForIdle()
+        assertTrue(LocalAccountSessionManager.amoledDarkEnabled.value)
+
+        composeTestRule.onNodeWithTag("household_tab_list")
+            .performScrollToNode(hasTestTag("haptic_feedback_card"))
+        composeTestRule.onNodeWithTag("haptic_feedback_switch").performClick()
+        composeTestRule.waitForIdle()
+        assertFalse(LocalAccountSessionManager.hapticFeedbackEnabled.value)
+
+        // Restore defaults
+        LocalAccountSessionManager.setAmoledDarkEnabled(context, false)
+        LocalAccountSessionManager.setHapticFeedbackEnabled(context, true)
+    }
+
+    @Test
+    fun `test M3 docked NavigationBar, Home ExtendedFAB visibility, and Welcome AuthScreen layout`() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        LocalAccountSessionManager.ensureInitialized(context)
+        LocalAccountSessionManager.signOut(context)
+
+        // 1. Verify Editorial Welcome AuthScreen (Welcome to One Family + bottom stadium CTA + circular theme button)
+        var signedIn by mutableStateOf(false)
+        composeTestRule.setContent {
+            OneFamilyTheme {
+                if (!signedIn) {
+                    AuthScreen(onAuthSuccess = { signedIn = true })
+                } else {
+                    val user = LocalAccountSessionManager.getCurrentUser(context)
+                    if (user != null) {
+                        LocalAccountSessionManager.setInitialSmsSyncCompleted(context, user.uid, true)
+                        OneFamilyMainShell(
+                            currentUserId = user.uid,
+                            currentUserName = user.displayName,
+                            currentUserEmail = user.email
+                        )
+                    }
+                }
+            }
+        }
+        composeTestRule.waitForIdle()
+
+        composeTestRule.onNodeWithText("Welcome to").assertIsDisplayed()
+        composeTestRule.onNodeWithText("One Family").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("auth_quick_theme_cycle_button").performScrollTo().assertIsDisplayed()
+        composeTestRule.onNodeWithTag("username_sign_in_button").performScrollTo().assertIsDisplayed()
+
+        // Sign in via 1-tap Mock User ticket stub and verify Main Shell M3 NavigationBar + Home ExtendedFAB
+        composeTestRule.onNodeWithTag("quick_test_login_button").performScrollTo().performClick()
+        composeTestRule.waitForIdle()
+        shadowOf(Looper.getMainLooper()).idle()
+        composeTestRule.waitForIdle()
+
+        assertTrue(signedIn)
+        composeTestRule.onNodeWithTag("floating_bottom_nav_bar").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("fab_add_expense").assertIsDisplayed()
+
+        // Navigate to Trends and Budgets tabs -> ExtendedFAB is hidden off Home tab
+        composeTestRule.onNodeWithTag("nav_tab_analysis").performClick()
+        composeTestRule.waitForIdle()
+        assertTrue(composeTestRule.onAllNodesWithTag("fab_add_expense").fetchSemanticsNodes().isEmpty())
+
+        composeTestRule.onNodeWithTag("nav_tab_budgets").performClick()
+        composeTestRule.waitForIdle()
+        assertTrue(composeTestRule.onAllNodesWithTag("fab_add_expense").fetchSemanticsNodes().isEmpty())
+
+        // Navigate back to Home tab -> ExtendedFAB reappears
+        composeTestRule.onNodeWithTag("nav_tab_home").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("fab_add_expense").assertIsDisplayed()
+
+        LocalAccountSessionManager.signOut(context)
     }
 }
 

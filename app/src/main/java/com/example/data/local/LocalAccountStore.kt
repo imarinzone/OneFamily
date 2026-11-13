@@ -51,6 +51,10 @@ object LocalAccountSessionManager {
     private const val KEY_CRASHLYTICS_SETTINGS = "crashlytics_settings_json"
     private const val KEY_EXPERT_FEATURE_FLAGS = "expert_feature_flags_json"
     private const val KEY_STABILITY_DIAGNOSTICS = "stability_diagnostics_json"
+    private const val KEY_HOUSEHOLD_FEATURE_ENABLED = "household_feature_enabled"
+    private const val KEY_CUSTOM_CATEGORIES = "custom_categories_json"
+    private const val KEY_AMOLED_DARK_ENABLED = "amoled_dark_enabled"
+    private const val KEY_HAPTIC_FEEDBACK_ENABLED = "haptic_feedback_enabled"
 
     const val DEFAULT_TEST_USERNAME = "test"
     const val DEFAULT_TEST_PASSWORD = "pass"
@@ -84,6 +88,18 @@ object LocalAccountSessionManager {
     private val _stabilityDiagnostics = MutableStateFlow<List<StabilityDiagnosticEntry>>(emptyList())
     val stabilityDiagnostics: StateFlow<List<StabilityDiagnosticEntry>> = _stabilityDiagnostics.asStateFlow()
 
+    private val _householdFeatureEnabled = MutableStateFlow(false)
+    val householdFeatureEnabled: StateFlow<Boolean> = _householdFeatureEnabled.asStateFlow()
+
+    private val _customCategories = MutableStateFlow<List<String>>(emptyList())
+    val customCategories: StateFlow<List<String>> = _customCategories.asStateFlow()
+
+    private val _amoledDarkEnabled = MutableStateFlow(false)
+    val amoledDarkEnabled: StateFlow<Boolean> = _amoledDarkEnabled.asStateFlow()
+
+    private val _hapticFeedbackEnabled = MutableStateFlow(true)
+    val hapticFeedbackEnabled: StateFlow<Boolean> = _hapticFeedbackEnabled.asStateFlow()
+
     private var initialized = false
     private var uncaughtHandlerInstalled = false
 
@@ -113,9 +129,57 @@ object LocalAccountSessionManager {
             _expertFeatureFlags.value = decodeExpertFeatureFlags(prefs.getString(KEY_EXPERT_FEATURE_FLAGS, null))
             _stabilityDiagnostics.value = decodeStabilityDiagnostics(prefs.getString(KEY_STABILITY_DIAGNOSTICS, null))
                 .ifEmpty { seedInitialStabilityBreadcrumbs() }
+            _householdFeatureEnabled.value = prefs.getBoolean(KEY_HOUSEHOLD_FEATURE_ENABLED, false)
+            _customCategories.value = decodeCustomCategories(prefs.getString(KEY_CUSTOM_CATEGORIES, null))
+            _amoledDarkEnabled.value = prefs.getBoolean(KEY_AMOLED_DARK_ENABLED, false)
+            _hapticFeedbackEnabled.value = prefs.getBoolean(KEY_HAPTIC_FEEDBACK_ENABLED, true)
             initialized = true
         }
     }
+
+    fun setHouseholdFeatureEnabled(context: Context, enabled: Boolean) {
+        ensureInitialized(context)
+        _householdFeatureEnabled.value = enabled
+        prefs(context).edit().putBoolean(KEY_HOUSEHOLD_FEATURE_ENABLED, enabled).apply()
+    }
+
+    fun setAmoledDarkEnabled(context: Context, enabled: Boolean) {
+        ensureInitialized(context)
+        _amoledDarkEnabled.value = enabled
+        prefs(context).edit().putBoolean(KEY_AMOLED_DARK_ENABLED, enabled).apply()
+    }
+
+    fun setHapticFeedbackEnabled(context: Context, enabled: Boolean) {
+        ensureInitialized(context)
+        _hapticFeedbackEnabled.value = enabled
+        prefs(context).edit().putBoolean(KEY_HAPTIC_FEEDBACK_ENABLED, enabled).apply()
+    }
+
+    fun addCustomCategory(context: Context?, rawCategory: String) {
+        val cleaned = rawCategory.trim()
+        if (cleaned.length < 2) return
+        if (context != null) ensureInitialized(context)
+        val updated = (_customCategories.value + cleaned)
+            .filter { it.isNotBlank() }
+            .distinctBy { it.lowercase() }
+        _customCategories.value = updated
+        if (context != null) {
+            val arr = JSONArray()
+            updated.forEach { arr.put(it) }
+            prefs(context).edit().putString(KEY_CUSTOM_CATEGORIES, arr.toString()).apply()
+        }
+    }
+
+    private fun decodeCustomCategories(raw: String?): List<String> = runCatching {
+        if (raw.isNullOrBlank()) return emptyList()
+        val arr = JSONArray(raw)
+        buildList {
+            for (i in 0 until arr.length()) {
+                val item = arr.optString(i, "").trim()
+                if (item.isNotBlank()) add(item)
+            }
+        }.distinctBy { it.lowercase() }
+    }.getOrDefault(emptyList())
 
     private fun seedInitialStabilityBreadcrumbs(): List<StabilityDiagnosticEntry> {
         val deviceLabel = "${Build.MANUFACTURER} ${Build.MODEL} (SDK ${Build.VERSION.SDK_INT})"

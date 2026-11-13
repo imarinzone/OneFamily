@@ -10,6 +10,7 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -23,6 +24,7 @@ import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
@@ -34,6 +36,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.GenericShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.HelpOutline
@@ -50,6 +53,7 @@ import androidx.compose.material.icons.filled.Category
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Colorize
 import androidx.compose.material.icons.filled.CreditCard
+import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.DirectionsCar
@@ -57,6 +61,7 @@ import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Fastfood
 import androidx.compose.material.icons.filled.Groups
 import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.LocalGroceryStore
 import androidx.compose.material.icons.filled.Lock
@@ -72,7 +77,9 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.DatePickerDialog
 import androidx.compose.material3.DateRangePicker
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -80,10 +87,14 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.material3.rememberDateRangePickerState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -95,13 +106,16 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.PathEffect
+import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.DrawScope
@@ -111,10 +125,12 @@ import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -135,7 +151,9 @@ import com.example.ui.theme.BudgetWarnAmber
 import com.example.ui.theme.HouseholdBadgeIndigo
 import com.example.ui.theme.LocalAppDimens
 import com.example.ui.theme.PersonalBadgeTeal
+import com.example.ui.theme.ReceiptMonoFontFamily
 import com.example.ui.theme.categoryAccentColor
+import com.example.ui.theme.rememberAppHapticPerformer
 import com.example.ui.viewmodel.DateRangePreset
 import com.example.ui.viewmodel.MonthlySpendBar
 import com.example.ui.viewmodel.YearMonthPeriod
@@ -186,41 +204,592 @@ fun categoryIcon(category: String): ImageVector {
     }
 }
 
+// ============================================================================
+// M3 EXPRESSIVE + PAPER RECEIPT SHARED BUILDING BLOCKS
+// ============================================================================
+
+/**
+ * 44dp circular tonal IconButton with 48dp accessible touch target, inspired by
+ * M3 Expressive top-bar action pills ("Your Mix" / "Queue" references).
+ */
+@Composable
+fun CircularTonalIconButton(
+    icon: ImageVector,
+    contentDescription: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    containerColor: Color = MaterialTheme.colorScheme.surfaceContainerHigh,
+    contentColor: Color = MaterialTheme.colorScheme.onSurface
+) {
+    val performHaptic = rememberAppHapticPerformer()
+    Surface(
+        onClick = {
+            performHaptic()
+            onClick()
+        },
+        modifier = modifier
+            .minimumInteractiveComponentSize()
+            .size(44.dp),
+        shape = CircleShape,
+        color = containerColor,
+        contentColor = contentColor
+    ) {
+        Box(contentAlignment = Alignment.Center) {
+            Icon(
+                imageVector = icon,
+                contentDescription = contentDescription,
+                modifier = Modifier.size(20.dp)
+            )
+        }
+    }
+}
+
+/**
+ * 16dp squircle pastel-tonal icon badge used in connected M3 card stacks.
+ */
+@Composable
+fun SquircleIconBadge(
+    icon: ImageVector,
+    tint: Color,
+    containerColor: Color,
+    modifier: Modifier = Modifier,
+    size: Dp = 46.dp,
+    iconSize: Dp = 22.dp,
+    contentDescription: String? = null
+) {
+    Box(
+        modifier = modifier
+            .size(size)
+            .clip(RoundedCornerShape(16.dp))
+            .background(containerColor),
+        contentAlignment = Alignment.Center
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = contentDescription,
+            tint = tint,
+            modifier = Modifier.size(iconSize)
+        )
+    }
+}
+
+/**
+ * Oversized M3 Expressive Editorial Header with optional compact count pill
+ * and top-right circular tonal action buttons.
+ */
+@Composable
+fun EditorialScreenHeader(
+    title: String,
+    modifier: Modifier = Modifier,
+    subtitle: String? = null,
+    countPillText: String? = null,
+    actions: @Composable RowScope.() -> Unit = {}
+) {
+    val dimens = LocalAppDimens.current
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(horizontal = dimens.horizontalPadding, vertical = 4.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.displayMedium,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onBackground,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            if (!countPillText.isNullOrBlank() || !subtitle.isNullOrBlank()) {
+                Spacer(modifier = Modifier.height(6.dp))
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    if (!countPillText.isNullOrBlank()) {
+                        Surface(
+                            shape = RoundedCornerShape(50),
+                            color = MaterialTheme.colorScheme.surfaceContainerHigh
+                        ) {
+                            Text(
+                                text = countPillText,
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.SemiBold,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 5.dp)
+                            )
+                        }
+                    }
+                    if (!subtitle.isNullOrBlank()) {
+                        Text(
+                            text = subtitle,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
+            }
+        }
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            content = actions
+        )
+    }
+}
+
+/**
+ * Perforated Thermal Receipt Section Divider:
+ * Tracked uppercase title + inline perforated dotted rule + right count badge pill
+ * ("RECEIPTS • • • • • • • [28]").
+ */
+@Composable
+fun PerforatedSectionHeader(
+    title: String,
+    modifier: Modifier = Modifier,
+    countBadge: String? = null
+) {
+    val dimens = LocalAppDimens.current
+    val dotColor = MaterialTheme.colorScheme.outlineVariant
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(horizontal = dimens.horizontalPadding, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        Text(
+            text = title.uppercase(Locale.getDefault()),
+            style = MaterialTheme.typography.labelMedium,
+            fontWeight = FontWeight.Bold,
+            letterSpacing = 1.1.sp,
+            color = MaterialTheme.colorScheme.primary
+        )
+        Canvas(
+            modifier = Modifier
+                .weight(1f)
+                .height(2.dp)
+        ) {
+            drawLine(
+                color = dotColor,
+                start = Offset(0f, size.height / 2f),
+                end = Offset(size.width, size.height / 2f),
+                strokeWidth = 2.dp.toPx(),
+                cap = StrokeCap.Round,
+                pathEffect = PathEffect.dashPathEffect(floatArrayOf(5f, 9f), 0f)
+            )
+        }
+        if (!countBadge.isNullOrBlank()) {
+            Surface(
+                shape = RoundedCornerShape(50),
+                color = MaterialTheme.colorScheme.surfaceContainerHighest
+            ) {
+                Text(
+                    text = countBadge,
+                    style = MaterialTheme.typography.labelSmall.copy(fontFamily = ReceiptMonoFontFamily),
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 3.dp)
+                )
+            }
+        }
+    }
+}
+
+/**
+ * Material 3 Switch with a crisp Check icon inside the thumb when enabled.
+ */
+@Composable
+fun M3CheckmarkSwitch(
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true
+) {
+    val performHaptic = rememberAppHapticPerformer()
+    Switch(
+        checked = checked,
+        onCheckedChange = { next ->
+            performHaptic()
+            onCheckedChange(next)
+        },
+        enabled = enabled,
+        thumbContent = if (checked) {
+            {
+                Icon(
+                    imageVector = Icons.Default.Check,
+                    contentDescription = null,
+                    modifier = Modifier.size(SwitchDefaults.IconSize)
+                )
+            }
+        } else {
+            null
+        },
+        modifier = modifier
+    )
+}
+
+/**
+ * Full-width M3 stadium master toggle banner (inspired by ViperFX "Enabled" banner).
+ */
+@Composable
+fun MasterFeatureToggleBanner(
+    title: String,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+    modifier: Modifier = Modifier,
+    subtitle: String? = null,
+    leadingIcon: ImageVector? = null,
+    switchTestTag: String? = null
+) {
+    val performHaptic = rememberAppHapticPerformer()
+    val bgColor by animateColorAsState(
+        targetValue = if (checked) {
+            MaterialTheme.colorScheme.primaryContainer
+        } else {
+            MaterialTheme.colorScheme.surfaceContainerHigh
+        },
+        animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
+        label = "master_banner_bg"
+    )
+    val contentColor by animateColorAsState(
+        targetValue = if (checked) {
+            MaterialTheme.colorScheme.onPrimaryContainer
+        } else {
+            MaterialTheme.colorScheme.onSurface
+        },
+        animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
+        label = "master_banner_fg"
+    )
+
+    Surface(
+        onClick = {
+            performHaptic()
+            onCheckedChange(!checked)
+        },
+        modifier = modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(28.dp),
+        color = bgColor,
+        contentColor = contentColor
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp, vertical = 14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Row(
+                modifier = Modifier.weight(1f),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(14.dp)
+            ) {
+                if (leadingIcon != null) {
+                    SquircleIconBadge(
+                        icon = leadingIcon,
+                        tint = if (checked) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                        containerColor = if (checked) {
+                            MaterialTheme.colorScheme.surface.copy(alpha = 0.72f)
+                        } else {
+                            MaterialTheme.colorScheme.surfaceContainerHighest
+                        },
+                        size = 44.dp,
+                        iconSize = 22.dp
+                    )
+                }
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = title,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = contentColor
+                    )
+                    if (!subtitle.isNullOrBlank()) {
+                        Text(
+                            text = subtitle,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = contentColor.copy(alpha = 0.78f)
+                        )
+                    }
+                }
+            }
+            Spacer(modifier = Modifier.width(12.dp))
+            M3CheckmarkSwitch(
+                checked = checked,
+                onCheckedChange = onCheckedChange,
+                modifier = if (switchTestTag != null) Modifier.testTag(switchTestTag) else Modifier
+            )
+        }
+    }
+}
+
+/**
+ * Asymmetric top-right corner cutout hero card for Appearance (inspired by Screenshot 6):
+ * Concave cutout cradles a floating Theme badge while displaying live Dark & Light mini
+ * thermal paper receipt preview tiles.
+ */
+@Composable
+fun ExpressiveCutoutAppearanceHeroCard(
+    isDarkActive: Boolean,
+    amoledEnabled: Boolean,
+    onToggleQuickTheme: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val density = LocalDensity.current
+    val performHaptic = rememberAppHapticPerformer()
+    val cutoutShape = remember(density) {
+        GenericShape { size, _ ->
+            val r = with(density) { 28.dp.toPx() }.coerceAtMost(size.minDimension * 0.25f)
+            val cutW = with(density) { 76.dp.toPx() }.coerceAtMost(size.width * 0.32f)
+            val cutH = with(density) { 68.dp.toPx() }.coerceAtMost(size.height * 0.42f)
+            val fillet = with(density) { 20.dp.toPx() }
+            val w = size.width
+            val h = size.height
+
+            moveTo(r, 0f)
+            lineTo(w - cutW - fillet, 0f)
+            quadraticTo(w - cutW, 0f, w - cutW, fillet)
+            lineTo(w - cutW, cutH - fillet)
+            quadraticTo(w - cutW, cutH, w - cutW + fillet, cutH)
+            lineTo(w - fillet, cutH)
+            quadraticTo(w, cutH, w, cutH + fillet)
+            lineTo(w, h - r)
+            arcTo(Rect(w - 2 * r, h - 2 * r, w, h), 0f, 90f, false)
+            lineTo(r, h)
+            arcTo(Rect(0f, h - 2 * r, 2 * r, h), 90f, 90f, false)
+            lineTo(0f, r)
+            arcTo(Rect(0f, 0f, 2 * r, 2 * r), 180f, 90f, false)
+            close()
+        }
+    }
+
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .testTag("appearance_cutout_hero_card")
+    ) {
+        Surface(
+            modifier = Modifier.fillMaxWidth(),
+            shape = cutoutShape,
+            color = MaterialTheme.colorScheme.primaryContainer,
+            contentColor = MaterialTheme.colorScheme.onPrimaryContainer
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = 20.dp, end = 20.dp, top = 20.dp, bottom = 18.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                Column(
+                    modifier = Modifier.padding(end = 72.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    Text(
+                        text = "Paper & Ink",
+                        style = MaterialTheme.typography.headlineLarge,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer
+                    )
+                    Text(
+                        text = "Tactile thermal receipts styled with Material You.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.82f)
+                    )
+                }
+
+                // Side-by-side Dark & Light Mini Receipt Preview Tiles
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    // Dark Preview Tile
+                    val darkTileBg = if (amoledEnabled) Color(0xFF000000) else Color(0xFF151813)
+                    Surface(
+                        shape = RoundedCornerShape(18.dp),
+                        color = darkTileBg,
+                        border = if (isDarkActive) {
+                            BorderStroke(2.dp, MaterialTheme.colorScheme.primary)
+                        } else {
+                            BorderStroke(1.dp, Color.White.copy(alpha = 0.10f))
+                        },
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 14.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(28.dp)
+                                    .clip(RoundedCornerShape(9.dp))
+                                    .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.85f))
+                            )
+                            Column(
+                                modifier = Modifier.weight(1f),
+                                verticalArrangement = Arrangement.spacedBy(5.dp)
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth(0.85f)
+                                        .height(6.dp)
+                                        .clip(CircleShape)
+                                        .background(Color.White.copy(alpha = 0.82f))
+                                )
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth(0.55f)
+                                        .height(5.dp)
+                                        .clip(CircleShape)
+                                        .background(Color.White.copy(alpha = 0.42f))
+                                )
+                            }
+                        }
+                    }
+
+                    // Light Paper Preview Tile
+                    Surface(
+                        shape = RoundedCornerShape(18.dp),
+                        color = Color(0xFFFAF6EB),
+                        border = if (!isDarkActive) {
+                            BorderStroke(2.dp, MaterialTheme.colorScheme.primary)
+                        } else {
+                            BorderStroke(1.dp, Color.Black.copy(alpha = 0.08f))
+                        },
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 14.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(28.dp)
+                                    .clip(RoundedCornerShape(9.dp))
+                                    .background(Color(0xFF4B5320))
+                            )
+                            Column(
+                                modifier = Modifier.weight(1f),
+                                verticalArrangement = Arrangement.spacedBy(5.dp)
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth(0.85f)
+                                        .height(6.dp)
+                                        .clip(CircleShape)
+                                        .background(Color(0xFF231F20).copy(alpha = 0.72f))
+                                )
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth(0.55f)
+                                        .height(5.dp)
+                                        .clip(CircleShape)
+                                        .background(Color(0xFF231F20).copy(alpha = 0.32f))
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Floating Theme Emblem nestled in the top-right cutout
+        Surface(
+            onClick = {
+                performHaptic()
+                onToggleQuickTheme()
+            },
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .padding(top = 6.dp, end = 8.dp)
+                .size(52.dp)
+                .testTag("appearance_cutout_theme_emblem"),
+            shape = CircleShape,
+            color = MaterialTheme.colorScheme.surfaceContainerHighest,
+            contentColor = MaterialTheme.colorScheme.primary
+        ) {
+            Box(contentAlignment = Alignment.Center) {
+                Icon(
+                    imageVector = if (isDarkActive) Icons.Default.DarkMode else Icons.Default.LightMode,
+                    contentDescription = "Toggle Light or Dark Theme",
+                    modifier = Modifier.size(26.dp)
+                )
+            }
+        }
+    }
+}
+
+private fun buildSmoothBezierPath(points: List<Offset>): Path {
+    val path = Path()
+    if (points.isEmpty()) return path
+    path.moveTo(points.first().x, points.first().y)
+    for (i in 0 until points.size - 1) {
+        val p0 = points[i]
+        val p1 = points[i + 1]
+        val controlX = (p0.x + p1.x) / 2f
+        path.cubicTo(controlX, p0.y, controlX, p1.y, p1.x, p1.y)
+    }
+    return path
+}
+
+private fun buildSmoothAreaPath(points: List<Offset>, baselineY: Float): Path {
+    val path = buildSmoothBezierPath(points)
+    if (points.size >= 2) {
+        path.lineTo(points.last().x, baselineY)
+        path.lineTo(points.first().x, baselineY)
+        path.close()
+    }
+    return path
+}
+
+// ============================================================================
+// CORE LEDGER, CHART & RECEIPT VISUAL COMPONENTS
+// ============================================================================
+
 @Composable
 fun ScopeSwitcherBar(
     selectedScope: BudgetScope,
-    hasHousehold: Boolean,
+    @Suppress("UNUSED_PARAMETER") hasHousehold: Boolean,
     householdName: String?,
     onScopeSelected: (BudgetScope) -> Unit
 ) {
     val dimens = LocalAppDimens.current
+    val performHaptic = rememberAppHapticPerformer()
     Surface(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = dimens.horizontalPadding, vertical = dimens.itemSpacing * 0.35f),
         shape = RoundedCornerShape(50),
-        color = MaterialTheme.colorScheme.surfaceVariant
+        color = MaterialTheme.colorScheme.surfaceContainerHigh
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(dimens.horizontalPadding * 0.25f),
-            horizontalArrangement = Arrangement.spacedBy(dimens.horizontalPadding * 0.4f)
+                .padding(4.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
         ) {
             BudgetScope.entries.forEach { scope ->
                 val isSelected = selectedScope == scope
-                val activeColor = if (scope == BudgetScope.HOUSEHOLD_SHARED) {
-                    HouseholdBadgeIndigo
-                } else {
-                    PersonalBadgeTeal
-                }
                 val bgColor by animateColorAsState(
-                    targetValue = if (isSelected) activeColor else Color.Transparent,
+                    targetValue = if (isSelected) {
+                        MaterialTheme.colorScheme.secondaryContainer
+                    } else {
+                        Color.Transparent
+                    },
                     animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
                     label = "scope_bg"
                 )
                 val contentColor by animateColorAsState(
-                    targetValue = if (isSelected) Color.White else MaterialTheme.colorScheme.onSurfaceVariant,
+                    targetValue = if (isSelected) {
+                        MaterialTheme.colorScheme.onSecondaryContainer
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    },
                     animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
                     label = "scope_fg"
                 )
@@ -236,19 +805,26 @@ fun ScopeSwitcherBar(
                         .weight(1f)
                         .clip(RoundedCornerShape(50))
                         .background(bgColor)
-                        .clickable { onScopeSelected(scope) }
-                        .padding(vertical = dimens.itemSpacing * 0.8f)
+                        .clickable {
+                            performHaptic()
+                            onScopeSelected(scope)
+                        }
+                        .padding(vertical = 10.dp)
                         .testTag("scope_chip_${scope.name.lowercase()}"),
                     contentAlignment = Alignment.Center
                 ) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Icon(
-                            imageVector = if (scope == BudgetScope.HOUSEHOLD_SHARED) Icons.Default.Groups else Icons.Default.Lock,
+                            imageVector = when {
+                                isSelected -> Icons.Default.Check
+                                scope == BudgetScope.HOUSEHOLD_SHARED -> Icons.Default.Groups
+                                else -> Icons.Default.Lock
+                            },
                             contentDescription = null,
                             tint = contentColor,
-                            modifier = Modifier.size(dimens.rowIconSize * 0.8f)
+                            modifier = Modifier.size(16.dp)
                         )
-                        Spacer(modifier = Modifier.width(dimens.horizontalPadding * 0.35f))
+                        Spacer(modifier = Modifier.width(6.dp))
                         Text(
                             text = label,
                             style = MaterialTheme.typography.labelLarge,
@@ -279,6 +855,7 @@ fun CustomDateRangePickerModal(
 
     DatePickerDialog(
         onDismissRequest = onDismiss,
+        shape = RoundedCornerShape(28.dp),
         confirmButton = {
             Button(
                 onClick = {
@@ -312,14 +889,6 @@ fun CustomDateRangePickerModal(
     }
 }
 
-/**
- * Top Gesture Date Bar (`MonthPeriodSelectorBar`):
- * - Gesture-driven bar where the Year is displayed on top and the Month name is displayed below.
- * - Left: Previous Year (top) & `< PrevMonth` (bottom)
- * - Middle: Current Year (top) & Full Month Name (bottom)
- * - Right: Next Year (top) & `NextMonth >` (bottom)
- * - Full-bar directional swapping animation (`AnimatedContent` wrapping the entire bar) plus live finger-tracking drag offset.
- */
 @Composable
 fun MonthPeriodSelectorBar(
     selectedPeriod: YearMonthPeriod?,
@@ -329,13 +898,14 @@ fun MonthPeriodSelectorBar(
     onToggleAllTime: () -> Unit = {},
     selectedDateRangePreset: DateRangePreset = if (selectedPeriod == null) DateRangePreset.ALL_TIME else DateRangePreset.MONTH,
     onSelectDateRangePreset: ((DateRangePreset) -> Unit)? = null,
-    onSelectMonthPeriod: ((YearMonthPeriod) -> Unit)? = null,
+    @Suppress("UNUSED_PARAMETER") onSelectMonthPeriod: ((YearMonthPeriod) -> Unit)? = null,
     customStartDateMillis: Long? = null,
     customEndDateMillis: Long? = null,
     onSelectCustomDateRange: ((Long, Long) -> Unit)? = null,
     showDateRangeChips: Boolean = false
 ) {
     val dimens = LocalAppDimens.current
+    val performHaptic = rememberAppHapticPerformer()
     val activePeriod = selectedPeriod ?: YearMonthPeriod.current()
 
     var showCustomRangePicker by rememberSaveable { mutableStateOf(false) }
@@ -351,13 +921,12 @@ fun MonthPeriodSelectorBar(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = dimens.horizontalPadding),
-        verticalArrangement = Arrangement.spacedBy(dimens.itemSpacing * 0.65f)
+        verticalArrangement = Arrangement.spacedBy(dimens.itemSpacing * 0.6f)
     ) {
-        // Gesture Date Bar: Entire bar animates/swaps together, with Year on top and Month name below
         Surface(
-            shape = RoundedCornerShape(dimens.cardCornerRadius * 1.15f),
-            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.72f),
-            tonalElevation = 2.dp,
+            shape = RoundedCornerShape(26.dp),
+            color = MaterialTheme.colorScheme.surfaceContainerLow,
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f)),
             modifier = Modifier
                 .fillMaxWidth()
                 .onSizeChanged { barWidthPx = it.width.toFloat().coerceAtLeast(1f) }
@@ -372,8 +941,10 @@ fun MonthPeriodSelectorBar(
                         onDragEnd = {
                             val swipeThreshold = barWidthPx * 0.10f
                             if (dragAccumulated > swipeThreshold) {
+                                performHaptic()
                                 onStepMonth(-1)
                             } else if (dragAccumulated < -swipeThreshold) {
+                                performHaptic()
                                 onStepMonth(1)
                             }
                             dragAccumulated = 0f
@@ -423,10 +994,7 @@ fun MonthPeriodSelectorBar(
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(
-                            horizontal = dimens.horizontalPadding * 0.45f,
-                            vertical = dimens.itemSpacing * 0.45f
-                        ),
+                        .padding(horizontal = 8.dp, vertical = 6.dp),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
                     Row(
@@ -434,33 +1002,41 @@ fun MonthPeriodSelectorBar(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
-                        // Left: Previous Month (Year on top, < Month below)
-                        Column(
+                        // Left: Previous Month
+                        Row(
                             modifier = Modifier
                                 .weight(1f)
-                                .clip(RoundedCornerShape(dimens.smallCornerRadius))
-                                .clickable { onStepMonth(-1) }
-                                .padding(
-                                    horizontal = dimens.horizontalPadding * 0.45f,
-                                    vertical = dimens.itemSpacing * 0.35f
-                                )
+                                .clip(RoundedCornerShape(18.dp))
+                                .clickable {
+                                    performHaptic()
+                                    onStepMonth(-1)
+                                }
+                                .padding(horizontal = 6.dp, vertical = 6.dp)
                                 .testTag("prev_month_button"),
-                            horizontalAlignment = Alignment.Start
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text(
-                                text = prevPeriod.year.toString(),
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
-                                maxLines = 1
-                            )
-                            Row(verticalAlignment = Alignment.CenterVertically) {
+                            Box(
+                                modifier = Modifier
+                                    .size(30.dp)
+                                    .clip(CircleShape)
+                                    .background(MaterialTheme.colorScheme.surfaceContainerHigh),
+                                contentAlignment = Alignment.Center
+                            ) {
                                 Icon(
                                     imageVector = Icons.AutoMirrored.Filled.KeyboardArrowLeft,
                                     contentDescription = "Previous Month",
                                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    modifier = Modifier.size(dimens.rowIconSize * 0.78f)
+                                    modifier = Modifier.size(18.dp)
                                 )
-                                Spacer(modifier = Modifier.width(dimens.horizontalPadding * 0.12f))
+                            }
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Column(horizontalAlignment = Alignment.Start) {
+                                Text(
+                                    text = prevPeriod.year.toString(),
+                                    style = MaterialTheme.typography.labelSmall.copy(fontFamily = ReceiptMonoFontFamily),
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.72f),
+                                    maxLines = 1
+                                )
                                 Text(
                                     text = prevPeriod.formatShortMonth(),
                                     style = MaterialTheme.typography.labelLarge,
@@ -471,25 +1047,25 @@ fun MonthPeriodSelectorBar(
                             }
                         }
 
-                        // Middle: Current Selected Period (Year on top, Month Name below)
+                        // Middle: Current Selected Period Pill
                         Surface(
-                            shape = RoundedCornerShape(dimens.cardCornerRadius),
+                            shape = RoundedCornerShape(20.dp),
                             color = MaterialTheme.colorScheme.primaryContainer,
                             modifier = Modifier
-                                .clip(RoundedCornerShape(dimens.cardCornerRadius))
-                                .clickable { showCustomRangePicker = true }
+                                .clip(RoundedCornerShape(20.dp))
+                                .clickable {
+                                    performHaptic()
+                                    showCustomRangePicker = true
+                                }
                                 .testTag("center_month_year_pill")
                         ) {
                             Column(
-                                modifier = Modifier.padding(
-                                    horizontal = dimens.horizontalPadding * 1.15f,
-                                    vertical = dimens.itemSpacing * 0.45f
-                                ),
+                                modifier = Modifier.padding(horizontal = 18.dp, vertical = 6.dp),
                                 horizontalAlignment = Alignment.CenterHorizontally
                             ) {
                                 Text(
                                     text = topYearLabel,
-                                    style = MaterialTheme.typography.labelSmall,
+                                    style = MaterialTheme.typography.labelSmall.copy(fontFamily = ReceiptMonoFontFamily),
                                     fontWeight = FontWeight.Bold,
                                     color = MaterialTheme.colorScheme.primary,
                                     maxLines = 1
@@ -497,33 +1073,34 @@ fun MonthPeriodSelectorBar(
                                 Text(
                                     text = bottomMonthLabel,
                                     style = MaterialTheme.typography.titleMedium,
-                                    fontWeight = FontWeight.ExtraBold,
+                                    fontWeight = FontWeight.Bold,
                                     color = MaterialTheme.colorScheme.onPrimaryContainer,
                                     maxLines = 1
                                 )
                             }
                         }
 
-                        // Right: Next Month (Year on top, Month > below)
-                        Column(
+                        // Right: Next Month
+                        Row(
                             modifier = Modifier
                                 .weight(1f)
-                                .clip(RoundedCornerShape(dimens.smallCornerRadius))
-                                .clickable { onStepMonth(1) }
-                                .padding(
-                                    horizontal = dimens.horizontalPadding * 0.45f,
-                                    vertical = dimens.itemSpacing * 0.35f
-                                )
+                                .clip(RoundedCornerShape(18.dp))
+                                .clickable {
+                                    performHaptic()
+                                    onStepMonth(1)
+                                }
+                                .padding(horizontal = 6.dp, vertical = 6.dp)
                                 .testTag("next_month_button"),
-                            horizontalAlignment = Alignment.End
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.End
                         ) {
-                            Text(
-                                text = nextPeriod.year.toString(),
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
-                                maxLines = 1
-                            )
-                            Row(verticalAlignment = Alignment.CenterVertically) {
+                            Column(horizontalAlignment = Alignment.End) {
+                                Text(
+                                    text = nextPeriod.year.toString(),
+                                    style = MaterialTheme.typography.labelSmall.copy(fontFamily = ReceiptMonoFontFamily),
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.72f),
+                                    maxLines = 1
+                                )
                                 Text(
                                     text = nextPeriod.formatShortMonth(),
                                     style = MaterialTheme.typography.labelLarge,
@@ -531,27 +1108,24 @@ fun MonthPeriodSelectorBar(
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     maxLines = 1
                                 )
-                                Spacer(modifier = Modifier.width(dimens.horizontalPadding * 0.12f))
+                            }
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Box(
+                                modifier = Modifier
+                                    .size(30.dp)
+                                    .clip(CircleShape)
+                                    .background(MaterialTheme.colorScheme.surfaceContainerHigh),
+                                contentAlignment = Alignment.Center
+                            ) {
                                 Icon(
                                     imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
                                     contentDescription = "Next Month",
                                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    modifier = Modifier.size(dimens.rowIconSize * 0.78f)
+                                    modifier = Modifier.size(18.dp)
                                 )
                             }
                         }
                     }
-
-                    Spacer(modifier = Modifier.height(dimens.itemSpacing * 0.3f))
-
-                    // Subtle Gesture Pill Handle at the bottom of the gesture bar
-                    Box(
-                        modifier = Modifier
-                            .width(dimens.screenWidth * 0.11f)
-                            .height(3.dp)
-                            .clip(CircleShape)
-                            .background(MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.32f))
-                    )
                 }
             }
         }
@@ -562,7 +1136,7 @@ fun MonthPeriodSelectorBar(
                     .fillMaxWidth()
                     .horizontalScroll(rememberScrollState()),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(dimens.horizontalPadding * 0.5f)
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 val isCustomSelected = selectedDateRangePreset == DateRangePreset.CUSTOM
                 val customChipLabel = if (isCustomSelected && customStartDateMillis != null && customEndDateMillis != null) {
@@ -572,13 +1146,16 @@ fun MonthPeriodSelectorBar(
                 }
                 FilterChip(
                     selected = isCustomSelected,
-                    onClick = { showCustomRangePicker = true },
+                    onClick = {
+                        performHaptic()
+                        showCustomRangePicker = true
+                    },
                     shape = RoundedCornerShape(50),
                     leadingIcon = {
                         Icon(
-                            imageVector = Icons.Default.DateRange,
+                            imageVector = if (isCustomSelected) Icons.Default.Check else Icons.Default.DateRange,
                             contentDescription = null,
-                            modifier = Modifier.size(dimens.rowIconSize * 0.72f)
+                            modifier = Modifier.size(FilterChipDefaults.IconSize)
                         )
                     },
                     label = { Text(customChipLabel) },
@@ -602,6 +1179,7 @@ fun MonthPeriodSelectorBar(
                     FilterChip(
                         selected = isSelected,
                         onClick = {
+                            performHaptic()
                             if (onSelectDateRangePreset != null) {
                                 if (preset == DateRangePreset.MONTH) {
                                     onSelectCurrentMonth()
@@ -614,6 +1192,17 @@ fun MonthPeriodSelectorBar(
                             }
                         },
                         shape = RoundedCornerShape(50),
+                        leadingIcon = if (isSelected) {
+                            {
+                                Icon(
+                                    imageVector = Icons.Default.Check,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(FilterChipDefaults.IconSize)
+                                )
+                            }
+                        } else {
+                            null
+                        },
                         label = { Text(chipLabel) },
                         modifier = Modifier.testTag(
                             if (preset == DateRangePreset.ALL_TIME) {
@@ -646,14 +1235,15 @@ fun MonthlyBudgetPulseCard(
     totalIncome: Double,
     monthlyBudget: Double,
     dailySafeSpend: Double,
-    remainingDays: Int,
+    @Suppress("UNUSED_PARAMETER") remainingDays: Int,
     currencySymbol: String,
     periodLabel: String,
-    household: Household?,
+    @Suppress("UNUSED_PARAMETER") household: Household?,
     monthlyTrendBars: List<MonthlySpendBar> = emptyList(),
     onEditBudgetClick: () -> Unit
 ) {
     val dimens = LocalAppDimens.current
+    val performHaptic = rememberAppHapticPerformer()
     val hasAssignedBudget = monthlyBudget > 0.0
     val rawProgress = if (hasAssignedBudget) (totalSpent / monthlyBudget).toFloat().coerceIn(0f, 1f) else 0f
     val animatedProgress by animateFloatAsState(
@@ -668,59 +1258,94 @@ fun MonthlyBudgetPulseCard(
         else -> BudgetSafeGreen
     }
 
-    Card(
+    ReceiptTicketCard(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = dimens.horizontalPadding)
-            .clickable { onEditBudgetClick() },
-        shape = RoundedCornerShape(dimens.cardCornerRadius),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surface
-        ),
-        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+            .clickable {
+                performHaptic()
+                onEditBudgetClick()
+            },
+        containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+        contentColor = MaterialTheme.colorScheme.onSurface
     ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .background(
-                    Brush.linearGradient(
+                    Brush.verticalGradient(
                         colors = listOf(
-                            MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.28f),
-                            MaterialTheme.colorScheme.surface
+                            MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.42f),
+                            MaterialTheme.colorScheme.surfaceContainerLow
                         )
                     )
                 )
                 .padding(dimens.cardPadding)
         ) {
+            // Top Thermal Receipt Stub Header
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.ReceiptLong,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Text(
+                        text = "RECEIPT SUMMARY • ${periodLabel.uppercase(Locale.getDefault())}",
+                        style = MaterialTheme.typography.labelSmall.copy(fontFamily = ReceiptMonoFontFamily),
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+                IconButton(
+                    onClick = {
+                        performHaptic()
+                        onEditBudgetClick()
+                    },
+                    modifier = Modifier
+                        .size(36.dp)
+                        .testTag("edit_monthly_budget_button")
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Edit,
+                        contentDescription = "Manage Budgets",
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(6.dp))
+
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.weight(1f)
-                ) {
+                Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text = formatCurrency(totalSpent, currencySymbol),
-                        style = MaterialTheme.typography.displayMedium,
+                        style = MaterialTheme.typography.displayMedium.copy(fontFamily = ReceiptMonoFontFamily),
                         fontWeight = FontWeight.Bold,
                         color = MaterialTheme.colorScheme.onSurface,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
-                    Spacer(modifier = Modifier.width(dimens.horizontalPadding * 0.5f))
-                    IconButton(
-                        onClick = onEditBudgetClick,
-                        modifier = Modifier
-                            .size(dimens.rowIconBoxSize * 0.75f)
-                            .testTag("edit_monthly_budget_button")
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Edit,
-                            contentDescription = "Edit Budget",
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(dimens.rowIconSize * 0.8f)
+                    if (hasAssignedBudget) {
+                        Text(
+                            text = "of ${formatCurrency(monthlyBudget, currencySymbol)} envelope",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
                 }
@@ -730,7 +1355,7 @@ fun MonthlyBudgetPulseCard(
                         modifier = Modifier.size(dimens.pulseRingSize),
                         contentAlignment = Alignment.Center
                     ) {
-                        val trackColor = MaterialTheme.colorScheme.surfaceVariant
+                        val trackColor = MaterialTheme.colorScheme.surfaceContainerHighest
                         Canvas(modifier = Modifier.size(dimens.pulseRingSize * 0.9f)) {
                             val strokeWidth = size.minDimension * 0.13f
                             drawArc(
@@ -750,29 +1375,44 @@ fun MonthlyBudgetPulseCard(
                         }
                         Text(
                             text = "$pct%",
-                            style = MaterialTheme.typography.titleLarge,
+                            style = MaterialTheme.typography.titleMedium.copy(fontFamily = ReceiptMonoFontFamily),
                             fontWeight = FontWeight.Bold,
                             color = statusColor
                         )
                     }
                 } else {
-                    OutlinedButton(
-                        onClick = onEditBudgetClick,
-                        shape = RoundedCornerShape(50)
+                    FilledTonalButton(
+                        onClick = {
+                            performHaptic()
+                            onEditBudgetClick()
+                        },
+                        shape = RoundedCornerShape(50),
+                        modifier = Modifier.testTag("home_go_to_budgets_button")
                     ) {
+                        Text("Budgets", fontWeight = FontWeight.SemiBold)
+                        Spacer(modifier = Modifier.width(4.dp))
                         Icon(
-                            imageVector = Icons.Default.Add,
+                            imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
                             contentDescription = null,
-                            modifier = Modifier.size(dimens.rowIconSize * 0.72f)
+                            modifier = Modifier.size(18.dp)
                         )
-                        Spacer(modifier = Modifier.width(dimens.horizontalPadding * 0.35f))
-                        Text("Set Budget")
                     }
                 }
             }
 
+            if (totalIncome > 0.0) {
+                Spacer(modifier = Modifier.height(dimens.itemSpacing * 0.75f))
+                MetricMiniPill(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("home_monthly_income_pill"),
+                    text = "+${formatCurrency(totalIncome, currencySymbol)} Salary / Income",
+                    accentColor = PersonalBadgeTeal
+                )
+            }
+
             if (hasAssignedBudget) {
-                Spacer(modifier = Modifier.height(dimens.itemSpacing))
+                Spacer(modifier = Modifier.height(dimens.itemSpacing * 0.85f))
 
                 val isAboveBudget = totalSpent > monthlyBudget
                 val diffAmount = kotlin.math.abs(monthlyBudget - totalSpent)
@@ -784,7 +1424,7 @@ fun MonthlyBudgetPulseCard(
 
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(dimens.horizontalPadding * 0.6f)
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     MetricMiniPill(
                         modifier = Modifier
@@ -799,15 +1439,17 @@ fun MonthlyBudgetPulseCard(
                         accentColor = MaterialTheme.colorScheme.primary
                     )
                 }
+            }
 
-                if (monthlyTrendBars.isNotEmpty()) {
-                    Spacer(modifier = Modifier.height(dimens.itemSpacing * 0.85f))
-                    HomeBudgetTrendMiniStrip(
-                        bars = monthlyTrendBars,
-                        overallBudget = monthlyBudget,
-                        currencySymbol = currencySymbol
-                    )
-                }
+            val hasTrendData = hasAssignedBudget || monthlyTrendBars.any { it.incomeTotal > 0.0 }
+            if (hasTrendData && monthlyTrendBars.isNotEmpty()) {
+                Spacer(modifier = Modifier.height(dimens.itemSpacing * 0.75f))
+                ReceiptDashedDividerLine()
+                HomeBudgetTrendMiniStrip(
+                    bars = monthlyTrendBars.takeLast(6),
+                    overallBudget = monthlyBudget,
+                    currencySymbol = currencySymbol
+                )
             }
         }
     }
@@ -820,11 +1462,12 @@ private fun HomeBudgetTrendMiniStrip(
     currencySymbol: String
 ) {
     val dimens = LocalAppDimens.current
+    val hasOverallBudget = overallBudget > 0.0
     val hasIncome = bars.any { it.incomeTotal > 0.0 }
     val maxIncome = bars.maxOfOrNull { it.incomeTotal } ?: 0.0
     val maxRef = maxOf(
         bars.maxOfOrNull { it.expenseTotal } ?: 1.0,
-        overallBudget * 1.15,
+        if (hasOverallBudget) overallBudget * 1.15 else 0.0,
         if (hasIncome) maxIncome * 1.12 else 0.0,
         1.0
     )
@@ -833,25 +1476,22 @@ private fun HomeBudgetTrendMiniStrip(
     val selectedIncome = selectedBar?.incomeTotal?.takeIf { it > 0.0 }
         ?: bars.lastOrNull { it.incomeTotal > 0.0 }?.incomeTotal
         ?: 0.0
-    val isSelectedAbove = selectedActual > overallBudget
+    val isSelectedAbove = hasOverallBudget && selectedActual > overallBudget
     val primaryColor = MaterialTheme.colorScheme.primary
-    val surfaceColor = MaterialTheme.colorScheme.surface
-    val outlineColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+    val surfaceColor = MaterialTheme.colorScheme.surfaceContainer
+    val outlineColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
 
     Surface(
         modifier = Modifier
             .fillMaxWidth()
             .testTag("home_budget_trend_line_section"),
-        shape = RoundedCornerShape(dimens.smallCornerRadius),
-        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.78f)
+        shape = RoundedCornerShape(16.dp),
+        color = MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.85f)
     ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(
-                    horizontal = dimens.horizontalPadding * 0.75f,
-                    vertical = dimens.itemSpacing * 0.6f
-                )
+                .padding(horizontal = 12.dp, vertical = 10.dp)
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -862,54 +1502,58 @@ private fun HomeBudgetTrendMiniStrip(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text(
-                        text = "Budget ${formatCompactCurrency(overallBudget, currencySymbol)}",
-                        style = MaterialTheme.typography.labelSmall,
-                        fontWeight = FontWeight.SemiBold,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+                    if (hasOverallBudget) {
+                        Text(
+                            text = "Budget ${formatCompactCurrency(overallBudget, currencySymbol)}",
+                            style = MaterialTheme.typography.labelSmall.copy(fontFamily = ReceiptMonoFontFamily),
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                     if (hasIncome) {
                         Text(
                             text = "● Income ${formatCompactCurrency(selectedIncome, currencySymbol)}",
-                            style = MaterialTheme.typography.labelSmall,
+                            style = MaterialTheme.typography.labelSmall.copy(fontFamily = ReceiptMonoFontFamily),
                             fontWeight = FontWeight.Bold,
                             color = PersonalBadgeTeal
                         )
                     }
                 }
-                Text(
-                    text = if (isSelectedAbove) "▲ Above Budget" else "▼ Below Budget",
-                    style = MaterialTheme.typography.labelSmall,
-                    fontWeight = FontWeight.ExtraBold,
-                    color = if (isSelectedAbove) BudgetDangerCoral else BudgetSafeGreen
-                )
+                if (hasOverallBudget) {
+                    Text(
+                        text = if (isSelectedAbove) "▲ Above Budget" else "▼ Below Budget",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = if (isSelectedAbove) BudgetDangerCoral else BudgetSafeGreen
+                    )
+                }
             }
             Spacer(modifier = Modifier.height(dimens.itemSpacing * 0.35f))
             Canvas(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(36.dp)
+                    .height(42.dp)
                     .testTag("home_budget_trend_canvas")
             ) {
-                val topPad = 5.dp.toPx()
-                val bottomPad = 5.dp.toPx()
+                val topPad = 6.dp.toPx()
+                val bottomPad = 6.dp.toPx()
                 val usableH = (size.height - topPad - bottomPad).coerceAtLeast(8f)
-                val budgetFraction = (overallBudget / maxRef).toFloat().coerceIn(0.06f, 0.96f)
-                val budgetY = size.height - bottomPad - usableH * budgetFraction
 
-                // Dashed horizontal overall budget threshold line
-                drawLine(
-                    color = outlineColor,
-                    start = Offset(0f, budgetY),
-                    end = Offset(size.width, budgetY),
-                    strokeWidth = 1.8.dp.toPx(),
-                    pathEffect = PathEffect.dashPathEffect(floatArrayOf(10f, 7f), 0f)
-                )
+                if (hasOverallBudget) {
+                    val budgetFraction = (overallBudget / maxRef).toFloat().coerceIn(0.06f, 0.96f)
+                    val budgetY = size.height - bottomPad - usableH * budgetFraction
+                    drawLine(
+                        color = outlineColor,
+                        start = Offset(0f, budgetY),
+                        end = Offset(size.width, budgetY),
+                        strokeWidth = 1.6.dp.toPx(),
+                        pathEffect = PathEffect.dashPathEffect(floatArrayOf(10f, 7f), 0f)
+                    )
+                }
 
                 val count = bars.size.coerceAtLeast(1)
                 val slotW = size.width / count
 
-                // Optional Salary / Income trend line when income data is available
                 if (hasIncome) {
                     val incomePts = bars.mapIndexed { idx, bar ->
                         val frac = if (bar.incomeTotal > 0.0) {
@@ -922,25 +1566,24 @@ private fun HomeBudgetTrendMiniStrip(
                         Offset(x, y)
                     }
                     if (incomePts.size >= 2) {
-                        val incomePath = Path().apply {
-                            moveTo(incomePts.first().x, incomePts.first().y)
-                            for (i in 1 until incomePts.size) {
-                                lineTo(incomePts[i].x, incomePts[i].y)
-                            }
-                        }
+                        val areaPath = buildSmoothAreaPath(incomePts, size.height - bottomPad)
                         drawPath(
-                            path = incomePath,
-                            color = PersonalBadgeTeal,
-                            style = Stroke(
-                                width = 2.dp.toPx(),
-                                cap = StrokeCap.Round,
-                                join = StrokeJoin.Round
+                            path = areaPath,
+                            brush = Brush.verticalGradient(
+                                colors = listOf(PersonalBadgeTeal.copy(alpha = 0.20f), Color.Transparent),
+                                startY = topPad,
+                                endY = size.height
                             )
+                        )
+                        drawPath(
+                            path = buildSmoothBezierPath(incomePts),
+                            color = PersonalBadgeTeal,
+                            style = Stroke(width = 2.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round)
                         )
                     }
                     incomePts.forEachIndexed { idx, pt ->
                         if (bars[idx].incomeTotal > 0.0) {
-                            val r = if (bars[idx].isSelected) 3.8.dp.toPx() else 2.8.dp.toPx()
+                            val r = if (bars[idx].isSelected) 4.dp.toPx() else 2.8.dp.toPx()
                             drawCircle(color = surfaceColor, radius = r + 1.2.dp.toPx(), center = pt)
                             drawCircle(color = PersonalBadgeTeal, radius = r, center = pt)
                         }
@@ -955,37 +1598,32 @@ private fun HomeBudgetTrendMiniStrip(
                 }
 
                 if (points.size >= 2) {
-                    val path = Path().apply {
-                        moveTo(points.first().x, points.first().y)
-                        for (i in 1 until points.size) {
-                            lineTo(points[i].x, points[i].y)
-                        }
-                    }
+                    val areaPath = buildSmoothAreaPath(points, size.height - bottomPad)
                     drawPath(
-                        path = path,
-                        color = primaryColor,
-                        style = Stroke(
-                            width = 2.2.dp.toPx(),
-                            cap = StrokeCap.Round,
-                            join = StrokeJoin.Round
+                        path = areaPath,
+                        brush = Brush.verticalGradient(
+                            colors = listOf(primaryColor.copy(alpha = 0.24f), Color.Transparent),
+                            startY = topPad,
+                            endY = size.height
                         )
+                    )
+                    drawPath(
+                        path = buildSmoothBezierPath(points),
+                        color = primaryColor,
+                        style = Stroke(width = 2.2.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round)
                     )
                 }
 
                 points.forEachIndexed { idx, pt ->
                     val bar = bars[idx]
-                    val nodeColor = if (bar.expenseTotal > overallBudget) BudgetDangerCoral else BudgetSafeGreen
+                    val nodeColor = if (hasOverallBudget && bar.expenseTotal > overallBudget) {
+                        BudgetDangerCoral
+                    } else {
+                        BudgetSafeGreen
+                    }
                     val radius = if (bar.isSelected) 4.8.dp.toPx() else 3.4.dp.toPx()
-                    drawCircle(
-                        color = surfaceColor,
-                        radius = radius + 1.5.dp.toPx(),
-                        center = pt
-                    )
-                    drawCircle(
-                        color = nodeColor,
-                        radius = radius,
-                        center = pt
-                    )
+                    drawCircle(color = surfaceColor, radius = radius + 1.5.dp.toPx(), center = pt)
+                    drawCircle(color = nodeColor, radius = radius, center = pt)
                 }
             }
         }
@@ -998,22 +1636,18 @@ private fun MetricMiniPill(
     text: String,
     accentColor: Color
 ) {
-    val dimens = LocalAppDimens.current
     Surface(
         modifier = modifier,
-        shape = RoundedCornerShape(dimens.smallCornerRadius),
-        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.85f)
+        shape = RoundedCornerShape(14.dp),
+        color = MaterialTheme.colorScheme.surfaceContainerHigh
     ) {
         Box(
-            modifier = Modifier.padding(
-                horizontal = dimens.horizontalPadding * 0.85f,
-                vertical = dimens.itemSpacing * 0.8f
-            ),
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 9.dp),
             contentAlignment = Alignment.Center
         ) {
             Text(
                 text = text,
-                style = MaterialTheme.typography.titleMedium,
+                style = MaterialTheme.typography.titleSmall.copy(fontFamily = ReceiptMonoFontFamily),
                 fontWeight = FontWeight.Bold,
                 color = accentColor,
                 maxLines = 1,
@@ -1029,9 +1663,11 @@ fun MonthlyBarGraph(
     currencySymbol: String,
     overallBudget: Double = 0.0,
     onSelectMonth: (YearMonthPeriod) -> Unit,
-    onStepMonth: ((Int) -> Unit)? = null
+    @Suppress("UNUSED_PARAMETER") onStepMonth: ((Int) -> Unit)? = null
 ) {
     val dimens = LocalAppDimens.current
+    val density = LocalDensity.current
+    val performHaptic = rememberAppHapticPerformer()
     val hasOverallBudget = overallBudget > 0.0
     val hasIncome = bars.any { it.incomeTotal > 0.0 }
     val maxExpense = bars.maxOfOrNull { it.expenseTotal }?.coerceAtLeast(1.0) ?: 1.0
@@ -1042,7 +1678,6 @@ fun MonthlyBarGraph(
         if (hasIncome) maxIncome * 1.12 else 0.0,
         1.0
     )
-    var dragAccum by remember { mutableFloatStateOf(0f) }
 
     val selectedBar = bars.firstOrNull { it.isSelected } ?: bars.lastOrNull()
     val selectedSpend = selectedBar?.expenseTotal ?: 0.0
@@ -1052,12 +1687,15 @@ fun MonthlyBarGraph(
     val isSelectedAboveBudget = hasOverallBudget && selectedSpend > overallBudget
     val budgetDiff = kotlin.math.abs(overallBudget - selectedSpend)
     val primaryColor = MaterialTheme.colorScheme.primary
-    val surfaceColor = MaterialTheme.colorScheme.surface
+    val surfaceColor = MaterialTheme.colorScheme.surfaceContainerLow
     val budgetLineColor = MaterialTheme.colorScheme.onSurfaceVariant
+    val gridLineColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f)
+    val scrollState = rememberScrollState()
+    var initialScrollDone by remember(bars.size) { mutableStateOf(false) }
 
     Column(
         modifier = Modifier.fillMaxWidth(),
-        verticalArrangement = Arrangement.spacedBy(dimens.itemSpacing * 0.45f)
+        verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
         if (hasOverallBudget) {
             Row(
@@ -1069,17 +1707,14 @@ fun MonthlyBarGraph(
             ) {
                 Surface(
                     shape = RoundedCornerShape(50),
-                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.72f)
+                    color = MaterialTheme.colorScheme.surfaceContainerHigh
                 ) {
                     Text(
                         text = "- - Budget ${formatCompactCurrency(overallBudget, currencySymbol)}",
-                        style = MaterialTheme.typography.labelSmall,
+                        style = MaterialTheme.typography.labelSmall.copy(fontFamily = ReceiptMonoFontFamily),
                         fontWeight = FontWeight.SemiBold,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(
-                            horizontal = dimens.horizontalPadding * 0.65f,
-                            vertical = dimens.itemSpacing * 0.3f
-                        )
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
                     )
                 }
 
@@ -1091,18 +1726,15 @@ fun MonthlyBarGraph(
                 }
                 Surface(
                     shape = RoundedCornerShape(50),
-                    color = badgeColor.copy(alpha = 0.15f),
+                    color = badgeColor.copy(alpha = 0.16f),
                     modifier = Modifier.testTag("overall_budget_status_pill")
                 ) {
                     Text(
                         text = statusLabel,
-                        style = MaterialTheme.typography.labelSmall,
-                        fontWeight = FontWeight.ExtraBold,
+                        style = MaterialTheme.typography.labelSmall.copy(fontFamily = ReceiptMonoFontFamily),
+                        fontWeight = FontWeight.Bold,
                         color = badgeColor,
-                        modifier = Modifier.padding(
-                            horizontal = dimens.horizontalPadding * 0.7f,
-                            vertical = dimens.itemSpacing * 0.3f
-                        )
+                        modifier = Modifier.padding(horizontal = 11.dp, vertical = 4.dp)
                     )
                 }
             }
@@ -1122,13 +1754,10 @@ fun MonthlyBarGraph(
                 ) {
                     Text(
                         text = "● Salary / Income ${formatCompactCurrency(selectedIncomeDisplay, currencySymbol)}",
-                        style = MaterialTheme.typography.labelSmall,
+                        style = MaterialTheme.typography.labelSmall.copy(fontFamily = ReceiptMonoFontFamily),
                         fontWeight = FontWeight.Bold,
                         color = PersonalBadgeTeal,
-                        modifier = Modifier.padding(
-                            horizontal = dimens.horizontalPadding * 0.65f,
-                            vertical = dimens.itemSpacing * 0.3f
-                        )
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
                     )
                 }
 
@@ -1142,7 +1771,7 @@ fun MonthlyBarGraph(
                     }
                     Text(
                         text = netLabel,
-                        style = MaterialTheme.typography.labelSmall,
+                        style = MaterialTheme.typography.labelSmall.copy(fontFamily = ReceiptMonoFontFamily),
                         fontWeight = FontWeight.SemiBold,
                         color = netColor
                     )
@@ -1150,245 +1779,304 @@ fun MonthlyBarGraph(
             }
         }
 
-        BoxWithConstraints(
-            modifier = Modifier
-                .fillMaxWidth()
-                .pointerInput(bars) {
-                    detectHorizontalDragGestures(
-                        onDragStart = { dragAccum = 0f },
-                        onHorizontalDrag = { change, dragAmount ->
-                            change.consume()
-                            dragAccum += dragAmount
-                        },
-                        onDragEnd = {
-                            val currentSelected = bars.firstOrNull { it.isSelected } ?: bars.lastOrNull()
-                            val threshold = size.width * 0.14f
-                            if (dragAccum > threshold) {
-                                if (onStepMonth != null) {
-                                    onStepMonth(-1)
-                                } else if (currentSelected != null) {
-                                    onSelectMonth(currentSelected.period.previousMonth())
-                                }
-                            } else if (dragAccum < -threshold) {
-                                if (onStepMonth != null) {
-                                    onStepMonth(1)
-                                } else if (currentSelected != null) {
-                                    onSelectMonth(currentSelected.period.nextMonth())
-                                }
-                            }
-                            dragAccum = 0f
-                        }
-                    )
+        BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
+            val viewportWidth = maxWidth
+            val minSlotWidth = if (hasIncome) 74.dp else 64.dp
+            val slotWidth = if (bars.size > 6) {
+                (viewportWidth / 5.2f).coerceAtLeast(minSlotWidth)
+            } else {
+                (viewportWidth / bars.size.coerceAtLeast(1)).coerceAtLeast(minSlotWidth)
+            }
+            val totalContentWidth = (slotWidth * bars.size.coerceAtLeast(1)).coerceAtLeast(viewportWidth)
+            val singleBarWidth = if (hasIncome) {
+                (slotWidth * 0.26f).coerceIn(12.dp, 20.dp)
+            } else {
+                (slotWidth * 0.40f).coerceIn(16.dp, 30.dp)
+            }
+            val maxBarHeight = dimens.barChartHeight * 0.56f
+            val chartHeight = if (hasIncome) dimens.barChartHeight * 1.15f else dimens.barChartHeight
+
+            LaunchedEffect(bars.size, totalContentWidth) {
+                if (!initialScrollDone && bars.size > 6) {
+                    val selectedIndex = bars.indexOfFirst { it.isSelected }.takeIf { it >= 0 } ?: (bars.size - 1)
+                    val targetPx = with(density) {
+                        ((slotWidth * (selectedIndex + 1)) - viewportWidth).coerceAtLeast(0.dp).roundToPx()
+                    }
+                    scrollState.scrollTo(targetPx)
+                    initialScrollDone = true
                 }
-        ) {
-            val barWidth = (maxWidth / (bars.size.coerceAtLeast(1) * 2.2f)).coerceIn(18.dp, 36.dp)
-            val maxBarHeight = dimens.barChartHeight * 0.58f
+            }
 
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(dimens.barChartHeight)
+                    .horizontalScroll(scrollState)
+                    .testTag("monthly_bar_graph_scroll_container")
             ) {
-                Row(
+                Box(
                     modifier = Modifier
-                        .fillMaxSize()
-                        .padding(top = dimens.itemSpacing * 0.5f),
-                    horizontalArrangement = Arrangement.SpaceEvenly,
-                    verticalAlignment = Alignment.Bottom
+                        .width(totalContentWidth)
+                        .height(chartHeight)
                 ) {
-                    bars.forEach { bar ->
-                        val heightFraction = (bar.expenseTotal / maxReference).toFloat().coerceIn(0.08f, 1f)
-                        val isBarAboveBudget = hasOverallBudget && bar.expenseTotal > overallBudget
-                        val barColor = when {
-                            hasOverallBudget && bar.isSelected -> if (isBarAboveBudget) BudgetDangerCoral else BudgetSafeGreen
-                            hasOverallBudget -> if (isBarAboveBudget) {
-                                BudgetDangerCoral.copy(alpha = 0.62f)
-                            } else {
-                                BudgetSafeGreen.copy(alpha = 0.58f)
-                            }
-                            bar.isSelected -> MaterialTheme.colorScheme.primary
-                            else -> MaterialTheme.colorScheme.secondary.copy(alpha = 0.55f)
-                        }
-                        val amountText = if (bar.expenseTotal > 0) {
-                            val arrow = if (hasOverallBudget) {
-                                if (isBarAboveBudget) "▲" else "▼"
-                            } else {
-                                ""
-                            }
-                            "$arrow${formatCompactCurrency(bar.expenseTotal, currencySymbol)}"
-                        } else {
-                            "-"
-                        }
-
-                        Column(
-                            modifier = Modifier
-                                .weight(1f)
-                                .clip(RoundedCornerShape(dimens.smallCornerRadius * 0.8f))
-                                .clickable { onSelectMonth(bar.period) }
-                                .padding(
-                                    horizontal = dimens.horizontalPadding * 0.15f,
-                                    vertical = dimens.itemSpacing * 0.3f
-                                ),
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            verticalArrangement = Arrangement.Bottom
-                        ) {
-                            Text(
-                                text = amountText,
-                                style = MaterialTheme.typography.labelSmall,
-                                color = when {
-                                    hasOverallBudget && bar.expenseTotal > 0 -> if (isBarAboveBudget) BudgetDangerCoral else BudgetSafeGreen
-                                    bar.isSelected -> MaterialTheme.colorScheme.primary
-                                    else -> MaterialTheme.colorScheme.onSurfaceVariant
-                                },
-                                fontWeight = if (bar.isSelected || hasOverallBudget) FontWeight.Bold else FontWeight.Normal,
-                                maxLines = 1
-                            )
-                            Spacer(modifier = Modifier.height(dimens.itemSpacing * 0.45f))
-                            Box(
-                                modifier = Modifier
-                                    .width(barWidth)
-                                    .height((maxBarHeight * heightFraction).coerceAtLeast(8.dp))
-                                    .clip(RoundedCornerShape(50))
-                                    .background(barColor)
-                            )
-                            Spacer(modifier = Modifier.height(dimens.itemSpacing * 0.45f))
-                            Text(
-                                text = bar.label,
-                                style = MaterialTheme.typography.labelMedium,
-                                fontWeight = if (bar.isSelected) FontWeight.Bold else FontWeight.Normal,
-                                color = if (bar.isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                                textAlign = TextAlign.Center
+                    // Background Horizontal M3 Reference Grid Lines (inspired by FIR Equalizer)
+                    Canvas(modifier = Modifier.fillMaxSize()) {
+                        val bottomLabelReservePx = (dimens.itemSpacing * 1.05f + 18.dp).toPx()
+                        val maxBarAreaPx = maxBarHeight.toPx()
+                        val barBottomY = (size.height - bottomLabelReservePx).coerceAtLeast(maxBarAreaPx)
+                        for (step in 0..3) {
+                            val y = barBottomY - (maxBarAreaPx * (step / 3f))
+                            drawLine(
+                                color = gridLineColor,
+                                start = Offset(0f, y),
+                                end = Offset(size.width, y),
+                                strokeWidth = 1.dp.toPx()
                             )
                         }
                     }
-                }
 
-                // Overlay Canvas for Salary / Income Trend Line (if available)
-                if (hasIncome && bars.isNotEmpty()) {
-                    Canvas(
+                    Row(
                         modifier = Modifier
                             .fillMaxSize()
-                            .testTag("salary_income_trend_canvas")
+                            .padding(top = 6.dp),
+                        horizontalArrangement = Arrangement.SpaceEvenly,
+                        verticalAlignment = Alignment.Bottom
                     ) {
-                        val bottomLabelReservePx = (dimens.itemSpacing * 1.1f + 18.dp).toPx()
-                        val maxBarAreaPx = maxBarHeight.toPx()
-                        val barBottomY = (size.height - bottomLabelReservePx).coerceAtLeast(maxBarAreaPx)
-                        val slotWidth = size.width / bars.size.coerceAtLeast(1)
-
-                        val incomePoints = bars.mapIndexed { index, bar ->
-                            val frac = if (bar.incomeTotal > 0.0) {
-                                (bar.incomeTotal / maxReference).toFloat().coerceIn(0.08f, 1f)
-                            } else {
-                                0.04f
+                        bars.forEach { bar ->
+                            val expFraction = (bar.expenseTotal / maxReference).toFloat().coerceIn(0.08f, 1f)
+                            val incFraction = (bar.incomeTotal / maxReference).toFloat().coerceIn(0.08f, 1f)
+                            val isBarAboveBudget = hasOverallBudget && bar.expenseTotal > overallBudget
+                            val expBarColor = when {
+                                hasOverallBudget && bar.isSelected -> if (isBarAboveBudget) BudgetDangerCoral else BudgetSafeGreen
+                                hasOverallBudget -> if (isBarAboveBudget) {
+                                    BudgetDangerCoral.copy(alpha = 0.56f)
+                                } else {
+                                    BudgetSafeGreen.copy(alpha = 0.52f)
+                                }
+                                bar.isSelected -> MaterialTheme.colorScheme.primary
+                                else -> MaterialTheme.colorScheme.primary.copy(alpha = 0.34f)
                             }
-                            val cx = slotWidth * (index + 0.5f)
-                            val cy = (barBottomY - maxBarAreaPx * frac).coerceIn(6.dp.toPx(), barBottomY - 4.dp.toPx())
-                            Offset(cx, cy)
-                        }
+                            val incBarColor = if (bar.isSelected) {
+                                PersonalBadgeTeal
+                            } else {
+                                PersonalBadgeTeal.copy(alpha = 0.62f)
+                            }
+                            val amountText = if (bar.expenseTotal > 0) {
+                                val arrow = if (hasOverallBudget) {
+                                    if (isBarAboveBudget) "▲" else "▼"
+                                } else {
+                                    ""
+                                }
+                                "$arrow${formatCompactCurrency(bar.expenseTotal, currencySymbol)}"
+                            } else {
+                                "-"
+                            }
 
-                        if (incomePoints.size >= 2) {
-                            val incomePath = Path().apply {
-                                moveTo(incomePoints.first().x, incomePoints.first().y)
-                                for (i in 1 until incomePoints.size) {
-                                    lineTo(incomePoints[i].x, incomePoints[i].y)
+                            Column(
+                                modifier = Modifier
+                                    .width(slotWidth)
+                                    .clip(RoundedCornerShape(16.dp))
+                                    .background(
+                                        if (bar.isSelected) {
+                                            MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.55f)
+                                        } else {
+                                            Color.Transparent
+                                        }
+                                    )
+                                    .clickable {
+                                        performHaptic()
+                                        onSelectMonth(bar.period)
+                                    }
+                                    .padding(horizontal = 2.dp, vertical = 4.dp)
+                                    .testTag("month_bar_column_${bar.period.year}_${bar.period.month}"),
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.Bottom
+                            ) {
+                                if (bar.incomeTotal > 0.0) {
+                                    Text(
+                                        text = "+${formatCompactCurrency(bar.incomeTotal, currencySymbol)}",
+                                        style = MaterialTheme.typography.labelSmall.copy(fontFamily = ReceiptMonoFontFamily),
+                                        color = PersonalBadgeTeal,
+                                        fontWeight = FontWeight.Bold,
+                                        maxLines = 1,
+                                        modifier = Modifier.testTag("month_income_label_${bar.period.year}_${bar.period.month}")
+                                    )
+                                }
+                                Text(
+                                    text = amountText,
+                                    style = MaterialTheme.typography.labelSmall.copy(fontFamily = ReceiptMonoFontFamily),
+                                    color = when {
+                                        hasOverallBudget && bar.expenseTotal > 0 -> if (isBarAboveBudget) BudgetDangerCoral else BudgetSafeGreen
+                                        bar.isSelected -> MaterialTheme.colorScheme.primary
+                                        else -> MaterialTheme.colorScheme.onSurfaceVariant
+                                    },
+                                    fontWeight = if (bar.isSelected || hasOverallBudget) FontWeight.Bold else FontWeight.Normal,
+                                    maxLines = 1
+                                )
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Row(
+                                    verticalAlignment = Alignment.Bottom,
+                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .width(singleBarWidth)
+                                            .height((maxBarHeight * expFraction).coerceAtLeast(8.dp))
+                                            .clip(RoundedCornerShape(topStart = 8.dp, topEnd = 8.dp, bottomStart = 4.dp, bottomEnd = 4.dp))
+                                            .background(expBarColor)
+                                    )
+                                    if (bar.incomeTotal > 0.0) {
+                                        Box(
+                                            modifier = Modifier
+                                                .width(singleBarWidth)
+                                                .height((maxBarHeight * incFraction).coerceAtLeast(8.dp))
+                                                .clip(RoundedCornerShape(topStart = 8.dp, topEnd = 8.dp, bottomStart = 4.dp, bottomEnd = 4.dp))
+                                                .background(incBarColor)
+                                                .testTag("month_income_bar_${bar.period.year}_${bar.period.month}")
+                                        )
+                                    }
+                                }
+                                Spacer(modifier = Modifier.height(5.dp))
+                                Text(
+                                    text = bar.label,
+                                    style = MaterialTheme.typography.labelMedium,
+                                    fontWeight = if (bar.isSelected) FontWeight.Bold else FontWeight.Medium,
+                                    color = if (bar.isSelected) MaterialTheme.colorScheme.onSecondaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
+                                    textAlign = TextAlign.Center
+                                )
+                            }
+                        }
+                    }
+
+                    // Smooth Bezier Curve + Gradient Fill + Circular Nodes for Salary / Income
+                    if (hasIncome && bars.isNotEmpty()) {
+                        Canvas(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .testTag("salary_income_trend_canvas")
+                        ) {
+                            val bottomLabelReservePx = (dimens.itemSpacing * 1.05f + 18.dp).toPx()
+                            val maxBarAreaPx = maxBarHeight.toPx()
+                            val barBottomY = (size.height - bottomLabelReservePx).coerceAtLeast(maxBarAreaPx)
+                            val slotPx = size.width / bars.size.coerceAtLeast(1)
+
+                            val incomePoints = bars.mapIndexed { index, bar ->
+                                val frac = if (bar.incomeTotal > 0.0) {
+                                    (bar.incomeTotal / maxReference).toFloat().coerceIn(0.08f, 1f)
+                                } else {
+                                    0.04f
+                                }
+                                val cx = slotPx * (index + 0.5f)
+                                val cy = (barBottomY - maxBarAreaPx * frac).coerceIn(6.dp.toPx(), barBottomY - 4.dp.toPx())
+                                Offset(cx, cy)
+                            }
+
+                            if (incomePoints.size >= 2) {
+                                val area = buildSmoothAreaPath(incomePoints, barBottomY)
+                                drawPath(
+                                    path = area,
+                                    brush = Brush.verticalGradient(
+                                        colors = listOf(PersonalBadgeTeal.copy(alpha = 0.22f), Color.Transparent),
+                                        startY = barBottomY - maxBarAreaPx,
+                                        endY = barBottomY
+                                    )
+                                )
+                                drawPath(
+                                    path = buildSmoothBezierPath(incomePoints),
+                                    color = PersonalBadgeTeal,
+                                    style = Stroke(
+                                        width = 2.6.dp.toPx(),
+                                        cap = StrokeCap.Round,
+                                        join = StrokeJoin.Round
+                                    )
+                                )
+                            }
+
+                            incomePoints.forEachIndexed { index, point ->
+                                val bar = bars[index]
+                                if (bar.incomeTotal > 0.0) {
+                                    val nodeRadius = if (bar.isSelected) 5.6.dp.toPx() else 4.2.dp.toPx()
+                                    drawCircle(
+                                        color = surfaceColor,
+                                        radius = nodeRadius + 2.dp.toPx(),
+                                        center = point
+                                    )
+                                    drawCircle(
+                                        color = PersonalBadgeTeal,
+                                        radius = nodeRadius,
+                                        center = point
+                                    )
                                 }
                             }
-                            drawPath(
-                                path = incomePath,
-                                color = PersonalBadgeTeal,
-                                style = Stroke(
-                                    width = 2.5.dp.toPx(),
-                                    cap = StrokeCap.Round,
-                                    join = StrokeJoin.Round
-                                )
-                            )
                         }
+                    }
 
-                        incomePoints.forEachIndexed { index, point ->
-                            val bar = bars[index]
-                            if (bar.incomeTotal > 0.0) {
-                                val nodeRadius = if (bar.isSelected) 5.2.dp.toPx() else 3.8.dp.toPx()
+                    // Smooth Bezier Curve + Gradient Fill + Circular Nodes for Overall Budget & Spend
+                    if (hasOverallBudget && bars.isNotEmpty()) {
+                        Canvas(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .testTag("overall_budget_trend_canvas")
+                        ) {
+                            val bottomLabelReservePx = (dimens.itemSpacing * 1.05f + 18.dp).toPx()
+                            val maxBarAreaPx = maxBarHeight.toPx()
+                            val barBottomY = (size.height - bottomLabelReservePx).coerceAtLeast(maxBarAreaPx)
+
+                            val budgetFraction = (overallBudget / maxReference).toFloat().coerceIn(0.08f, 1f)
+                            val budgetY = (barBottomY - maxBarAreaPx * budgetFraction).coerceIn(8.dp.toPx(), barBottomY - 4.dp.toPx())
+
+                            drawLine(
+                                color = budgetLineColor.copy(alpha = 0.72f),
+                                start = Offset(4.dp.toPx(), budgetY),
+                                end = Offset(size.width - 4.dp.toPx(), budgetY),
+                                strokeWidth = 1.8.dp.toPx(),
+                                pathEffect = PathEffect.dashPathEffect(floatArrayOf(12f, 8f), 0f)
+                            )
+
+                            val slotPx = size.width / bars.size.coerceAtLeast(1)
+                            val trendPoints = bars.mapIndexed { index, bar ->
+                                val frac = (bar.expenseTotal / maxReference).toFloat().coerceIn(0.08f, 1f)
+                                val cx = slotPx * (index + 0.5f)
+                                val cy = (barBottomY - maxBarAreaPx * frac).coerceIn(6.dp.toPx(), barBottomY - 4.dp.toPx())
+                                Offset(cx, cy)
+                            }
+
+                            if (trendPoints.size >= 2) {
+                                val area = buildSmoothAreaPath(trendPoints, barBottomY)
+                                drawPath(
+                                    path = area,
+                                    brush = Brush.verticalGradient(
+                                        colors = listOf(primaryColor.copy(alpha = 0.25f), Color.Transparent),
+                                        startY = barBottomY - maxBarAreaPx,
+                                        endY = barBottomY
+                                    )
+                                )
+                                drawPath(
+                                    path = buildSmoothBezierPath(trendPoints),
+                                    color = primaryColor,
+                                    style = Stroke(
+                                        width = 2.6.dp.toPx(),
+                                        cap = StrokeCap.Round,
+                                        join = StrokeJoin.Round
+                                    )
+                                )
+                            }
+
+                            trendPoints.forEachIndexed { index, point ->
+                                val bar = bars[index]
+                                val isAbove = bar.expenseTotal > overallBudget
+                                val nodeColor = if (isAbove) BudgetDangerCoral else BudgetSafeGreen
+                                val nodeRadius = if (bar.isSelected) 5.8.dp.toPx() else 4.4.dp.toPx()
                                 drawCircle(
                                     color = surfaceColor,
-                                    radius = nodeRadius + 1.6.dp.toPx(),
+                                    radius = nodeRadius + 2.dp.toPx(),
                                     center = point
                                 )
                                 drawCircle(
-                                    color = PersonalBadgeTeal,
+                                    color = nodeColor,
                                     radius = nodeRadius,
                                     center = point
                                 )
                             }
-                        }
-                    }
-                }
-
-                // Overlay Canvas for Overall Budget Reference Line & Actual Spend Trend Line
-                if (hasOverallBudget && bars.isNotEmpty()) {
-                    Canvas(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .testTag("overall_budget_trend_canvas")
-                    ) {
-                        val bottomLabelReservePx = (dimens.itemSpacing * 1.1f + 18.dp).toPx()
-                        val maxBarAreaPx = maxBarHeight.toPx()
-                        val barBottomY = (size.height - bottomLabelReservePx).coerceAtLeast(maxBarAreaPx)
-
-                        val budgetFraction = (overallBudget / maxReference).toFloat().coerceIn(0.08f, 1f)
-                        val budgetY = (barBottomY - maxBarAreaPx * budgetFraction).coerceIn(8.dp.toPx(), barBottomY - 4.dp.toPx())
-
-                        // 1. Horizontal Dashed Overall Budget Threshold Line
-                        drawLine(
-                            color = budgetLineColor.copy(alpha = 0.78f),
-                            start = Offset(4.dp.toPx(), budgetY),
-                            end = Offset(size.width - 4.dp.toPx(), budgetY),
-                            strokeWidth = 2.dp.toPx(),
-                            pathEffect = PathEffect.dashPathEffect(floatArrayOf(12f, 8f), 0f)
-                        )
-
-                        // 2. Actual Spend Trend Line connecting each month's spend
-                        val slotWidth = size.width / bars.size.coerceAtLeast(1)
-                        val trendPoints = bars.mapIndexed { index, bar ->
-                            val frac = (bar.expenseTotal / maxReference).toFloat().coerceIn(0.08f, 1f)
-                            val cx = slotWidth * (index + 0.5f)
-                            val cy = (barBottomY - maxBarAreaPx * frac).coerceIn(6.dp.toPx(), barBottomY - 4.dp.toPx())
-                            Offset(cx, cy)
-                        }
-
-                        if (trendPoints.size >= 2) {
-                            val trendPath = Path().apply {
-                                moveTo(trendPoints.first().x, trendPoints.first().y)
-                                for (i in 1 until trendPoints.size) {
-                                    lineTo(trendPoints[i].x, trendPoints[i].y)
-                                }
-                            }
-                            drawPath(
-                                path = trendPath,
-                                color = primaryColor,
-                                style = Stroke(
-                                    width = 2.5.dp.toPx(),
-                                    cap = StrokeCap.Round,
-                                    join = StrokeJoin.Round
-                                )
-                            )
-                        }
-
-                        // 3. Trend Nodes colored by whether actual spend was Below or Above overall budget
-                        trendPoints.forEachIndexed { index, point ->
-                            val bar = bars[index]
-                            val isAbove = bar.expenseTotal > overallBudget
-                            val nodeColor = if (isAbove) BudgetDangerCoral else BudgetSafeGreen
-                            val nodeRadius = if (bar.isSelected) 5.5.dp.toPx() else 4.dp.toPx()
-                            drawCircle(
-                                color = surfaceColor,
-                                radius = nodeRadius + 1.8.dp.toPx(),
-                                center = point
-                            )
-                            drawCircle(
-                                color = nodeColor,
-                                radius = nodeRadius,
-                                center = point
-                            )
                         }
                     }
                 }
@@ -1409,7 +2097,7 @@ fun AccountsCarouselStrip(
             modifier = Modifier
                 .fillMaxWidth()
                 .horizontalScroll(rememberScrollState()),
-            horizontalArrangement = Arrangement.spacedBy(dimens.horizontalPadding * 0.6f),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             accounts.forEach { acc ->
@@ -1424,15 +2112,15 @@ fun AccountsCarouselStrip(
                     accountType = acc.accountType
                 )
             }
-            OutlinedButton(
+            FilledTonalButton(
                 onClick = onAddAccountClick,
-                shape = RoundedCornerShape(dimens.smallCornerRadius),
+                shape = RoundedCornerShape(16.dp),
                 modifier = Modifier
                     .height(dimens.navPillHeight)
                     .testTag("add_account_button")
             ) {
-                Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(dimens.rowIconSize * 0.8f))
-                Spacer(modifier = Modifier.width(dimens.horizontalPadding * 0.35f))
+                Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(modifier = Modifier.width(6.dp))
                 Text("Add")
             }
         }
@@ -1445,7 +2133,6 @@ private fun AccountSummaryCard(
     amountLabel: String,
     accountType: String
 ) {
-    val dimens = LocalAppDimens.current
     val icon = when (accountType) {
         "CREDIT_CARD" -> Icons.Default.CreditCard
         "UPI" -> Icons.Default.QrCode2
@@ -1453,31 +2140,21 @@ private fun AccountSummaryCard(
         else -> Icons.Default.AccountBalance
     }
     Surface(
-        shape = RoundedCornerShape(dimens.smallCornerRadius),
-        color = MaterialTheme.colorScheme.surfaceVariant
+        shape = RoundedCornerShape(18.dp),
+        color = MaterialTheme.colorScheme.surfaceContainerHigh
     ) {
         Row(
-            modifier = Modifier.padding(
-                horizontal = dimens.horizontalPadding * 0.85f,
-                vertical = dimens.itemSpacing * 0.8f
-            ),
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Box(
-                modifier = Modifier
-                    .size(dimens.rowIconBoxSize * 0.78f)
-                    .clip(CircleShape)
-                    .background(MaterialTheme.colorScheme.primaryContainer),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    imageVector = icon,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.size(dimens.rowIconSize * 0.8f)
-                )
-            }
-            Spacer(modifier = Modifier.width(dimens.horizontalPadding * 0.6f))
+            SquircleIconBadge(
+                icon = icon,
+                tint = MaterialTheme.colorScheme.primary,
+                containerColor = MaterialTheme.colorScheme.primaryContainer,
+                size = 36.dp,
+                iconSize = 18.dp
+            )
+            Spacer(modifier = Modifier.width(10.dp))
             Text(
                 text = title,
                 style = MaterialTheme.typography.titleSmall,
@@ -1485,10 +2162,10 @@ private fun AccountSummaryCard(
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
-            Spacer(modifier = Modifier.width(dimens.horizontalPadding * 0.6f))
+            Spacer(modifier = Modifier.width(10.dp))
             Text(
                 text = amountLabel,
-                style = MaterialTheme.typography.titleSmall,
+                style = MaterialTheme.typography.titleSmall.copy(fontFamily = ReceiptMonoFontFamily),
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.primary,
                 maxLines = 1
@@ -1498,40 +2175,51 @@ private fun AccountSummaryCard(
 }
 
 /**
- * Single-Line Transaction Row with Relative Screen Sizing & Gesture Controls:
- * - Tap anywhere on Row -> Opens full Receipt Editor (`onEditTransaction`)
- * - Long-Press Row -> Opens Quick Category Picker (`onQuickChangeCategory`)
- * - Swipe Right -> Prompts user to Link Duplicate SMS / Transaction (`onLinkDuplicate`)
- * - Swipe Left -> Delete Transaction (`onDelete`)
+ * Connected-Stack M3 Transaction Receipt Row:
+ * Supports `shape` (for 24dp outer / 6dp inner connected M3 card stacks) and two-way
+ * progressive swipe physics with threshold icon bounce and haptic ticks.
  */
 @Composable
 fun ExpenseTransactionItemCard(
     expense: ExpenseTransaction,
     currencySymbol: String,
-    canTogglePrivacy: Boolean = false,
-    onTogglePrivacy: () -> Unit = {},
+    @Suppress("UNUSED_PARAMETER") canTogglePrivacy: Boolean = false,
+    @Suppress("UNUSED_PARAMETER") onTogglePrivacy: () -> Unit = {},
     onLinkDuplicate: () -> Unit = {},
     onDelete: () -> Unit = {},
     onEditTransaction: () -> Unit = {},
     onQuickChangeCategory: () -> Unit = {},
-    onTagClick: (String) -> Unit = {}
+    @Suppress("UNUSED_PARAMETER") onTagClick: (String) -> Unit = {},
+    shape: Shape? = null,
+    containerColor: Color? = null
 ) {
     val dimens = LocalAppDimens.current
-    val isIncome = expense.type == "INCOME"
+    val performHaptic = rememberAppHapticPerformer()
+    val effectiveShape = shape ?: RoundedCornerShape(dimens.cardCornerRadius)
+    val effectiveContainerColor = containerColor ?: MaterialTheme.colorScheme.surfaceContainerLow
+
+    val isIncome = expense.type.equals("INCOME", ignoreCase = true) ||
+        com.example.data.model.ExpenseCategories.normalizeCategory(expense.category).equals("Salary & Income", ignoreCase = true)
     val catColor = categoryAccentColor(expense.category)
     var dragOffsetX by remember { mutableFloatStateOf(0f) }
     var cardWidthPx by remember { mutableFloatStateOf(1f) }
+    var thresholdCrossed by remember { mutableStateOf(false) }
     val animatedOffsetX by animateFloatAsState(
         targetValue = dragOffsetX,
         animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessMedium),
         label = "tx_swipe_offset"
+    )
+    val revealIconScale by animateFloatAsState(
+        targetValue = if (thresholdCrossed) 1.18f else 0.92f,
+        animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessMedium),
+        label = "tx_swipe_icon_scale"
     )
 
     Box(
         modifier = Modifier
             .fillMaxWidth()
             .onSizeChanged { cardWidthPx = it.width.toFloat().coerceAtLeast(1f) }
-            .clip(RoundedCornerShape(dimens.cardCornerRadius))
+            .clip(effectiveShape)
     ) {
         if (kotlin.math.abs(animatedOffsetX) > 6f) {
             val isSwipingRight = animatedOffsetX > 0f
@@ -1553,9 +2241,11 @@ fun ExpenseTransactionItemCard(
                             imageVector = Icons.Default.Link,
                             contentDescription = "Link Duplicate SMS / Transaction",
                             tint = bgRevealColor,
-                            modifier = Modifier.size(dimens.rowIconSize)
+                            modifier = Modifier
+                                .size(dimens.rowIconSize)
+                                .scale(revealIconScale)
                         )
-                        Spacer(modifier = Modifier.width(dimens.horizontalPadding * 0.4f))
+                        Spacer(modifier = Modifier.width(8.dp))
                         Text(
                             text = "Link Duplicate",
                             style = MaterialTheme.typography.labelLarge,
@@ -1571,12 +2261,14 @@ fun ExpenseTransactionItemCard(
                             fontWeight = FontWeight.Bold,
                             color = bgRevealColor
                         )
-                        Spacer(modifier = Modifier.width(dimens.horizontalPadding * 0.4f))
+                        Spacer(modifier = Modifier.width(8.dp))
                         Icon(
                             imageVector = Icons.Default.Delete,
                             contentDescription = "Delete Transaction",
                             tint = bgRevealColor,
-                            modifier = Modifier.size(dimens.rowIconSize)
+                            modifier = Modifier
+                                .size(dimens.rowIconSize)
+                                .scale(revealIconScale)
                         )
                     }
                 }
@@ -1587,11 +2279,17 @@ fun ExpenseTransactionItemCard(
             modifier = Modifier
                 .fillMaxWidth()
                 .offset { IntOffset(animatedOffsetX.roundToInt(), 0) }
-                .clip(RoundedCornerShape(dimens.cardCornerRadius))
+                .clip(effectiveShape)
                 .pointerInput(expense.id) {
                     detectTapGestures(
-                        onTap = { onEditTransaction() },
-                        onLongPress = { onQuickChangeCategory() }
+                        onTap = {
+                            performHaptic()
+                            onEditTransaction()
+                        },
+                        onLongPress = {
+                            performHaptic()
+                            onQuickChangeCategory()
+                        }
                     )
                 }
                 .pointerInput(expense.id, cardWidthPx) {
@@ -1600,10 +2298,16 @@ fun ExpenseTransactionItemCard(
                     detectHorizontalDragGestures(
                         onHorizontalDrag = { change, dragAmount ->
                             change.consume()
-                            val next = dragOffsetX + dragAmount
-                            dragOffsetX = next.coerceIn(-maxDrag, maxDrag)
+                            val next = (dragOffsetX + dragAmount).coerceIn(-maxDrag, maxDrag)
+                            val nowOver = kotlin.math.abs(next) > triggerThreshold
+                            if (nowOver && !thresholdCrossed) {
+                                performHaptic()
+                            }
+                            thresholdCrossed = nowOver
+                            dragOffsetX = next
                         },
                         onDragEnd = {
+                            thresholdCrossed = false
                             when {
                                 dragOffsetX > triggerThreshold -> {
                                     dragOffsetX = 0f
@@ -1619,74 +2323,77 @@ fun ExpenseTransactionItemCard(
                             }
                         },
                         onDragCancel = {
+                            thresholdCrossed = false
                             dragOffsetX = 0f
                         }
                     )
                 }
                 .testTag("expense_card_${expense.id}"),
-            shape = RoundedCornerShape(dimens.cardCornerRadius),
-            colors = CardDefaults.cardColors(
-                containerColor = MaterialTheme.colorScheme.surface
-            ),
-            elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+            shape = effectiveShape,
+            colors = CardDefaults.cardColors(containerColor = effectiveContainerColor),
+            elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
         ) {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(
-                        horizontal = dimens.horizontalPadding,
-                        vertical = dimens.itemSpacing * 1.05f
-                    ),
+                    .padding(horizontal = 16.dp, vertical = 13.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Box(
+                SquircleIconBadge(
+                    icon = categoryIcon(expense.category),
+                    tint = catColor,
+                    containerColor = catColor.copy(alpha = 0.16f),
+                    size = dimens.rowIconBoxSize,
+                    iconSize = dimens.rowIconSize,
+                    contentDescription = expense.category,
                     modifier = Modifier
-                        .size(dimens.rowIconBoxSize)
-                        .clip(RoundedCornerShape(dimens.smallCornerRadius))
-                        .background(catColor.copy(alpha = 0.16f))
-                        .clickable { onEditTransaction() }
-                        .testTag("category_pill_${expense.id}"),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        imageVector = categoryIcon(expense.category),
-                        contentDescription = expense.category,
-                        tint = catColor,
-                        modifier = Modifier.size(dimens.rowIconSize)
-                    )
-                }
+                        .clickable {
+                            performHaptic()
+                            onEditTransaction()
+                        }
+                        .testTag("category_pill_${expense.id}")
+                )
 
-                Spacer(modifier = Modifier.width(dimens.horizontalPadding * 0.85f))
+                Spacer(modifier = Modifier.width(14.dp))
 
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text = expense.title,
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    val metaParts = buildList {
+                        add(expense.category)
+                        if (expense.accountName.isNotBlank()) add(expense.accountName)
+                    }
+                    Text(
+                        text = metaParts.joinToString(" • "),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
                     if (expense.linkedSmsSignatures.isNotEmpty()) {
-                        Spacer(modifier = Modifier.height(2.dp))
+                        Spacer(modifier = Modifier.height(3.dp))
                         Surface(
                             shape = RoundedCornerShape(50),
-                            color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.75f),
+                            color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.8f),
                             modifier = Modifier.testTag("linked_sms_badge_${expense.id}")
                         ) {
                             Row(
-                                modifier = Modifier.padding(
-                                    horizontal = dimens.horizontalPadding * 0.45f,
-                                    vertical = 1.dp
-                                ),
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Icon(
                                     imageVector = Icons.Default.Link,
                                     contentDescription = null,
                                     tint = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.size(dimens.rowIconSize * 0.58f)
+                                    modifier = Modifier.size(12.dp)
                                 )
-                                Spacer(modifier = Modifier.width(3.dp))
+                                Spacer(modifier = Modifier.width(4.dp))
                                 Text(
                                     text = "Linked (${expense.linkedSmsSignatures.size + 1} SMS)",
                                     style = MaterialTheme.typography.labelSmall,
@@ -1698,21 +2405,24 @@ fun ExpenseTransactionItemCard(
                     }
                 }
 
-                Spacer(modifier = Modifier.width(dimens.horizontalPadding * 0.5f))
+                Spacer(modifier = Modifier.width(8.dp))
 
                 Text(
                     text = "${if (isIncome) "+" else "-"}${formatCurrency(expense.amount, currencySymbol)}",
-                    style = MaterialTheme.typography.titleLarge,
+                    style = MaterialTheme.typography.titleMedium.copy(fontFamily = ReceiptMonoFontFamily),
                     fontWeight = FontWeight.Bold,
                     color = if (isIncome) BudgetSafeGreen else MaterialTheme.colorScheme.onSurface
                 )
 
-                Spacer(modifier = Modifier.width(dimens.horizontalPadding * 0.2f))
+                Spacer(modifier = Modifier.width(2.dp))
 
                 IconButton(
-                    onClick = onLinkDuplicate,
+                    onClick = {
+                        performHaptic()
+                        onLinkDuplicate()
+                    },
                     modifier = Modifier
-                        .size(dimens.rowIconBoxSize * 0.72f)
+                        .size(38.dp)
                         .testTag("link_duplicate_button_${expense.id}")
                 ) {
                     Icon(
@@ -1723,7 +2433,7 @@ fun ExpenseTransactionItemCard(
                         } else {
                             MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.65f)
                         },
-                        modifier = Modifier.size(dimens.rowIconSize * 0.78f)
+                        modifier = Modifier.size(18.dp)
                     )
                 }
             }
@@ -1731,11 +2441,6 @@ fun ExpenseTransactionItemCard(
     }
 }
 
-/**
- * Interactive Pie / Donut Chart with Relative Screen Sizing:
- * Clicking directly on any pie slice on the Canvas OR clicking any category in the legend
- * invokes `onCategoryClick(category)` to display that category's transactions.
- */
 @Composable
 fun CategoryDonutChart(
     categoryTotals: List<Pair<String, Double>>,
@@ -1744,17 +2449,18 @@ fun CategoryDonutChart(
     onCategoryClick: (String) -> Unit = {}
 ) {
     val dimens = LocalAppDimens.current
+    val performHaptic = rememberAppHapticPerformer()
     val palette = listOf(
-        Color(0xFFFF5A5F), // Warm Coral
-        Color(0xFFFFB703), // Sunny Marigold
-        Color(0xFF06D6A0), // Fresh Mint
-        Color(0xFF8338EC), // Berry Pop
-        Color(0xFFEC4899), // Pink Pop
-        Color(0xFF118AB2), // Ocean Pop
-        Color(0xFFF97316), // Tangerine
-        Color(0xFF14B8A6), // Teal
-        Color(0xFFA855F7), // Purple
-        Color(0xFFEAB308)  // Gold
+        Color(0xFFFF5A5F),
+        Color(0xFFFFB703),
+        Color(0xFF06D6A0),
+        Color(0xFF8338EC),
+        Color(0xFFEC4899),
+        Color(0xFF118AB2),
+        Color(0xFFF97316),
+        Color(0xFF14B8A6),
+        Color(0xFFA855F7),
+        Color(0xFFEAB308)
     )
     val visibleSlices = categoryTotals
     val grandTotal = visibleSlices.sumOf { it.second }.coerceAtLeast(1.0)
@@ -1792,6 +2498,7 @@ fun CategoryDonutChart(
                             for ((cat, amt) in visibleSlices) {
                                 val sweep = ((amt / grandTotal) * 360.0).toFloat()
                                 if (clockwiseFromTop >= accumulated && clockwiseFromTop <= accumulated + sweep + 0.5f) {
+                                    performHaptic()
                                     onCategoryClick(cat)
                                     break
                                 }
@@ -1800,8 +2507,8 @@ fun CategoryDonutChart(
                         }
                     }
             ) {
-                val baseStroke = size.minDimension * 0.19f
-                val selectedStroke = size.minDimension * 0.24f
+                val baseStroke = size.minDimension * 0.20f
+                val selectedStroke = size.minDimension * 0.25f
                 var startAngle = -90f
                 visibleSlices.forEachIndexed { idx, (cat, amount) ->
                     val sweep = ((amount / grandTotal) * 360.0).toFloat()
@@ -1810,12 +2517,12 @@ fun CategoryDonutChart(
                     val sliceColor = if (selectedCategory == null || isSelected) {
                         palette[idx % palette.size]
                     } else {
-                        palette[idx % palette.size].copy(alpha = 0.45f)
+                        palette[idx % palette.size].copy(alpha = 0.42f)
                     }
                     drawArc(
                         color = sliceColor,
                         startAngle = startAngle,
-                        sweepAngle = sweep,
+                        sweepAngle = (sweep - 1.5f).coerceAtLeast(1f),
                         useCenter = false,
                         style = Stroke(width = stroke, cap = StrokeCap.Butt),
                         topLeft = Offset(stroke / 2, stroke / 2),
@@ -1824,24 +2531,31 @@ fun CategoryDonutChart(
                     startAngle += sweep
                 }
             }
-            Text(
-                text = "${categoryTotals.size}",
-                style = MaterialTheme.typography.titleLarge,
-                fontWeight = FontWeight.Bold
-            )
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Text(
+                    text = "${categoryTotals.size}",
+                    style = MaterialTheme.typography.titleLarge.copy(fontFamily = ReceiptMonoFontFamily),
+                    fontWeight = FontWeight.Bold
+                )
+                Text(
+                    text = "cats",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
         }
 
         Spacer(modifier = Modifier.width(dimens.horizontalPadding))
 
         Column(
             modifier = Modifier.weight(1f),
-            verticalArrangement = Arrangement.spacedBy(dimens.itemSpacing * 0.45f)
+            verticalArrangement = Arrangement.spacedBy(5.dp)
         ) {
             visibleSlices.forEachIndexed { idx, (category, amount) ->
                 val pct = ((amount / grandTotal) * 100).toInt()
                 val isSelected = selectedCategory != null && selectedCategory.equals(category, ignoreCase = true)
                 Surface(
-                    shape = RoundedCornerShape(dimens.smallCornerRadius * 0.7f),
+                    shape = RoundedCornerShape(12.dp),
                     color = if (isSelected) {
                         palette[idx % palette.size].copy(alpha = 0.16f)
                     } else {
@@ -1849,17 +2563,17 @@ fun CategoryDonutChart(
                     },
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clip(RoundedCornerShape(dimens.smallCornerRadius * 0.7f))
-                        .clickable { onCategoryClick(category) }
+                        .clip(RoundedCornerShape(12.dp))
+                        .clickable {
+                            performHaptic()
+                            onCategoryClick(category)
+                        }
                         .testTag("pie_slice_legend_${category.lowercase().replace(" ", "_")}")
                 ) {
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(
-                                horizontal = dimens.horizontalPadding * 0.4f,
-                                vertical = dimens.itemSpacing * 0.35f
-                            ),
+                            .padding(horizontal = 8.dp, vertical = 5.dp),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
@@ -1869,11 +2583,11 @@ fun CategoryDonutChart(
                         ) {
                             Box(
                                 modifier = Modifier
-                                    .size(dimens.rowIconSize * 0.45f)
-                                    .clip(CircleShape)
+                                    .size(10.dp)
+                                    .clip(RoundedCornerShape(3.dp))
                                     .background(palette[idx % palette.size])
                             )
-                            Spacer(modifier = Modifier.width(dimens.horizontalPadding * 0.5f))
+                            Spacer(modifier = Modifier.width(8.dp))
                             Text(
                                 text = category,
                                 style = MaterialTheme.typography.bodySmall,
@@ -1883,8 +2597,8 @@ fun CategoryDonutChart(
                             )
                         }
                         Text(
-                            text = "$pct% (${formatCurrency(amount, currencySymbol)})",
-                            style = MaterialTheme.typography.labelSmall,
+                            text = "$pct% (${formatCompactCurrency(amount, currencySymbol)})",
+                            style = MaterialTheme.typography.labelSmall.copy(fontFamily = ReceiptMonoFontFamily),
                             fontWeight = FontWeight.Bold
                         )
                     }
@@ -1896,18 +2610,17 @@ fun CategoryDonutChart(
 
 @Composable
 fun ReceiptZigzagEdgeStrip(
-    paperColor: Color = MaterialTheme.colorScheme.surface,
+    paperColor: Color = MaterialTheme.colorScheme.surfaceContainerLow,
     isTop: Boolean = true
 ) {
-    val dimens = LocalAppDimens.current
     Canvas(
         modifier = Modifier
             .fillMaxWidth()
-            .height(dimens.itemSpacing * 0.8f)
+            .height(8.dp)
     ) {
-        val teethCount = 24
+        val teethCount = 28
         val toothWidth = size.width / teethCount
-        val path = androidx.compose.ui.graphics.Path().apply {
+        val path = Path().apply {
             if (isTop) {
                 moveTo(0f, size.height)
                 for (i in 0 until teethCount) {
@@ -1939,15 +2652,16 @@ fun ReceiptDashedDividerLine(
     Canvas(
         modifier = modifier
             .fillMaxWidth()
-            .padding(vertical = dimens.itemSpacing * 0.65f)
+            .padding(vertical = dimens.itemSpacing * 0.6f)
             .height(2.dp)
     ) {
         drawLine(
             color = color,
             start = Offset(0f, size.height / 2f),
             end = Offset(size.width, size.height / 2f),
-            strokeWidth = 2.dp.toPx(),
-            pathEffect = androidx.compose.ui.graphics.PathEffect.dashPathEffect(floatArrayOf(12f, 10f), 0f)
+            strokeWidth = 1.8.dp.toPx(),
+            cap = StrokeCap.Round,
+            pathEffect = PathEffect.dashPathEffect(floatArrayOf(8f, 8f), 0f)
         )
     }
 }
@@ -1955,7 +2669,7 @@ fun ReceiptDashedDividerLine(
 @Composable
 fun ReceiptTicketCard(
     modifier: Modifier = Modifier,
-    containerColor: Color = MaterialTheme.colorScheme.surface,
+    containerColor: Color = MaterialTheme.colorScheme.surfaceContainerLow,
     contentColor: Color = MaterialTheme.colorScheme.onSurface,
     content: @Composable () -> Unit
 ) {
@@ -1964,7 +2678,7 @@ fun ReceiptTicketCard(
         Surface(
             color = containerColor,
             contentColor = contentColor,
-            tonalElevation = 2.dp,
+            tonalElevation = 1.dp,
             modifier = Modifier.fillMaxWidth()
         ) {
             content()
@@ -1972,6 +2686,7 @@ fun ReceiptTicketCard(
         ReceiptZigzagEdgeStrip(paperColor = containerColor, isTop = false)
     }
 }
+
 
 @Composable
 fun ThemeModeSelectorBar(

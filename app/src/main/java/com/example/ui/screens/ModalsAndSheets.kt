@@ -4,7 +4,6 @@ import android.os.Build
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateContentSize
-import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.Spring
@@ -17,9 +16,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
-import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutHorizontally
-import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -50,8 +47,11 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AccessTime
+import androidx.compose.material.icons.filled.AccountBalance
+import androidx.compose.material.icons.filled.AccountBalanceWallet
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CalendarMonth
+import androidx.compose.material.icons.filled.Category
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DeleteOutline
@@ -66,21 +66,26 @@ import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Sync
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.DatePicker
 import androidx.compose.material3.DatePickerDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TimePicker
@@ -105,11 +110,13 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
@@ -121,9 +128,12 @@ import com.example.data.local.SmsRawRecord
 import com.example.data.model.ExpenseCategories
 import com.example.data.model.ExpenseTransaction
 import com.example.data.model.FinancialAccount
+import com.example.ui.components.CircularTonalIconButton
 import com.example.ui.components.CustomDateRangePickerModal
+import com.example.ui.components.M3CheckmarkSwitch
 import com.example.ui.components.ReceiptDashedDividerLine
 import com.example.ui.components.ReceiptTicketCard
+import com.example.ui.components.SquircleIconBadge
 import com.example.ui.components.ThemeModeSelectorBar
 import com.example.ui.components.categoryIcon
 import com.example.ui.components.formatCurrency
@@ -132,7 +142,10 @@ import com.example.ui.theme.BudgetSafeGreen
 import com.example.ui.theme.HouseholdBadgeIndigo
 import com.example.ui.theme.LocalAppDimens
 import com.example.ui.theme.PersonalBadgeTeal
+import com.example.ui.theme.ReceiptMonoFontFamily
 import com.example.ui.theme.categoryAccentColor
+import com.example.ui.theme.groupedCardShape
+import com.example.ui.theme.rememberAppHapticPerformer
 import com.example.ui.viewmodel.CategorySpendProgress
 import com.example.ui.viewmodel.DateRangeFilterUtils
 import com.example.ui.viewmodel.DateRangePreset
@@ -236,6 +249,65 @@ private fun formatFullTimestamp(millis: Long): String {
 }
 
 @Composable
+private fun ModalSheetDragHandle(modifier: Modifier = Modifier) {
+    Box(
+        modifier = modifier
+            .padding(top = 4.dp, bottom = 6.dp)
+            .size(width = 36.dp, height = 4.dp)
+            .clip(RoundedCornerShape(50))
+            .background(MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.65f))
+    )
+}
+
+/**
+ * Centered M3 Expressive Modal Hero Header (inspired by Screenshot 1):
+ * Top 24dp hero icon + centered headlineSmall title + optional bodySmall subtitle.
+ */
+@Composable
+private fun M3ModalHeroHeader(
+    icon: ImageVector,
+    title: String,
+    subtitle: String? = null,
+    iconTint: Color = MaterialTheme.colorScheme.primary
+) {
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
+        Box(
+            modifier = Modifier
+                .size(44.dp)
+                .clip(RoundedCornerShape(14.dp))
+                .background(iconTint.copy(alpha = 0.14f)),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = iconTint,
+                modifier = Modifier.size(24.dp)
+            )
+        }
+        Text(
+            text = title,
+            style = MaterialTheme.typography.headlineSmall,
+            fontWeight = FontWeight.Bold,
+            color = MaterialTheme.colorScheme.onSurface,
+            textAlign = TextAlign.Center
+        )
+        if (!subtitle.isNullOrBlank()) {
+            Text(
+                text = subtitle,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.Center
+            )
+        }
+    }
+}
+
+@Composable
 private fun AnimatedModalSheetContainer(
     modifier: Modifier = Modifier,
     content: @Composable () -> Unit
@@ -246,12 +318,17 @@ private fun AnimatedModalSheetContainer(
     }
     val progress by animateFloatAsState(
         targetValue = if (entered) 1f else 0f,
-        animationSpec = tween(durationMillis = 220, easing = FastOutSlowInEasing),
-        label = "modal_sheet_slide_up"
+        animationSpec = spring(
+            dampingRatio = Spring.DampingRatioNoBouncy,
+            stiffness = Spring.StiffnessMediumLow
+        ),
+        label = "modal_sheet_spring_enter"
     )
     Box(
         modifier = modifier.graphicsLayer {
-            translationY = (1f - progress) * 42.dp.toPx()
+            translationY = (1f - progress) * 36.dp.toPx()
+            scaleX = 0.96f + 0.04f * progress
+            scaleY = 0.96f + 0.04f * progress
             alpha = 0.25f + 0.75f * progress
         }
     ) {
@@ -334,6 +411,7 @@ private fun InteractiveReceiptSheet(
     ) -> Unit
 ) {
     val dimens = LocalAppDimens.current
+    val performHaptic = rememberAppHapticPerformer()
     var title by remember { mutableStateOf(initialTitle) }
     var amountText by remember { mutableStateOf(initialAmountText) }
     var type by remember { mutableStateOf(initialType) }
@@ -372,528 +450,598 @@ private fun InteractiveReceiptSheet(
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 ReceiptTicketCard(
-                    containerColor = MaterialTheme.colorScheme.surface,
+                    containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
                     contentColor = MaterialTheme.colorScheme.onSurface
                 ) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = dimens.cardPadding, vertical = dimens.itemSpacing)
-                        .animateContentSize(spring(dampingRatio = Spring.DampingRatioLowBouncy)),
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-                    // Top Action Row: Receipt Stamp + Category Emblem + Close/Delete
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = dimens.cardPadding, vertical = dimens.itemSpacing)
+                            .animateContentSize(spring(dampingRatio = Spring.DampingRatioNoBouncy)),
+                        horizontalAlignment = Alignment.CenterHorizontally
                     ) {
-                        val stampColor = if (isShared) HouseholdBadgeIndigo else PersonalBadgeTeal
-                        Surface(
-                            shape = RoundedCornerShape(dimens.smallCornerRadius * 0.6f),
-                            color = stampColor.copy(alpha = 0.14f),
-                            modifier = Modifier
-                                .border(1.5.dp, stampColor, RoundedCornerShape(dimens.smallCornerRadius * 0.6f))
-                                .clickable(enabled = hasHousehold) { isShared = !isShared }
-                                .testTag("transaction_shared_switch")
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(
-                                    horizontal = dimens.horizontalPadding * 0.65f,
-                                    vertical = dimens.itemSpacing * 0.45f
-                                ),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Icon(
-                                    imageVector = if (isShared) Icons.Default.Groups else Icons.Default.Lock,
-                                    contentDescription = null,
-                                    tint = stampColor,
-                                    modifier = Modifier.size(dimens.rowIconSize * 0.68f)
-                                )
-                                Spacer(modifier = Modifier.width(dimens.horizontalPadding * 0.35f))
-                                Text(
-                                    text = if (isShared) "HOUSEHOLD" else "PERSONAL",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    fontWeight = FontWeight.Bold,
-                                    color = stampColor
-                                )
-                            }
-                        }
+                        ModalSheetDragHandle()
 
-                        Box(
-                            modifier = Modifier
-                                .size(dimens.rowIconBoxSize)
-                                .clip(CircleShape)
-                                .background(catAccent.copy(alpha = 0.16f)),
-                            contentAlignment = Alignment.Center
+                        // Top Action Row: Receipt Stamp + Squircle Category Emblem + Circular Tonal Actions
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Icon(
-                                imageVector = categoryIcon(category),
-                                contentDescription = category,
-                                tint = catAccent,
-                                modifier = Modifier.size(dimens.rowIconSize)
-                            )
-                        }
-
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            if (onLinkDuplicate != null) {
-                                IconButton(
-                                    onClick = onLinkDuplicate,
+                            if (hasHousehold) {
+                                val stampColor = if (isShared) HouseholdBadgeIndigo else PersonalBadgeTeal
+                                Surface(
+                                    shape = RoundedCornerShape(50),
+                                    color = stampColor.copy(alpha = 0.14f),
                                     modifier = Modifier
-                                        .size(dimens.rowIconBoxSize * 0.85f)
-                                        .testTag("edit_dialog_link_duplicate_button")
+                                        .clip(RoundedCornerShape(50))
+                                        .border(1.5.dp, stampColor, RoundedCornerShape(50))
+                                        .clickable {
+                                            performHaptic()
+                                            isShared = !isShared
+                                        }
+                                        .testTag("transaction_shared_switch")
                                 ) {
-                                    Icon(
-                                        imageVector = Icons.Default.Link,
-                                        contentDescription = "Link Duplicate SMS / Transaction",
-                                        tint = MaterialTheme.colorScheme.primary
-                                    )
-                                }
-                            }
-                            if (showDeleteButton && onDelete != null) {
-                                IconButton(
-                                    onClick = onDelete,
-                                    modifier = Modifier
-                                        .size(dimens.rowIconBoxSize * 0.85f)
-                                        .testTag("edit_dialog_delete_button")
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Default.DeleteOutline,
-                                        contentDescription = "Delete Receipt",
-                                        tint = MaterialTheme.colorScheme.error
-                                    )
-                                }
-                            }
-                            IconButton(
-                                onClick = onDismiss,
-                                modifier = Modifier.size(dimens.rowIconBoxSize * 0.85f)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Close,
-                                    contentDescription = "Close",
-                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                        }
-                    }
-
-                    // Expense vs Income Pill Toggle
-                    Spacer(modifier = Modifier.height(dimens.itemSpacing * 0.7f))
-                    Row(horizontalArrangement = Arrangement.spacedBy(dimens.horizontalPadding * 0.5f)) {
-                        FilterChip(
-                            selected = type == "EXPENSE",
-                            onClick = { type = "EXPENSE" },
-                            label = { Text("Expense") }
-                        )
-                        FilterChip(
-                            selected = type == "INCOME",
-                            onClick = {
-                                type = "INCOME"
-                                category = "Salary & Income"
-                            },
-                            label = { Text("Income") }
-                        )
-                    }
-
-                    // Original & Linked Duplicate SMS Section when editing an SMS-backed transaction
-                    val allSmsRecords = remember(rawSmsRecord, linkedSmsRecords) {
-                        val combined = buildList {
-                            if (rawSmsRecord != null && rawSmsRecord.body.isNotBlank()) add(rawSmsRecord)
-                            linkedSmsRecords.filter { it.body.isNotBlank() }.forEach { rec ->
-                                if (none { it.signature == rec.signature || it.body == rec.body }) {
-                                    add(rec)
-                                }
-                            }
-                        }
-                        combined
-                    }
-                    if (allSmsRecords.isNotEmpty()) {
-                        Spacer(modifier = Modifier.height(dimens.itemSpacing * 0.7f))
-                        Surface(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .testTag("edit_dialog_raw_sms_box"),
-                            shape = RoundedCornerShape(dimens.smallCornerRadius),
-                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.65f)
-                        ) {
-                            Column(
-                                modifier = Modifier.padding(dimens.cardPadding * 0.75f),
-                                verticalArrangement = Arrangement.spacedBy(dimens.itemSpacing * 0.5f)
-                            ) {
-                                if (allSmsRecords.size > 1) {
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                        Icon(
-                                            imageVector = Icons.Default.Link,
-                                            contentDescription = null,
-                                            tint = MaterialTheme.colorScheme.primary,
-                                            modifier = Modifier.size(dimens.rowIconSize * 0.68f)
-                                        )
-                                        Spacer(modifier = Modifier.width(dimens.horizontalPadding * 0.3f))
-                                        Text(
-                                            text = "Linked SMS Alerts (${allSmsRecords.size})",
-                                            style = MaterialTheme.typography.labelMedium,
-                                            fontWeight = FontWeight.Bold,
-                                            color = MaterialTheme.colorScheme.primary
-                                        )
-                                    }
-                                }
-                                allSmsRecords.forEachIndexed { idx, rec ->
-                                    if (idx > 0) {
-                                        ReceiptDashedDividerLine()
-                                    }
                                     Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        modifier = Modifier.padding(
+                                            horizontal = 12.dp,
+                                            vertical = 6.dp
+                                        ),
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
+                                        Icon(
+                                            imageVector = if (isShared) Icons.Default.Groups else Icons.Default.Lock,
+                                            contentDescription = null,
+                                            tint = stampColor,
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        Text(
+                                            text = if (isShared) "HOUSEHOLD" else "PERSONAL",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            fontWeight = FontWeight.Bold,
+                                            color = stampColor
+                                        )
+                                    }
+                                }
+                            } else {
+                                Spacer(modifier = Modifier.width(44.dp))
+                            }
+
+                            SquircleIconBadge(
+                                icon = categoryIcon(category),
+                                tint = catAccent,
+                                containerColor = catAccent.copy(alpha = 0.16f),
+                                size = 46.dp,
+                                iconSize = 22.dp,
+                                contentDescription = category
+                            )
+
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                if (onLinkDuplicate != null) {
+                                    CircularTonalIconButton(
+                                        icon = Icons.Default.Link,
+                                        contentDescription = "Link Duplicate SMS / Transaction",
+                                        onClick = onLinkDuplicate,
+                                        containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                                        contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+                                        modifier = Modifier.testTag("edit_dialog_link_duplicate_button")
+                                    )
+                                }
+                                if (showDeleteButton && onDelete != null) {
+                                    CircularTonalIconButton(
+                                        icon = Icons.Default.DeleteOutline,
+                                        contentDescription = "Delete Receipt",
+                                        onClick = onDelete,
+                                        containerColor = MaterialTheme.colorScheme.errorContainer,
+                                        contentColor = MaterialTheme.colorScheme.onErrorContainer,
+                                        modifier = Modifier.testTag("edit_dialog_delete_button")
+                                    )
+                                }
+                                CircularTonalIconButton(
+                                    icon = Icons.Default.Close,
+                                    contentDescription = "Close",
+                                    onClick = onDismiss
+                                )
+                            }
+                        }
+
+                        // M3 Checkmark SingleChoiceSegmentedButtonRow: Expense vs Income
+                        Spacer(modifier = Modifier.height(10.dp))
+                        SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+                            val isExp = type == "EXPENSE"
+                            SegmentedButton(
+                                selected = isExp,
+                                onClick = {
+                                    performHaptic()
+                                    type = "EXPENSE"
+                                    if (category.equals("Salary & Income", ignoreCase = true)) {
+                                        category = "Groceries"
+                                    }
+                                },
+                                shape = SegmentedButtonDefaults.itemShape(index = 0, count = 2),
+                                icon = {
+                                    SegmentedButtonDefaults.Icon(active = isExp) {
+                                        Icon(
+                                            imageVector = Icons.Default.Check,
+                                            contentDescription = null,
+                                            modifier = Modifier.size(SegmentedButtonDefaults.IconSize)
+                                        )
+                                    }
+                                },
+                                modifier = Modifier.testTag("receipt_type_chip_expense")
+                            ) {
+                                Text("Expense", fontWeight = if (isExp) FontWeight.Bold else FontWeight.Medium)
+                            }
+
+                            val isInc = type == "INCOME"
+                            SegmentedButton(
+                                selected = isInc,
+                                onClick = {
+                                    performHaptic()
+                                    type = "INCOME"
+                                    category = "Salary & Income"
+                                },
+                                shape = SegmentedButtonDefaults.itemShape(index = 1, count = 2),
+                                icon = {
+                                    SegmentedButtonDefaults.Icon(active = isInc) {
+                                        Icon(
+                                            imageVector = Icons.Default.Check,
+                                            contentDescription = null,
+                                            modifier = Modifier.size(SegmentedButtonDefaults.IconSize)
+                                        )
+                                    }
+                                },
+                                modifier = Modifier.testTag("receipt_type_chip_income")
+                            ) {
+                                Text("Income", fontWeight = if (isInc) FontWeight.Bold else FontWeight.Medium)
+                            }
+                        }
+
+                        // Original & Linked Duplicate SMS Section when editing an SMS-backed transaction
+                        val allSmsRecords = remember(rawSmsRecord, linkedSmsRecords) {
+                            buildList {
+                                if (rawSmsRecord != null && rawSmsRecord.body.isNotBlank()) add(rawSmsRecord)
+                                linkedSmsRecords.filter { it.body.isNotBlank() }.forEach { rec ->
+                                    if (none { it.signature == rec.signature || it.body == rec.body }) {
+                                        add(rec)
+                                    }
+                                }
+                            }
+                        }
+                        if (allSmsRecords.isNotEmpty()) {
+                            Spacer(modifier = Modifier.height(10.dp))
+                            Surface(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .testTag("edit_dialog_raw_sms_box"),
+                                shape = RoundedCornerShape(18.dp),
+                                color = MaterialTheme.colorScheme.surfaceContainerHigh
+                            ) {
+                                Column(
+                                    modifier = Modifier.padding(14.dp),
+                                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    if (allSmsRecords.size > 1) {
                                         Row(verticalAlignment = Alignment.CenterVertically) {
                                             Icon(
-                                                imageVector = Icons.Default.Message,
+                                                imageVector = Icons.Default.Link,
                                                 contentDescription = null,
                                                 tint = MaterialTheme.colorScheme.primary,
-                                                modifier = Modifier.size(dimens.rowIconSize * 0.72f)
+                                                modifier = Modifier.size(16.dp)
                                             )
-                                            Spacer(modifier = Modifier.width(dimens.horizontalPadding * 0.35f))
+                                            Spacer(modifier = Modifier.width(6.dp))
                                             Text(
-                                                text = rec.sender.ifBlank { "SMS" },
+                                                text = "Linked SMS Alerts (${allSmsRecords.size})",
                                                 style = MaterialTheme.typography.labelMedium,
                                                 fontWeight = FontWeight.Bold,
                                                 color = MaterialTheme.colorScheme.primary
                                             )
                                         }
+                                    }
+                                    allSmsRecords.forEachIndexed { idx, rec ->
+                                        if (idx > 0) {
+                                            ReceiptDashedDividerLine()
+                                        }
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                                Icon(
+                                                    imageVector = Icons.Default.Message,
+                                                    contentDescription = null,
+                                                    tint = MaterialTheme.colorScheme.primary,
+                                                    modifier = Modifier.size(15.dp)
+                                                )
+                                                Spacer(modifier = Modifier.width(6.dp))
+                                                Text(
+                                                    text = rec.sender.ifBlank { "SMS" },
+                                                    style = MaterialTheme.typography.labelMedium.copy(fontFamily = ReceiptMonoFontFamily),
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = MaterialTheme.colorScheme.primary
+                                                )
+                                            }
+                                            Text(
+                                                text = formatFullTimestamp(
+                                                    if (rec.timestamp > 0L) rec.timestamp else txDateMillis
+                                                ),
+                                                style = MaterialTheme.typography.labelSmall.copy(fontFamily = ReceiptMonoFontFamily),
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
                                         Text(
-                                            text = formatFullTimestamp(
-                                                if (rec.timestamp > 0L) rec.timestamp else txDateMillis
-                                            ),
-                                            style = MaterialTheme.typography.labelSmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            text = rec.body,
+                                            style = MaterialTheme.typography.bodySmall.copy(fontFamily = ReceiptMonoFontFamily),
+                                            color = MaterialTheme.colorScheme.onSurface
                                         )
                                     }
-                                    Text(
-                                        text = rec.body,
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurface
-                                    )
                                 }
                             }
                         }
-                    }
 
-                    ReceiptDashedDividerLine()
+                        ReceiptDashedDividerLine()
 
-                    var attemptedSubmit by remember { mutableStateOf(false) }
-                    val amountError = if (attemptedSubmit || amountText.isNotEmpty()) {
-                        validatePositiveAmount(amountText)
-                    } else {
-                        null
-                    }
-                    val customCatError = if (showCustomCategoryField && (attemptedSubmit || customCategoryInput.isNotEmpty())) {
-                        validateCategoryName(customCategoryInput)
-                    } else {
-                        null
-                    }
-
-                    // Big Receipt Total & Merchant Input
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(dimens.horizontalPadding * 0.6f),
-                        verticalAlignment = Alignment.Top
-                    ) {
-                        OutlinedTextField(
-                            value = amountText,
-                            onValueChange = { amountText = sanitizeDecimalInput(it) },
-                            label = { Text("Total ($currencySymbol)") },
-                            isError = amountError != null,
-                            supportingText = amountError?.let { err -> { Text(err) } },
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                            singleLine = true,
-                            shape = RoundedCornerShape(dimens.smallCornerRadius),
-                            modifier = Modifier
-                                .weight(0.48f)
-                                .testTag(amountTestTag)
-                        )
-
-                        OutlinedTextField(
-                            value = title,
-                            onValueChange = { title = it.take(100) },
-                            label = { Text("Merchant") },
-                            supportingText = if (title.length >= 95) {
-                                { Text("${title.length}/100") }
-                            } else {
-                                null
-                            },
-                            singleLine = true,
-                            shape = RoundedCornerShape(dimens.smallCornerRadius),
-                            modifier = Modifier
-                                .weight(0.52f)
-                                .testTag(titleTestTag)
-                        )
-                    }
-
-                    ReceiptDashedDividerLine()
-
-                    // Category Section on Receipt
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            text = "Category",
-                            style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.Bold
-                        )
-                        TextButton(
-                            onClick = { showCustomCategoryField = !showCustomCategoryField }
-                        ) {
-                            Icon(
-                                Icons.Default.Add,
-                                contentDescription = null,
-                                modifier = Modifier.size(dimens.rowIconSize * 0.65f)
-                            )
-                            Spacer(modifier = Modifier.width(dimens.horizontalPadding * 0.25f))
-                            Text("Custom", style = MaterialTheme.typography.labelSmall)
+                        var attemptedSubmit by remember { mutableStateOf(false) }
+                        val amountError = if (attemptedSubmit || amountText.isNotEmpty()) {
+                            validatePositiveAmount(amountText)
+                        } else {
+                            null
                         }
-                    }
-
-                    AnimatedVisibility(visible = showCustomCategoryField) {
-                        OutlinedTextField(
-                            value = customCategoryInput,
-                            onValueChange = {
-                                customCategoryInput = it.take(40)
-                                if (it.isNotBlank()) category = it.trim()
-                            },
-                            label = { Text("Custom Category") },
-                            isError = customCatError != null,
-                            supportingText = customCatError?.let { err -> { Text(err) } },
-                            singleLine = true,
-                            shape = RoundedCornerShape(dimens.smallCornerRadius),
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(bottom = dimens.itemSpacing * 0.6f)
-                        )
-                    }
-
-                    FlowRow(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(dimens.horizontalPadding * 0.4f),
-                        verticalArrangement = Arrangement.spacedBy(dimens.itemSpacing * 0.5f)
-                    ) {
-                        allCats.forEach { cat ->
-                            val isSelected = category.equals(cat, ignoreCase = true)
-                            val chipAccent = categoryAccentColor(cat)
-                            Surface(
-                                shape = RoundedCornerShape(50),
-                                color = if (isSelected) chipAccent else chipAccent.copy(alpha = 0.14f),
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(50))
-                                    .clickable { category = cat }
-                            ) {
-                                Row(
-                                    modifier = Modifier.padding(
-                                        horizontal = dimens.horizontalPadding * 0.7f,
-                                        vertical = dimens.itemSpacing * 0.45f
-                                    ),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
-                                ) {
-                                    Icon(
-                                        imageVector = categoryIcon(cat),
-                                        contentDescription = null,
-                                        tint = if (isSelected) Color.White else chipAccent,
-                                        modifier = Modifier.size(dimens.rowIconSize * 0.65f)
-                                    )
-                                    Text(
-                                        text = cat,
-                                        style = MaterialTheme.typography.labelSmall,
-                                        fontWeight = FontWeight.Bold,
-                                        color = if (isSelected) Color.White else chipAccent
-                                    )
-                                }
-                            }
-                        }
-                    }
-
-                    ReceiptDashedDividerLine()
-
-                    // Payment Method Row
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .horizontalScroll(rememberScrollState()),
-                        horizontalArrangement = Arrangement.spacedBy(dimens.horizontalPadding * 0.4f),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        listOf("UPI", "CARD", "BANK", "CASH", "WALLET").forEach { mode ->
-                            FilterChip(
-                                selected = paymentMode.equals(mode, ignoreCase = true),
-                                onClick = {
-                                    paymentMode = mode
-                                    if (mode == "CASH") accountName = "Cash Wallet"
-                                },
-                                label = { Text(mode, style = MaterialTheme.typography.labelSmall) }
-                            )
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(dimens.itemSpacing * 0.5f))
-
-                    // Exact Date & Timestamp Selector Row (No Today/Yesterday/-1 Day buttons)
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(dimens.horizontalPadding * 0.5f),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        OutlinedButton(
-                            onClick = { showDatePickerModal = true },
-                            shape = RoundedCornerShape(dimens.smallCornerRadius),
-                            modifier = Modifier
-                                .weight(1f)
-                                .testTag("tx_date_picker_button")
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.CalendarMonth,
-                                contentDescription = null,
-                                modifier = Modifier.size(dimens.rowIconSize * 0.75f)
-                            )
-                            Spacer(modifier = Modifier.width(dimens.horizontalPadding * 0.35f))
-                            Text(
-                                text = formatExactDate(txDateMillis),
-                                style = MaterialTheme.typography.labelMedium,
-                                fontWeight = FontWeight.SemiBold
-                            )
+                        val customCatError = if (showCustomCategoryField && (attemptedSubmit || customCategoryInput.isNotEmpty())) {
+                            validateCategoryName(customCategoryInput)
+                        } else {
+                            null
                         }
 
-                        OutlinedButton(
-                            onClick = { showTimePickerModal = true },
-                            shape = RoundedCornerShape(dimens.smallCornerRadius),
-                            modifier = Modifier
-                                .weight(1f)
-                                .testTag("tx_time_picker_button")
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.AccessTime,
-                                contentDescription = null,
-                                modifier = Modifier.size(dimens.rowIconSize * 0.75f)
-                            )
-                            Spacer(modifier = Modifier.width(dimens.horizontalPadding * 0.35f))
-                            Text(
-                                text = formatExactTime(txDateMillis),
-                                style = MaterialTheme.typography.labelMedium,
-                                fontWeight = FontWeight.SemiBold
-                            )
-                        }
-                    }
-
-                    // Progressive Disclosure: Expandable More Details
-                    TextButton(
-                        onClick = { showExtraDetails = !showExtraDetails },
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Text(
-                            text = if (showExtraDetails) "Less" else "More",
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Spacer(modifier = Modifier.width(dimens.horizontalPadding * 0.25f))
-                        Icon(
-                            imageVector = if (showExtraDetails) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.size(dimens.rowIconSize * 0.8f)
-                        )
-                    }
-
-                    AnimatedVisibility(visible = showExtraDetails) {
-                        Column(
+                        // Big Receipt Total & Merchant Input
+                        Row(
                             modifier = Modifier.fillMaxWidth(),
-                            verticalArrangement = Arrangement.spacedBy(dimens.itemSpacing * 0.65f)
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            verticalAlignment = Alignment.Top
                         ) {
                             OutlinedTextField(
-                                value = accountName,
-                                onValueChange = { accountName = it.take(80) },
-                                label = { Text("Account / Card") },
+                                value = amountText,
+                                onValueChange = { amountText = sanitizeDecimalInput(it) },
+                                label = { Text("Total ($currencySymbol)") },
+                                textStyle = MaterialTheme.typography.bodyLarge.copy(
+                                    fontFamily = ReceiptMonoFontFamily,
+                                    fontWeight = FontWeight.Bold
+                                ),
+                                isError = amountError != null,
+                                supportingText = amountError?.let { err -> { Text(err) } },
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                                 singleLine = true,
-                                shape = RoundedCornerShape(dimens.smallCornerRadius),
-                                modifier = Modifier.fillMaxWidth()
+                                shape = RoundedCornerShape(16.dp),
+                                modifier = Modifier
+                                    .weight(0.48f)
+                                    .testTag(amountTestTag)
                             )
+
                             OutlinedTextField(
-                                value = tagsInput,
-                                onValueChange = { tagsInput = it.take(120) },
-                                label = { Text("#Tags") },
+                                value = title,
+                                onValueChange = { title = it.take(100) },
+                                label = { Text("Merchant") },
+                                supportingText = if (title.length >= 95) {
+                                    { Text("${title.length}/100") }
+                                } else {
+                                    null
+                                },
                                 singleLine = true,
-                                shape = RoundedCornerShape(dimens.smallCornerRadius),
+                                shape = RoundedCornerShape(16.dp),
+                                modifier = Modifier
+                                    .weight(0.52f)
+                                    .testTag(titleTestTag)
+                            )
+                        }
+
+                        ReceiptDashedDividerLine()
+
+                        // Category Section on Receipt
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "Category",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.Bold
+                            )
+                            TextButton(
+                                onClick = {
+                                    performHaptic()
+                                    showCustomCategoryField = !showCustomCategoryField
+                                }
+                            ) {
+                                Icon(
+                                    Icons.Default.Add,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("Custom", style = MaterialTheme.typography.labelMedium)
+                            }
+                        }
+
+                        AnimatedVisibility(visible = showCustomCategoryField) {
+                            OutlinedTextField(
+                                value = customCategoryInput,
+                                onValueChange = {
+                                    customCategoryInput = it.take(40)
+                                    if (it.isNotBlank()) {
+                                        val trimmed = it.trim()
+                                        category = trimmed
+                                        if (trimmed.equals("Salary & Income", ignoreCase = true)) {
+                                            type = "INCOME"
+                                        }
+                                    }
+                                },
+                                label = { Text("Custom Category") },
+                                isError = customCatError != null,
+                                supportingText = customCatError?.let { err -> { Text(err) } },
+                                singleLine = true,
+                                shape = RoundedCornerShape(16.dp),
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .testTag("add_tx_tags_input")
+                                    .padding(bottom = 8.dp)
                             )
-                            OutlinedTextField(
-                                value = notes,
-                                onValueChange = { notes = it.take(500) },
-                                label = { Text("Note (${notes.length}/500)") },
-                                maxLines = 3,
-                                shape = RoundedCornerShape(dimens.smallCornerRadius),
-                                modifier = Modifier.fillMaxWidth()
+                        }
+
+                        FlowRow(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            allCats.forEach { cat ->
+                                val isSelected = category.equals(cat, ignoreCase = true)
+                                val chipAccent = categoryAccentColor(cat)
+                                val catChipTag = cat.lowercase().replace(Regex("[^a-z0-9]+"), "_").trim('_')
+                                Surface(
+                                    shape = RoundedCornerShape(50),
+                                    color = if (isSelected) chipAccent else chipAccent.copy(alpha = 0.14f),
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(50))
+                                        .clickable {
+                                            performHaptic()
+                                            category = cat
+                                            if (cat.equals("Salary & Income", ignoreCase = true)) {
+                                                type = "INCOME"
+                                            } else if (
+                                                type == "INCOME" &&
+                                                ExpenseCategories.EXPENSE_ONLY.any { it.equals(cat, ignoreCase = true) }
+                                            ) {
+                                                type = "EXPENSE"
+                                            }
+                                        }
+                                        .testTag("receipt_category_chip_$catChipTag")
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(
+                                            horizontal = 12.dp,
+                                            vertical = 7.dp
+                                        ),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(5.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = categoryIcon(cat),
+                                            contentDescription = null,
+                                            tint = if (isSelected) Color.White else chipAccent,
+                                            modifier = Modifier.size(15.dp)
+                                        )
+                                        Text(
+                                            text = cat,
+                                            style = MaterialTheme.typography.labelSmall,
+                                            fontWeight = FontWeight.Bold,
+                                            color = if (isSelected) Color.White else chipAccent
+                                        )
+                                    }
+                                }
+                            }
+                        }
+
+                        ReceiptDashedDividerLine()
+
+                        // Payment Method Row (Tonal Preset Chips)
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            listOf("UPI", "CARD", "BANK", "CASH", "WALLET").forEach { mode ->
+                                val selectedMode = paymentMode.equals(mode, ignoreCase = true)
+                                FilterChip(
+                                    selected = selectedMode,
+                                    onClick = {
+                                        performHaptic()
+                                        paymentMode = mode
+                                        if (mode == "CASH") accountName = "Cash Wallet"
+                                    },
+                                    leadingIcon = if (selectedMode) {
+                                        {
+                                            Icon(
+                                                imageVector = Icons.Default.Check,
+                                                contentDescription = null,
+                                                modifier = Modifier.size(14.dp)
+                                            )
+                                        }
+                                    } else {
+                                        null
+                                    },
+                                    label = { Text(mode, style = MaterialTheme.typography.labelSmall) },
+                                    shape = RoundedCornerShape(50)
+                                )
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        // Exact Date & Timestamp Selector Row
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            FilledTonalButton(
+                                onClick = { showDatePickerModal = true },
+                                shape = RoundedCornerShape(50),
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .testTag("tx_date_picker_button")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.CalendarMonth,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = formatExactDate(txDateMillis),
+                                    style = MaterialTheme.typography.labelMedium,
+                                    fontWeight = FontWeight.SemiBold,
+                                    maxLines = 1
+                                )
+                            }
+
+                            FilledTonalButton(
+                                onClick = { showTimePickerModal = true },
+                                shape = RoundedCornerShape(50),
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .testTag("tx_time_picker_button")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.AccessTime,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = formatExactTime(txDateMillis),
+                                    style = MaterialTheme.typography.labelMedium,
+                                    fontWeight = FontWeight.SemiBold,
+                                    maxLines = 1
+                                )
+                            }
+                        }
+
+                        // Progressive Disclosure: Expandable More Details
+                        TextButton(
+                            onClick = { showExtraDetails = !showExtraDetails },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text(
+                                text = if (showExtraDetails) "Less Details" else "More Details",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Icon(
+                                imageVector = if (showExtraDetails) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
+
+                        AnimatedVisibility(visible = showExtraDetails) {
+                            Column(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                OutlinedTextField(
+                                    value = accountName,
+                                    onValueChange = { accountName = it.take(80) },
+                                    label = { Text("Account / Card") },
+                                    singleLine = true,
+                                    shape = RoundedCornerShape(16.dp),
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+                                OutlinedTextField(
+                                    value = tagsInput,
+                                    onValueChange = { tagsInput = it.take(120) },
+                                    label = { Text("#Tags") },
+                                    singleLine = true,
+                                    shape = RoundedCornerShape(16.dp),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .testTag("add_tx_tags_input")
+                                )
+                                OutlinedTextField(
+                                    value = notes,
+                                    onValueChange = { notes = it.take(500) },
+                                    label = { Text("Note (${notes.length}/500)") },
+                                    maxLines = 3,
+                                    shape = RoundedCornerShape(16.dp),
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+                            }
+                        }
+
+                        ReceiptDashedDividerLine()
+
+                        // Save Receipt Stadium CTA Button
+                        Button(
+                            onClick = {
+                                attemptedSubmit = true
+                                val amtErr = validatePositiveAmount(amountText)
+                                val catErr = if (showCustomCategoryField && customCategoryInput.isNotBlank()) {
+                                    validateCategoryName(customCategoryInput)
+                                } else {
+                                    null
+                                }
+                                val amt = amountText.toDoubleOrNull() ?: 0.0
+                                if (amtErr == null && catErr == null && amt > 0.0) {
+                                    performHaptic()
+                                    val finalCat = if (showCustomCategoryField && customCategoryInput.isNotBlank()) {
+                                        customCategoryInput.trim()
+                                    } else {
+                                        category
+                                    }
+                                    onSave(
+                                        title.trim().ifBlank { finalCat },
+                                        amt,
+                                        type,
+                                        finalCat,
+                                        accountName.trim().ifBlank { "Cash" },
+                                        paymentMode,
+                                        tagsInput.trim(),
+                                        notes.trim(),
+                                        isShared,
+                                        txDateMillis
+                                    )
+                                }
+                            },
+                            shape = RoundedCornerShape(50),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = if (type == "INCOME") BudgetSafeGreen else MaterialTheme.colorScheme.primary
+                            ),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(54.dp)
+                                .testTag(saveTestTag)
+                        ) {
+                            Icon(
+                                Icons.Default.Check,
+                                contentDescription = null,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = "Save Receipt",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold
                             )
                         }
                     }
-
-                    ReceiptDashedDividerLine()
-
-                    // Save Receipt Button
-                    Button(
-                        onClick = {
-                            attemptedSubmit = true
-                            val amtErr = validatePositiveAmount(amountText)
-                            val catErr = if (showCustomCategoryField && customCategoryInput.isNotBlank()) {
-                                validateCategoryName(customCategoryInput)
-                            } else {
-                                null
-                            }
-                            val amt = amountText.toDoubleOrNull() ?: 0.0
-                            if (amtErr == null && catErr == null && amt > 0.0) {
-                                val finalCat = if (showCustomCategoryField && customCategoryInput.isNotBlank()) {
-                                    customCategoryInput.trim()
-                                } else {
-                                    category
-                                }
-                                onSave(
-                                    title.trim().ifBlank { finalCat },
-                                    amt,
-                                    type,
-                                    finalCat,
-                                    accountName.trim().ifBlank { "Cash" },
-                                    paymentMode,
-                                    tagsInput.trim(),
-                                    notes.trim(),
-                                    isShared,
-                                    txDateMillis
-                                )
-                            }
-                        },
-                        shape = RoundedCornerShape(dimens.smallCornerRadius),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = if (type == "INCOME") BudgetSafeGreen else MaterialTheme.colorScheme.primary
-                        ),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(dimens.navPillHeight)
-                            .testTag(saveTestTag)
-                    ) {
-                        Icon(
-                            Icons.Default.Check,
-                            contentDescription = null,
-                            modifier = Modifier.size(dimens.rowIconSize * 0.8f)
-                        )
-                        Spacer(modifier = Modifier.width(dimens.horizontalPadding * 0.5f))
-                        Text(
-                            text = "Save",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold
-                        )
-                    }
                 }
-            }
             }
         }
     }
@@ -902,6 +1050,7 @@ private fun InteractiveReceiptSheet(
         val datePickerState = rememberDatePickerState(initialSelectedDateMillis = txDateMillis)
         DatePickerDialog(
             onDismissRequest = { showDatePickerModal = false },
+            shape = RoundedCornerShape(28.dp),
             confirmButton = {
                 Button(
                     onClick = {
@@ -913,7 +1062,8 @@ private fun InteractiveReceiptSheet(
                             )
                         }
                         showDatePickerModal = false
-                    }
+                    },
+                    shape = RoundedCornerShape(50)
                 ) {
                     Text("Apply")
                 }
@@ -939,6 +1089,8 @@ private fun InteractiveReceiptSheet(
         )
         AlertDialog(
             onDismissRequest = { showTimePickerModal = false },
+            shape = RoundedCornerShape(28.dp),
+            containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
             confirmButton = {
                 Button(
                     onClick = {
@@ -948,7 +1100,8 @@ private fun InteractiveReceiptSheet(
                             currentTimestampMillis = txDateMillis
                         )
                         showTimePickerModal = false
-                    }
+                    },
+                    shape = RoundedCornerShape(50)
                 ) {
                     Text("Apply")
                 }
@@ -1099,6 +1252,7 @@ fun QuickCategoryPickerDialog(
     onOpenFullEditor: () -> Unit
 ) {
     val dimens = LocalAppDimens.current
+    val performHaptic = rememberAppHapticPerformer()
     var selectedCat by remember(transaction.id) { mutableStateOf(transaction.category) }
     var customCategory by remember { mutableStateOf("") }
 
@@ -1110,103 +1264,108 @@ fun QuickCategoryPickerDialog(
 
     Dialog(onDismissRequest = onDismiss) {
         AnimatedModalSheetContainer {
-            ReceiptTicketCard(
-                containerColor = MaterialTheme.colorScheme.surface,
-                contentColor = MaterialTheme.colorScheme.onSurface
+            Surface(
+                shape = RoundedCornerShape(28.dp),
+                color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                tonalElevation = 6.dp
             ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(dimens.cardPadding)
-                    .verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(dimens.itemSpacing)
-            ) {
-                Text(
-                    text = transaction.title,
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.Bold,
-                    maxLines = 1
-                )
-
-                ReceiptDashedDividerLine()
-
-                FlowRow(
-                    horizontalArrangement = Arrangement.spacedBy(dimens.horizontalPadding * 0.5f),
-                    verticalArrangement = Arrangement.spacedBy(dimens.itemSpacing * 0.65f)
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(dimens.cardPadding)
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    categories.forEach { cat ->
-                        val accent = categoryAccentColor(cat)
-                        val isSel = selectedCat.equals(cat, ignoreCase = true) && customCategory.isBlank()
-                        Surface(
-                            shape = RoundedCornerShape(50),
-                            color = if (isSel) accent else accent.copy(alpha = 0.14f),
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(50))
-                                .clickable {
-                                    selectedCat = cat
-                                    onSelectCategory(cat)
-                                }
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(
-                                    horizontal = dimens.horizontalPadding * 0.75f,
-                                    vertical = dimens.itemSpacing * 0.65f
-                                ),
-                                verticalAlignment = Alignment.CenterVertically
+                    M3ModalHeroHeader(
+                        icon = categoryIcon(selectedCat),
+                        title = transaction.title,
+                        subtitle = "Quickly assign a receipt category",
+                        iconTint = categoryAccentColor(selectedCat)
+                    )
+
+                    ReceiptDashedDividerLine()
+
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        categories.forEach { cat ->
+                            val accent = categoryAccentColor(cat)
+                            val isSel = selectedCat.equals(cat, ignoreCase = true) && customCategory.isBlank()
+                            Surface(
+                                shape = RoundedCornerShape(50),
+                                color = if (isSel) accent else accent.copy(alpha = 0.14f),
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(50))
+                                    .clickable {
+                                        performHaptic()
+                                        selectedCat = cat
+                                        onSelectCategory(cat)
+                                    }
                             ) {
-                                Icon(
-                                    imageVector = categoryIcon(cat),
-                                    contentDescription = null,
-                                    tint = if (isSel) Color.White else accent,
-                                    modifier = Modifier.size(dimens.rowIconSize * 0.72f)
-                                )
-                                Spacer(modifier = Modifier.width(dimens.horizontalPadding * 0.35f))
-                                Text(
-                                    text = cat,
-                                    style = MaterialTheme.typography.labelLarge,
-                                    color = if (isSel) Color.White else accent,
-                                    fontWeight = FontWeight.Bold
-                                )
-                            }
-                        }
-                    }
-                }
-
-                val customCatErr = if (customCategory.isNotEmpty()) validateCategoryName(customCategory) else null
-                OutlinedTextField(
-                    value = customCategory,
-                    onValueChange = { customCategory = it.take(40) },
-                    label = { Text("New Category") },
-                    isError = customCatErr != null,
-                    supportingText = customCatErr?.let { err -> { Text(err) } },
-                    singleLine = true,
-                    shape = RoundedCornerShape(dimens.smallCornerRadius),
-                    modifier = Modifier.fillMaxWidth()
-                )
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.End
-                ) {
-                    TextButton(onClick = onDismiss) {
-                        Text("Close")
-                    }
-                    TextButton(onClick = onOpenFullEditor) {
-                        Text("Edit Full Receipt")
-                    }
-                    if (customCategory.isNotBlank()) {
-                        Button(
-                            onClick = {
-                                if (validateCategoryName(customCategory) == null) {
-                                    onSelectCategory(customCategory.trim())
+                                Row(
+                                    modifier = Modifier.padding(
+                                        horizontal = 12.dp,
+                                        vertical = 8.dp
+                                    ),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(
+                                        imageVector = categoryIcon(cat),
+                                        contentDescription = null,
+                                        tint = if (isSel) Color.White else accent,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(
+                                        text = cat,
+                                        style = MaterialTheme.typography.labelLarge,
+                                        color = if (isSel) Color.White else accent,
+                                        fontWeight = FontWeight.Bold
+                                    )
                                 }
                             }
-                        ) {
-                            Text("Save")
+                        }
+                    }
+
+                    val customCatErr = if (customCategory.isNotEmpty()) validateCategoryName(customCategory) else null
+                    OutlinedTextField(
+                        value = customCategory,
+                        onValueChange = { customCategory = it.take(40) },
+                        label = { Text("New Category") },
+                        isError = customCatErr != null,
+                        supportingText = customCatErr?.let { err -> { Text(err) } },
+                        singleLine = true,
+                        shape = RoundedCornerShape(16.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.End,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        TextButton(onClick = onDismiss) {
+                            Text("Close")
+                        }
+                        TextButton(onClick = onOpenFullEditor) {
+                            Text("Edit Full Receipt")
+                        }
+                        if (customCategory.isNotBlank()) {
+                            Button(
+                                onClick = {
+                                    if (validateCategoryName(customCategory) == null) {
+                                        performHaptic()
+                                        onSelectCategory(customCategory.trim())
+                                    }
+                                },
+                                shape = RoundedCornerShape(50)
+                            ) {
+                                Text("Save")
+                            }
                         }
                     }
                 }
-            }
             }
         }
     }
@@ -1220,49 +1379,41 @@ fun ThemeSettingsDialog(
 ) {
     val dimens = LocalAppDimens.current
     Dialog(onDismissRequest = onDismiss) {
-        ReceiptTicketCard(
-            containerColor = MaterialTheme.colorScheme.surface,
-            contentColor = MaterialTheme.colorScheme.onSurface
-        ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(dimens.cardPadding),
-                verticalArrangement = Arrangement.spacedBy(dimens.itemSpacing),
-                horizontalAlignment = Alignment.CenterHorizontally
+        AnimatedModalSheetContainer {
+            Surface(
+                shape = RoundedCornerShape(28.dp),
+                color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                tonalElevation = 6.dp
             ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.Center
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(dimens.cardPadding),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
                 ) {
-                    Icon(
-                        imageVector = Icons.Default.Palette,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.primary
+                    M3ModalHeroHeader(
+                        icon = Icons.Default.Palette,
+                        title = "Theme",
+                        subtitle = "Choose your paper & ink mode"
                     )
-                    Spacer(modifier = Modifier.width(dimens.horizontalPadding * 0.5f))
-                    Text(
-                        text = "Theme",
-                        style = MaterialTheme.typography.titleLarge,
-                        fontWeight = FontWeight.Bold
+
+                    ReceiptDashedDividerLine()
+
+                    ThemeModeSelectorBar(
+                        currentMode = currentMode,
+                        onSelectMode = { mode ->
+                            onSelectMode(mode)
+                        }
                     )
-                }
 
-                ReceiptDashedDividerLine()
-
-                ThemeModeSelectorBar(
-                    currentMode = currentMode,
-                    onSelectMode = { mode ->
-                        onSelectMode(mode)
-                    }
-                )
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.End
-                ) {
-                    TextButton(onClick = onDismiss) {
-                        Text("Done")
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.End
+                    ) {
+                        TextButton(onClick = onDismiss) {
+                            Text("Done")
+                        }
                     }
                 }
             }
@@ -1281,6 +1432,7 @@ fun AddCategoryBudgetDialog(
     onSave: (category: String, limit: Double, alertPct: Int, isShared: Boolean) -> Unit
 ) {
     val dimens = LocalAppDimens.current
+    val performHaptic = rememberAppHapticPerformer()
     var category by remember(initialProgress?.category) {
         mutableStateOf(initialProgress?.category ?: "Groceries")
     }
@@ -1333,159 +1485,310 @@ fun AddCategoryBudgetDialog(
 
     Dialog(onDismissRequest = onDismiss) {
         AnimatedModalSheetContainer {
-            ReceiptTicketCard(
-                containerColor = MaterialTheme.colorScheme.surface,
-                contentColor = MaterialTheme.colorScheme.onSurface
+            Surface(
+                shape = RoundedCornerShape(28.dp),
+                color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                tonalElevation = 6.dp
             ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(dimens.cardPadding)
-                    .verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(dimens.itemSpacing * 0.85f)
-            ) {
-                Text(
-                    text = if ((initialProgress?.limit ?: 0.0) > 0.0) {
-                        "Edit Category Budget"
-                    } else {
-                        "Set Category Budget"
-                    },
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.Bold
-                )
-
-                ReceiptDashedDividerLine()
-
-                Text(
-                    text = "Select Category",
-                    style = MaterialTheme.typography.labelLarge,
-                    fontWeight = FontWeight.SemiBold,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-
-                FlowRow(
-                    horizontalArrangement = Arrangement.spacedBy(dimens.horizontalPadding * 0.4f),
-                    verticalArrangement = Arrangement.spacedBy(dimens.itemSpacing * 0.5f)
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(dimens.cardPadding)
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    categoryOptions.forEach { cat ->
-                        FilterChip(
-                            selected = category.equals(cat, ignoreCase = true) && customCategory.isBlank(),
-                            onClick = {
-                                category = cat
-                                customCategory = ""
-                            },
-                            leadingIcon = {
-                                Icon(
-                                    imageVector = categoryIcon(cat),
-                                    contentDescription = null,
-                                    modifier = Modifier.size(dimens.rowIconSize * 0.68f)
-                                )
-                            },
-                            label = { Text(cat, style = MaterialTheme.typography.labelSmall) },
-                            modifier = Modifier.testTag("budget_cat_chip_${cat.lowercase().replace(" ", "_")}")
-                        )
+                    M3ModalHeroHeader(
+                        icon = categoryIcon(category),
+                        title = if ((initialProgress?.limit ?: 0.0) > 0.0) {
+                            "Edit Category Budget"
+                        } else {
+                            "Set Category Budget"
+                        },
+                        iconTint = categoryAccentColor(category)
+                    )
+
+                    ReceiptDashedDividerLine()
+
+                    Text(
+                        text = "Select Category",
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        categoryOptions.forEach { cat ->
+                            FilterChip(
+                                selected = category.equals(cat, ignoreCase = true) && customCategory.isBlank(),
+                                onClick = {
+                                    performHaptic()
+                                    category = cat
+                                    customCategory = ""
+                                },
+                                leadingIcon = {
+                                    Icon(
+                                        imageVector = categoryIcon(cat),
+                                        contentDescription = null,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                },
+                                label = { Text(cat, style = MaterialTheme.typography.labelSmall) },
+                                shape = RoundedCornerShape(50),
+                                modifier = Modifier.testTag("budget_cat_chip_${cat.lowercase().replace(" ", "_")}")
+                            )
+                        }
                     }
-                }
 
-                OutlinedTextField(
-                    value = customCategory,
-                    onValueChange = { customCategory = it.take(40) },
-                    label = { Text("Or Custom Category Name") },
-                    isError = customCatError != null,
-                    supportingText = customCatError?.let { err -> { Text(err) } },
-                    singleLine = true,
-                    shape = RoundedCornerShape(dimens.smallCornerRadius),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .testTag("category_budget_custom_name_input")
-                )
+                    OutlinedTextField(
+                        value = customCategory,
+                        onValueChange = { customCategory = it.take(40) },
+                        label = { Text("Or Custom Category Name") },
+                        isError = customCatError != null,
+                        supportingText = customCatError?.let { err -> { Text(err) } },
+                        singleLine = true,
+                        shape = RoundedCornerShape(16.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("category_budget_custom_name_input")
+                    )
 
-                OutlinedTextField(
-                    value = limitText,
-                    onValueChange = { limitText = sanitizeDecimalInput(it) },
-                    label = { Text("Monthly Limit ($currencySymbol)") },
-                    isError = limitError != null,
-                    supportingText = limitError?.let { err -> { Text(err) } },
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                    singleLine = true,
-                    shape = RoundedCornerShape(dimens.smallCornerRadius),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .testTag("category_budget_limit_input")
-                )
+                    OutlinedTextField(
+                        value = limitText,
+                        onValueChange = { limitText = sanitizeDecimalInput(it) },
+                        label = { Text("Monthly Limit ($currencySymbol)") },
+                        textStyle = MaterialTheme.typography.bodyLarge.copy(
+                            fontFamily = ReceiptMonoFontFamily,
+                            fontWeight = FontWeight.SemiBold
+                        ),
+                        isError = limitError != null,
+                        supportingText = limitError?.let { err -> { Text(err) } },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                        singleLine = true,
+                        shape = RoundedCornerShape(16.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("category_budget_limit_input")
+                    )
 
-                OutlinedTextField(
-                    value = alertPctText,
-                    onValueChange = { alertPctText = it.filter { ch -> ch.isDigit() }.take(3) },
-                    label = { Text("Alert Threshold (%)") },
-                    isError = alertPctError != null,
-                    supportingText = alertPctError?.let { err -> { Text(err) } },
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                    singleLine = true,
-                    shape = RoundedCornerShape(dimens.smallCornerRadius),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .testTag("category_budget_alert_pct_input")
-                )
+                    OutlinedTextField(
+                        value = alertPctText,
+                        onValueChange = { alertPctText = it.filter { ch -> ch.isDigit() }.take(3) },
+                        label = { Text("Alert Threshold (%)") },
+                        isError = alertPctError != null,
+                        supportingText = alertPctError?.let { err -> { Text(err) } },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        singleLine = true,
+                        shape = RoundedCornerShape(16.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("category_budget_alert_pct_input")
+                    )
 
-                if (hasHousehold) {
+                    if (hasHousehold) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text(
+                                text = "Apply to Family Household",
+                                style = MaterialTheme.typography.bodyMedium
+                            )
+                            M3CheckmarkSwitch(checked = isShared, onCheckedChange = { isShared = it })
+                        }
+                    }
+
                     Row(
                         modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text(
-                            text = "Apply to Family Household",
-                            style = MaterialTheme.typography.bodyMedium
-                        )
-                        Switch(checked = isShared, onCheckedChange = { isShared = it })
-                    }
-                }
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    if ((initialProgress?.limit ?: 0.0) > 0.0) {
-                        TextButton(
-                            onClick = {
-                                val targetCat = customCategory.trim().ifBlank { category }
-                                onSave(targetCat, 0.0, 80, isShared)
-                            },
-                            modifier = Modifier.testTag("clear_category_budget_button")
-                        ) {
-                            Text("Clear Limit", color = MaterialTheme.colorScheme.error)
-                        }
-                    } else {
-                        Spacer(modifier = Modifier.width(1.dp))
-                    }
-
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        TextButton(onClick = onDismiss) {
-                            Text("Cancel")
-                        }
-                        Spacer(modifier = Modifier.width(dimens.horizontalPadding * 0.5f))
-                        Button(
-                            onClick = {
-                                attemptedSave = true
-                                val lErr = validatePositiveAmount(limitText)
-                                val cErr = if (customCategory.isNotBlank()) validateCategoryName(customCategory) else null
-                                val pct = alertPctText.toIntOrNull()
-                                val pErr = if (pct == null || pct !in 10..100) "Invalid" else null
-                                if (lErr == null && cErr == null && pErr == null) {
-                                    val limit = limitText.toDoubleOrNull() ?: 0.0
+                        if ((initialProgress?.limit ?: 0.0) > 0.0) {
+                            TextButton(
+                                onClick = {
+                                    performHaptic()
                                     val targetCat = customCategory.trim().ifBlank { category }
-                                    onSave(targetCat, limit, pct ?: 80, isShared)
-                                }
-                            },
-                            modifier = Modifier.testTag("save_category_budget_button")
-                        ) {
-                            Text("Save")
+                                    onSave(targetCat, 0.0, 80, isShared)
+                                },
+                                modifier = Modifier.testTag("clear_category_budget_button")
+                            ) {
+                                Text("Clear Limit", color = MaterialTheme.colorScheme.error)
+                            }
+                        } else {
+                            Spacer(modifier = Modifier.width(1.dp))
+                        }
+
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            TextButton(onClick = onDismiss) {
+                                Text("Cancel")
+                            }
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Button(
+                                onClick = {
+                                    attemptedSave = true
+                                    val lErr = validatePositiveAmount(limitText)
+                                    val cErr = if (customCategory.isNotBlank()) validateCategoryName(customCategory) else null
+                                    val pct = alertPctText.toIntOrNull()
+                                    val pErr = if (pct == null || pct !in 10..100) "Invalid" else null
+                                    if (lErr == null && cErr == null && pErr == null) {
+                                        performHaptic()
+                                        val limit = limitText.toDoubleOrNull() ?: 0.0
+                                        val targetCat = customCategory.trim().ifBlank { category }
+                                        onSave(targetCat, limit, pct ?: 80, isShared)
+                                    }
+                                },
+                                shape = RoundedCornerShape(50),
+                                modifier = Modifier.testTag("save_category_budget_button")
+                            ) {
+                                Text("Save")
+                            }
                         }
                     }
                 }
             }
+        }
+    }
+}
+
+@Composable
+fun AddCustomCategoryDialog(
+    hasHousehold: Boolean,
+    defaultShared: Boolean,
+    currencySymbol: String,
+    onDismiss: () -> Unit,
+    onSave: (categoryName: String, optionalMonthlyLimit: Double?, alertThresholdPercent: Int, isShared: Boolean) -> Unit
+) {
+    val dimens = LocalAppDimens.current
+    val performHaptic = rememberAppHapticPerformer()
+    var categoryName by remember { mutableStateOf("") }
+    var optionalLimitText by remember { mutableStateOf("") }
+    var isShared by remember { mutableStateOf(hasHousehold && defaultShared) }
+    var attemptedSave by remember { mutableStateOf(false) }
+
+    val categoryNameError = if (attemptedSave || categoryName.isNotEmpty()) {
+        validateCategoryName(categoryName)
+    } else {
+        null
+    }
+    val optionalLimitError = if (optionalLimitText.isNotBlank()) {
+        validateNonNegativeAmount(optionalLimitText)
+    } else {
+        null
+    }
+
+    Dialog(onDismissRequest = onDismiss) {
+        AnimatedModalSheetContainer {
+            Surface(
+                shape = RoundedCornerShape(28.dp),
+                color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                tonalElevation = 6.dp
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(dimens.cardPadding)
+                        .verticalScroll(rememberScrollState())
+                        .testTag("add_custom_category_dialog"),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    val accent = categoryAccentColor(categoryName.ifBlank { "Custom" })
+                    M3ModalHeroHeader(
+                        icon = categoryIcon(categoryName.ifBlank { "Custom" }),
+                        title = "New Custom Category",
+                        subtitle = "Add a custom category with an optional monthly budget",
+                        iconTint = accent
+                    )
+
+                    ReceiptDashedDividerLine()
+
+                    OutlinedTextField(
+                        value = categoryName,
+                        onValueChange = { categoryName = it.take(40) },
+                        label = { Text("Category Name") },
+                        placeholder = { Text("e.g. Pet Care, Books, Fitness") },
+                        isError = categoryNameError != null,
+                        supportingText = categoryNameError?.let { err -> { Text(err) } },
+                        singleLine = true,
+                        shape = RoundedCornerShape(16.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("custom_category_name_input")
+                    )
+
+                    OutlinedTextField(
+                        value = optionalLimitText,
+                        onValueChange = { optionalLimitText = sanitizeDecimalInput(it) },
+                        label = { Text("Monthly Budget ($currencySymbol, Optional)") },
+                        placeholder = { Text("Leave blank for unassigned") },
+                        textStyle = MaterialTheme.typography.bodyLarge.copy(
+                            fontFamily = ReceiptMonoFontFamily,
+                            fontWeight = FontWeight.SemiBold
+                        ),
+                        isError = optionalLimitError != null,
+                        supportingText = optionalLimitError?.let { err -> { Text(err) } },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                        singleLine = true,
+                        shape = RoundedCornerShape(16.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("custom_category_optional_budget_input")
+                    )
+
+                    if (hasHousehold) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text(
+                                text = "Apply to Family Household",
+                                style = MaterialTheme.typography.bodyMedium
+                            )
+                            M3CheckmarkSwitch(
+                                checked = isShared,
+                                onCheckedChange = { isShared = it },
+                                modifier = Modifier.testTag("custom_category_shared_switch")
+                            )
+                        }
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.End,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        TextButton(
+                            onClick = onDismiss,
+                            modifier = Modifier.testTag("cancel_custom_category_button")
+                        ) {
+                            Text("Cancel")
+                        }
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Button(
+                            onClick = {
+                                attemptedSave = true
+                                val nameErr = validateCategoryName(categoryName)
+                                val limitErr = if (optionalLimitText.isNotBlank()) {
+                                    validateNonNegativeAmount(optionalLimitText)
+                                } else {
+                                    null
+                                }
+                                if (nameErr == null && limitErr == null) {
+                                    performHaptic()
+                                    val parsedLimit = optionalLimitText.trim().takeIf { it.isNotBlank() }?.toDoubleOrNull()
+                                    onSave(categoryName.trim(), parsedLimit, 80, hasHousehold && isShared)
+                                }
+                            },
+                            shape = RoundedCornerShape(50),
+                            modifier = Modifier.testTag("save_custom_category_button")
+                        ) {
+                            Text("Add Category")
+                        }
+                    }
+                }
             }
         }
     }
@@ -1500,6 +1803,7 @@ fun EditOverallBudgetDialog(
     onSave: (personalLimit: Double, householdLimit: Double?, currency: String) -> Unit
 ) {
     val dimens = LocalAppDimens.current
+    val performHaptic = rememberAppHapticPerformer()
     var personalText by remember {
         mutableStateOf(if (personalBudget > 0.0) personalBudget.toLong().toString() else "")
     }
@@ -1527,98 +1831,110 @@ fun EditOverallBudgetDialog(
 
     Dialog(onDismissRequest = onDismiss) {
         AnimatedModalSheetContainer {
-            ReceiptTicketCard(
-                containerColor = MaterialTheme.colorScheme.surface,
-                contentColor = MaterialTheme.colorScheme.onSurface
+            Surface(
+                shape = RoundedCornerShape(28.dp),
+                color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                tonalElevation = 6.dp
             ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(dimens.cardPadding)
-                    .verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(dimens.itemSpacing * 0.85f)
-            ) {
-                Text(
-                    text = "Monthly Budgets",
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.Bold
-                )
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(dimens.cardPadding)
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    M3ModalHeroHeader(
+                        icon = Icons.Default.AccountBalanceWallet,
+                        title = "Monthly Budgets",
+                        subtitle = "Configure overall monthly spending limits"
+                    )
 
-                ReceiptDashedDividerLine()
+                    ReceiptDashedDividerLine()
 
-                if (householdBudget != null) {
+                    if (householdBudget != null) {
+                        OutlinedTextField(
+                            value = householdText,
+                            onValueChange = { householdText = sanitizeDecimalInput(it) },
+                            label = { Text("Household Monthly Limit ($currency)") },
+                            placeholder = { Text("Leave blank for unassigned") },
+                            textStyle = MaterialTheme.typography.bodyLarge.copy(
+                                fontFamily = ReceiptMonoFontFamily,
+                                fontWeight = FontWeight.SemiBold
+                            ),
+                            isError = householdError != null,
+                            supportingText = householdError?.let { err -> { Text(err) } },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                            singleLine = true,
+                            shape = RoundedCornerShape(16.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("overall_household_budget_input")
+                        )
+                    }
                     OutlinedTextField(
-                        value = householdText,
-                        onValueChange = { householdText = sanitizeDecimalInput(it) },
-                        label = { Text("Household Monthly Limit ($currency)") },
+                        value = personalText,
+                        onValueChange = { personalText = sanitizeDecimalInput(it) },
+                        label = { Text("Personal Monthly Limit ($currency)") },
                         placeholder = { Text("Leave blank for unassigned") },
-                        isError = householdError != null,
-                        supportingText = householdError?.let { err -> { Text(err) } },
+                        textStyle = MaterialTheme.typography.bodyLarge.copy(
+                            fontFamily = ReceiptMonoFontFamily,
+                            fontWeight = FontWeight.SemiBold
+                        ),
+                        isError = personalError != null,
+                        supportingText = personalError?.let { err -> { Text(err) } },
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                         singleLine = true,
-                        shape = RoundedCornerShape(dimens.smallCornerRadius),
+                        shape = RoundedCornerShape(16.dp),
                         modifier = Modifier
                             .fillMaxWidth()
-                            .testTag("overall_household_budget_input")
+                            .testTag("overall_personal_budget_input")
                     )
-                }
-                OutlinedTextField(
-                    value = personalText,
-                    onValueChange = { personalText = sanitizeDecimalInput(it) },
-                    label = { Text("Personal Monthly Limit ($currency)") },
-                    placeholder = { Text("Leave blank for unassigned") },
-                    isError = personalError != null,
-                    supportingText = personalError?.let { err -> { Text(err) } },
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                    singleLine = true,
-                    shape = RoundedCornerShape(dimens.smallCornerRadius),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .testTag("overall_personal_budget_input")
-                )
-                OutlinedTextField(
-                    value = currency,
-                    onValueChange = { currency = it.filterNot { ch -> ch.isDigit() }.take(4) },
-                    label = { Text("Currency Symbol") },
-                    isError = currencyError != null,
-                    supportingText = currencyError?.let { err -> { Text(err) } },
-                    singleLine = true,
-                    shape = RoundedCornerShape(dimens.smallCornerRadius),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .testTag("overall_currency_input")
-                )
+                    OutlinedTextField(
+                        value = currency,
+                        onValueChange = { currency = it.filterNot { ch -> ch.isDigit() }.take(4) },
+                        label = { Text("Currency Symbol") },
+                        isError = currencyError != null,
+                        supportingText = currencyError?.let { err -> { Text(err) } },
+                        singleLine = true,
+                        shape = RoundedCornerShape(16.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("overall_currency_input")
+                    )
 
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.End
-                ) {
-                    TextButton(onClick = onDismiss) {
-                        Text("Cancel")
-                    }
-                    Spacer(modifier = Modifier.width(dimens.horizontalPadding * 0.5f))
-                    Button(
-                        onClick = {
-                            attemptedSave = true
-                            val hErr = if (householdBudget != null) validateNonNegativeAmount(householdText) else null
-                            val pErr = validateNonNegativeAmount(personalText)
-                            val cErr = validateCurrencySymbol(currency)
-                            if (hErr == null && pErr == null && cErr == null) {
-                                val pLimit = personalText.trim().toDoubleOrNull() ?: 0.0
-                                val hLimit = if (householdBudget != null) {
-                                    householdText.trim().toDoubleOrNull() ?: 0.0
-                                } else {
-                                    null
-                                }
-                                onSave(pLimit, hLimit, currency.trim().ifBlank { "₹" })
-                            }
-                        },
-                        modifier = Modifier.testTag("save_overall_budget_button")
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.End,
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text("Save")
+                        TextButton(onClick = onDismiss) {
+                            Text("Cancel")
+                        }
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Button(
+                            onClick = {
+                                attemptedSave = true
+                                val hErr = if (householdBudget != null) validateNonNegativeAmount(householdText) else null
+                                val pErr = validateNonNegativeAmount(personalText)
+                                val cErr = validateCurrencySymbol(currency)
+                                if (hErr == null && pErr == null && cErr == null) {
+                                    performHaptic()
+                                    val pLimit = personalText.trim().toDoubleOrNull() ?: 0.0
+                                    val hLimit = if (householdBudget != null) {
+                                        householdText.trim().toDoubleOrNull() ?: 0.0
+                                    } else {
+                                        null
+                                    }
+                                    onSave(pLimit, hLimit, currency.trim().ifBlank { "₹" })
+                                }
+                            },
+                            shape = RoundedCornerShape(50),
+                            modifier = Modifier.testTag("save_overall_budget_button")
+                        ) {
+                            Text("Save")
+                        }
                     }
                 }
-            }
             }
         }
     }
@@ -1638,6 +1954,7 @@ fun AddAccountDialog(
     ) -> Unit
 ) {
     val dimens = LocalAppDimens.current
+    val performHaptic = rememberAppHapticPerformer()
     var bankName by remember { mutableStateOf("") }
     var accountType by remember { mutableStateOf("BANK") }
     var lastFour by remember { mutableStateOf("") }
@@ -1675,138 +1992,168 @@ fun AddAccountDialog(
 
     Dialog(onDismissRequest = onDismiss) {
         AnimatedModalSheetContainer {
-            ReceiptTicketCard(
-                containerColor = MaterialTheme.colorScheme.surface,
-                contentColor = MaterialTheme.colorScheme.onSurface
+            Surface(
+                shape = RoundedCornerShape(28.dp),
+                color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                tonalElevation = 6.dp
             ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(dimens.cardPadding)
-                    .verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(dimens.itemSpacing * 0.85f)
-            ) {
-                Text(
-                    text = "Add Account",
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.Bold
-                )
-
-                ReceiptDashedDividerLine()
-
-                Row(
-                    modifier = Modifier.horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(dimens.horizontalPadding * 0.4f)
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(dimens.cardPadding)
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    listOf("BANK", "CREDIT_CARD", "UPI", "CASH").forEach { type ->
-                        FilterChip(
-                            selected = accountType == type,
-                            onClick = { accountType = type },
-                            label = { Text(type) }
-                        )
+                    M3ModalHeroHeader(
+                        icon = Icons.Default.AccountBalance,
+                        title = "Add Account",
+                        subtitle = "Link a bank account, credit card, UPI, or wallet"
+                    )
+
+                    ReceiptDashedDividerLine()
+
+                    Row(
+                        modifier = Modifier.horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        listOf("BANK", "CREDIT_CARD", "UPI", "CASH").forEach { type ->
+                            val selected = accountType == type
+                            FilterChip(
+                                selected = selected,
+                                onClick = {
+                                    performHaptic()
+                                    accountType = type
+                                },
+                                leadingIcon = if (selected) {
+                                    {
+                                        Icon(
+                                            imageVector = Icons.Default.Check,
+                                            contentDescription = null,
+                                            modifier = Modifier.size(14.dp)
+                                        )
+                                    }
+                                } else {
+                                    null
+                                },
+                                label = { Text(type) },
+                                shape = RoundedCornerShape(50)
+                            )
+                        }
                     }
-                }
-                OutlinedTextField(
-                    value = bankName,
-                    onValueChange = { bankName = it.take(60) },
-                    label = { Text("Bank / Account Name") },
-                    placeholder = { Text("e.g. HDFC Bank") },
-                    isError = bankNameError != null,
-                    supportingText = bankNameError?.let { err -> { Text(err) } },
-                    singleLine = true,
-                    shape = RoundedCornerShape(dimens.smallCornerRadius),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .testTag("add_account_name_input")
-                )
-                OutlinedTextField(
-                    value = lastFour,
-                    onValueChange = { lastFour = it.filter { ch -> ch.isDigit() }.take(4) },
-                    label = { Text(if (requiresDigits) "Last 4 Digits" else "Last 4 Digits (Optional)") },
-                    isError = lastFourError != null,
-                    supportingText = lastFourError?.let { err -> { Text(err) } },
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                    singleLine = true,
-                    shape = RoundedCornerShape(dimens.smallCornerRadius),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .testTag("add_account_last_four_input")
-                )
-                OutlinedTextField(
-                    value = balanceText,
-                    onValueChange = { balanceText = sanitizeDecimalInput(it, maxIntegerDigits = 10) },
-                    label = { Text("Current Balance ($currencySymbol)") },
-                    isError = balanceError != null,
-                    supportingText = balanceError?.let { err -> { Text(err) } },
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                    singleLine = true,
-                    shape = RoundedCornerShape(dimens.smallCornerRadius),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .testTag("add_account_balance_input")
-                )
-                if (accountType == "CREDIT_CARD") {
+
                     OutlinedTextField(
-                        value = creditLimitText,
-                        onValueChange = { creditLimitText = sanitizeDecimalInput(it, maxIntegerDigits = 9) },
-                        label = { Text("Credit Limit ($currencySymbol)") },
-                        isError = creditLimitError != null,
-                        supportingText = creditLimitError?.let { err -> { Text(err) } },
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                        value = bankName,
+                        onValueChange = { bankName = it.take(60) },
+                        label = { Text("Bank / Account Name") },
+                        placeholder = { Text("e.g. HDFC Bank") },
+                        isError = bankNameError != null,
+                        supportingText = bankNameError?.let { err -> { Text(err) } },
                         singleLine = true,
-                        shape = RoundedCornerShape(dimens.smallCornerRadius),
+                        shape = RoundedCornerShape(16.dp),
                         modifier = Modifier
                             .fillMaxWidth()
-                            .testTag("add_account_credit_limit_input")
+                            .testTag("add_account_name_input")
                     )
-                }
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.End
-                ) {
-                    TextButton(onClick = onDismiss) {
-                        Text("Cancel")
+                    OutlinedTextField(
+                        value = lastFour,
+                        onValueChange = { lastFour = it.filter { ch -> ch.isDigit() }.take(4) },
+                        label = { Text(if (requiresDigits) "Last 4 Digits" else "Last 4 Digits (Optional)") },
+                        textStyle = MaterialTheme.typography.bodyLarge.copy(fontFamily = ReceiptMonoFontFamily),
+                        isError = lastFourError != null,
+                        supportingText = lastFourError?.let { err -> { Text(err) } },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        singleLine = true,
+                        shape = RoundedCornerShape(16.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("add_account_last_four_input")
+                    )
+                    OutlinedTextField(
+                        value = balanceText,
+                        onValueChange = { balanceText = sanitizeDecimalInput(it, maxIntegerDigits = 10) },
+                        label = { Text("Current Balance ($currencySymbol)") },
+                        textStyle = MaterialTheme.typography.bodyLarge.copy(
+                            fontFamily = ReceiptMonoFontFamily,
+                            fontWeight = FontWeight.SemiBold
+                        ),
+                        isError = balanceError != null,
+                        supportingText = balanceError?.let { err -> { Text(err) } },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                        singleLine = true,
+                        shape = RoundedCornerShape(16.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("add_account_balance_input")
+                    )
+                    if (accountType == "CREDIT_CARD") {
+                        OutlinedTextField(
+                            value = creditLimitText,
+                            onValueChange = { creditLimitText = sanitizeDecimalInput(it, maxIntegerDigits = 9) },
+                            label = { Text("Credit Limit ($currencySymbol)") },
+                            textStyle = MaterialTheme.typography.bodyLarge.copy(
+                                fontFamily = ReceiptMonoFontFamily,
+                                fontWeight = FontWeight.SemiBold
+                            ),
+                            isError = creditLimitError != null,
+                            supportingText = creditLimitError?.let { err -> { Text(err) } },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                            singleLine = true,
+                            shape = RoundedCornerShape(16.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("add_account_credit_limit_input")
+                        )
                     }
-                    Spacer(modifier = Modifier.width(dimens.horizontalPadding * 0.5f))
-                    Button(
-                        onClick = {
-                            attemptedSave = true
-                            val nameErr = if (bankName.trim().length < 2) "Invalid" else null
-                            val digitsErr = if (requiresDigits && lastFour.length != 4) {
-                                "Invalid"
-                            } else if (!requiresDigits && lastFour.isNotEmpty() && lastFour.length != 4) {
-                                "Invalid"
-                            } else {
-                                null
-                            }
-                            val balErr = validateNonNegativeAmount(balanceText, maxAllowed = 1_000_000_000.0)
-                            val limErr = if (accountType == "CREDIT_CARD") {
-                                validatePositiveAmount(creditLimitText, maxAllowed = 100_000_000.0)
-                            } else {
-                                null
-                            }
 
-                            if (nameErr == null && digitsErr == null && balErr == null && limErr == null) {
-                                val cleanBank = bankName.trim()
-                                val suffix = if (lastFour.isNotBlank()) " ••$lastFour" else ""
-                                val displayName = if (accountType == "CREDIT_CARD") "$cleanBank Card$suffix" else "$cleanBank$suffix"
-                                onSave(
-                                    displayName,
-                                    cleanBank,
-                                    accountType,
-                                    lastFour,
-                                    balanceText.trim().toDoubleOrNull() ?: 0.0,
-                                    if (accountType == "CREDIT_CARD") creditLimitText.trim().toDoubleOrNull() ?: 0.0 else 0.0
-                                )
-                            }
-                        },
-                        modifier = Modifier.testTag("save_account_button")
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.End,
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text("Save")
+                        TextButton(onClick = onDismiss) {
+                            Text("Cancel")
+                        }
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Button(
+                            onClick = {
+                                attemptedSave = true
+                                val nameErr = if (bankName.trim().length < 2) "Invalid" else null
+                                val digitsErr = if (requiresDigits && lastFour.length != 4) {
+                                    "Invalid"
+                                } else if (!requiresDigits && lastFour.isNotEmpty() && lastFour.length != 4) {
+                                    "Invalid"
+                                } else {
+                                    null
+                                }
+                                val balErr = validateNonNegativeAmount(balanceText, maxAllowed = 1_000_000_000.0)
+                                val limErr = if (accountType == "CREDIT_CARD") {
+                                    validatePositiveAmount(creditLimitText, maxAllowed = 100_000_000.0)
+                                } else {
+                                    null
+                                }
+
+                                if (nameErr == null && digitsErr == null && balErr == null && limErr == null) {
+                                    performHaptic()
+                                    val cleanBank = bankName.trim()
+                                    val suffix = if (lastFour.isNotBlank()) " ••$lastFour" else ""
+                                    val displayName = if (accountType == "CREDIT_CARD") "$cleanBank Card$suffix" else "$cleanBank$suffix"
+                                    onSave(
+                                        displayName,
+                                        cleanBank,
+                                        accountType,
+                                        lastFour,
+                                        balanceText.trim().toDoubleOrNull() ?: 0.0,
+                                        if (accountType == "CREDIT_CARD") creditLimitText.trim().toDoubleOrNull() ?: 0.0 else 0.0
+                                    )
+                                }
+                            },
+                            shape = RoundedCornerShape(50),
+                            modifier = Modifier.testTag("save_account_button")
+                        ) {
+                            Text("Save")
+                        }
                     }
                 }
-            }
             }
         }
     }
@@ -1815,10 +2162,8 @@ fun AddAccountDialog(
 /**
  * First-Time SMS Sync Setup & Live Progress Screen (`FirstTimeSmsSyncScreen`):
  * - Prompts the user to sync their Bank & UPI SMS messages when setting up for the first time.
- * - Uses parallel reader threads (>= 5) + parallel writer threads (>= 5) in batches.
- * - Places compact sync controls/telemetry at the top and expands the downward-scanning
- *   "Transaction Being Read" animation (`sms_transaction_reading_animation`) at the bottom
- *   to fill the rest of the screen.
+ * - Places compact M3 Expressive controls/telemetry at the top and expands the downward-scanning
+ *   "Transaction Being Read" animation (`sms_transaction_reading_animation`) ONLY while actively scanning.
  */
 @Composable
 fun FirstTimeSmsSyncScreen(
@@ -1830,6 +2175,7 @@ fun FirstTimeSmsSyncScreen(
 ) {
     val dimens = LocalAppDimens.current
     val density = LocalDensity.current
+    val performHaptic = rememberAppHapticPerformer()
     val hasStartedOrFinished = syncState.isSyncing || syncState.isCompleted
     var topControlsHeightPx by remember { mutableIntStateOf(0) }
 
@@ -1873,41 +2219,50 @@ fun FirstTimeSmsSyncScreen(
                         .fillMaxWidth()
                         .onSizeChanged { topControlsHeightPx = it.height },
                     horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(dimens.itemSpacing * 0.75f)
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
+                    SquircleIconBadge(
+                        icon = if (syncState.isCompleted) Icons.Default.Check else Icons.Default.Sync,
+                        tint = MaterialTheme.colorScheme.primary,
+                        containerColor = MaterialTheme.colorScheme.primaryContainer,
+                        size = 54.dp,
+                        iconSize = 26.dp
+                    )
+
                     Text(
                         text = when {
                             syncState.isCompleted -> "SMS Sync Complete"
                             syncState.isSyncing -> "Syncing Your SMS Inbox..."
                             else -> "Sync Bank & UPI SMS"
                         },
-                        style = MaterialTheme.typography.headlineSmall,
-                        fontWeight = FontWeight.ExtraBold,
-                        color = MaterialTheme.colorScheme.onBackground
+                        style = MaterialTheme.typography.headlineMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onBackground,
+                        textAlign = TextAlign.Center
                     )
 
                     // Compact status & batch progress pill (zero thread counts exposed in UI)
                     Surface(
                         shape = RoundedCornerShape(50),
-                        color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.65f)
+                        color = MaterialTheme.colorScheme.secondaryContainer
                     ) {
                         Row(
                             modifier = Modifier.padding(
-                                horizontal = dimens.horizontalPadding * 0.85f,
-                                vertical = dimens.itemSpacing * 0.4f
+                                horizontal = 14.dp,
+                                vertical = 6.dp
                             ),
                             verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(dimens.itemSpacing * 0.55f)
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
                             Icon(
                                 imageVector = Icons.Default.Sync,
                                 contentDescription = "SMS Receipt Scanner",
-                                tint = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.size(dimens.rowIconSize * 0.8f)
+                                tint = MaterialTheme.colorScheme.onSecondaryContainer,
+                                modifier = Modifier.size(16.dp)
                             )
                             Text(
                                 text = if (hasStartedOrFinished) {
-                                    "📦 Batch ${syncState.processedBatchesCount}/${syncState.totalBatchesCount.coerceAtLeast(1)}  •  Bank & UPI Scanner"
+                                    "Batch ${syncState.processedBatchesCount}/${syncState.totalBatchesCount.coerceAtLeast(1)}  •  Bank & UPI Scanner"
                                 } else {
                                     "Bank & UPI Receipt Scanner"
                                 },
@@ -1919,9 +2274,37 @@ fun FirstTimeSmsSyncScreen(
                         }
                     }
 
+                    if (!hasStartedOrFinished) {
+                        ReceiptTicketCard(
+                            containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+                            contentColor = MaterialTheme.colorScheme.onSurface
+                        ) {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(dimens.cardPadding),
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Text(
+                                    text = "On-Device Thermal Receipt Indexing",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    textAlign = TextAlign.Center
+                                )
+                                Text(
+                                    text = "Automatically converts Bank, Card, and UPI SMS alerts into clean paper receipts with merchant names, categories, and balances.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    textAlign = TextAlign.Center
+                                )
+                            }
+                        }
+                    }
+
                     if (hasStartedOrFinished) {
                         ReceiptTicketCard(
-                            containerColor = MaterialTheme.colorScheme.surface,
+                            containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
                             contentColor = MaterialTheme.colorScheme.onSurface
                         ) {
                             Column(
@@ -1929,9 +2312,9 @@ fun FirstTimeSmsSyncScreen(
                                     .fillMaxWidth()
                                     .padding(
                                         horizontal = dimens.cardPadding,
-                                        vertical = dimens.itemSpacing * 0.75f
+                                        vertical = 12.dp
                                     ),
-                                verticalArrangement = Arrangement.spacedBy(dimens.itemSpacing * 0.65f)
+                                verticalArrangement = Arrangement.spacedBy(10.dp)
                             ) {
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
@@ -1940,13 +2323,13 @@ fun FirstTimeSmsSyncScreen(
                                 ) {
                                     Row(
                                         verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(dimens.itemSpacing * 0.5f)
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
                                     ) {
                                         Icon(
                                             imageVector = if (syncState.isSyncing) Icons.Default.Message else Icons.Default.Check,
                                             contentDescription = if (syncState.isSyncing) "Reading SMS Messages" else "Completed",
                                             tint = MaterialTheme.colorScheme.primary,
-                                            modifier = Modifier.size(dimens.rowIconSize * 0.85f)
+                                            modifier = Modifier.size(18.dp)
                                         )
                                         Text(
                                             text = if (syncState.isSyncing) "Reading SMS Messages" else "Completed",
@@ -1957,7 +2340,7 @@ fun FirstTimeSmsSyncScreen(
                                     val pct = (syncState.progressFraction * 100f).roundToInt().coerceIn(0, 100)
                                     Text(
                                         text = "$pct%",
-                                        style = MaterialTheme.typography.titleMedium,
+                                        style = MaterialTheme.typography.titleMedium.copy(fontFamily = ReceiptMonoFontFamily),
                                         fontWeight = FontWeight.ExtraBold,
                                         color = MaterialTheme.colorScheme.primary,
                                         modifier = Modifier.testTag("sms_sync_percentage_text")
@@ -1967,10 +2350,10 @@ fun FirstTimeSmsSyncScreen(
                                 LinearProgressIndicator(
                                     progress = { syncState.progressFraction },
                                     color = MaterialTheme.colorScheme.primary,
-                                    trackColor = MaterialTheme.colorScheme.surfaceVariant,
+                                    trackColor = MaterialTheme.colorScheme.surfaceContainerHighest,
                                     modifier = Modifier
                                         .fillMaxWidth()
-                                        .height(dimens.itemSpacing * 0.8f)
+                                        .height(10.dp)
                                         .clip(RoundedCornerShape(50))
                                         .testTag("sms_sync_progress_bar")
                                 )
@@ -1984,13 +2367,13 @@ fun FirstTimeSmsSyncScreen(
                                 ) {
                                     Column(horizontalAlignment = Alignment.Start) {
                                         Text(
-                                            text = "📨 Read",
+                                            text = "Read",
                                             style = MaterialTheme.typography.labelSmall,
                                             color = MaterialTheme.colorScheme.onSurfaceVariant
                                         )
                                         Text(
                                             text = "${syncState.readSmsCount}",
-                                            style = MaterialTheme.typography.titleSmall,
+                                            style = MaterialTheme.typography.titleSmall.copy(fontFamily = ReceiptMonoFontFamily),
                                             fontWeight = FontWeight.Bold,
                                             color = MaterialTheme.colorScheme.onSurface,
                                             modifier = Modifier.testTag("sms_sync_read_count")
@@ -1999,13 +2382,13 @@ fun FirstTimeSmsSyncScreen(
 
                                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                                         Text(
-                                            text = "⏳",
+                                            text = "Pending",
                                             style = MaterialTheme.typography.labelSmall,
                                             color = MaterialTheme.colorScheme.onSurfaceVariant
                                         )
                                         Text(
                                             text = "${syncState.remainingSmsCount}",
-                                            style = MaterialTheme.typography.titleSmall,
+                                            style = MaterialTheme.typography.titleSmall.copy(fontFamily = ReceiptMonoFontFamily),
                                             fontWeight = FontWeight.Bold,
                                             color = MaterialTheme.colorScheme.primary,
                                             modifier = Modifier.testTag("sms_sync_remaining_count")
@@ -2014,13 +2397,13 @@ fun FirstTimeSmsSyncScreen(
 
                                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                                         Text(
-                                            text = "📥 Σ",
+                                            text = "Total",
                                             style = MaterialTheme.typography.labelSmall,
                                             color = MaterialTheme.colorScheme.onSurfaceVariant
                                         )
                                         Text(
                                             text = "${syncState.totalSmsCount}",
-                                            style = MaterialTheme.typography.titleSmall,
+                                            style = MaterialTheme.typography.titleSmall.copy(fontFamily = ReceiptMonoFontFamily),
                                             fontWeight = FontWeight.Bold,
                                             color = MaterialTheme.colorScheme.onSurface,
                                             modifier = Modifier.testTag("sms_sync_total_count")
@@ -2028,26 +2411,26 @@ fun FirstTimeSmsSyncScreen(
                                     }
 
                                     Surface(
-                                        shape = RoundedCornerShape(dimens.smallCornerRadius),
-                                        color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.6f)
+                                        shape = RoundedCornerShape(50),
+                                        color = MaterialTheme.colorScheme.primaryContainer
                                     ) {
                                         Row(
                                             modifier = Modifier.padding(
-                                                horizontal = dimens.horizontalPadding * 0.55f,
-                                                vertical = dimens.itemSpacing * 0.35f
+                                                horizontal = 10.dp,
+                                                vertical = 5.dp
                                             ),
                                             verticalAlignment = Alignment.CenterVertically,
                                             horizontalArrangement = Arrangement.spacedBy(4.dp)
                                         ) {
-                                            Text(
-                                                text = "💳 ✓",
-                                                style = MaterialTheme.typography.labelSmall,
-                                                fontWeight = FontWeight.Bold,
-                                                color = MaterialTheme.colorScheme.onPrimaryContainer
+                                            Icon(
+                                                imageVector = Icons.Default.Check,
+                                                contentDescription = null,
+                                                tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                                                modifier = Modifier.size(14.dp)
                                             )
                                             Text(
                                                 text = "${syncState.savedTransactionsCount}/${syncState.matchedTransactionsCount}",
-                                                style = MaterialTheme.typography.labelLarge,
+                                                style = MaterialTheme.typography.labelLarge.copy(fontFamily = ReceiptMonoFontFamily),
                                                 fontWeight = FontWeight.ExtraBold,
                                                 color = MaterialTheme.colorScheme.onPrimaryContainer,
                                                 modifier = Modifier.testTag("sms_sync_saved_tx_count")
@@ -2062,23 +2445,26 @@ fun FirstTimeSmsSyncScreen(
                     if (!hasStartedOrFinished) {
                         Row(
                             modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(dimens.horizontalPadding * 0.5f),
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Button(
-                                onClick = onStartSyncClick,
+                                onClick = {
+                                    performHaptic()
+                                    onStartSyncClick()
+                                },
                                 shape = RoundedCornerShape(50),
                                 modifier = Modifier
                                     .weight(1f)
-                                    .height(dimens.navPillHeight)
+                                    .height(54.dp)
                                     .testTag("start_first_time_sms_sync_button")
                             ) {
                                 Icon(
                                     imageVector = Icons.Default.Sync,
                                     contentDescription = "Start SMS Sync Now",
-                                    modifier = Modifier.size(dimens.rowIconSize * 0.85f)
+                                    modifier = Modifier.size(18.dp)
                                 )
-                                Spacer(modifier = Modifier.width(dimens.horizontalPadding * 0.35f))
+                                Spacer(modifier = Modifier.width(8.dp))
                                 Text(
                                     text = "Start SMS Sync Now",
                                     style = MaterialTheme.typography.titleSmall,
@@ -2089,7 +2475,10 @@ fun FirstTimeSmsSyncScreen(
                             }
 
                             TextButton(
-                                onClick = onSkipClick,
+                                onClick = {
+                                    performHaptic()
+                                    onSkipClick()
+                                },
                                 modifier = Modifier.testTag("skip_first_time_sms_sync_button")
                             ) {
                                 Text("Skip for Now")
@@ -2097,19 +2486,22 @@ fun FirstTimeSmsSyncScreen(
                         }
                     } else if (syncState.isCompleted && !syncState.isSyncing) {
                         Button(
-                            onClick = onContinueToAppClick,
+                            onClick = {
+                                performHaptic()
+                                onContinueToAppClick()
+                            },
                             shape = RoundedCornerShape(50),
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .height(dimens.navPillHeight)
+                                .height(54.dp)
                                 .testTag("finish_sms_sync_continue_button")
                         ) {
                             Icon(
                                 imageVector = Icons.Default.Check,
                                 contentDescription = "Continue to Home",
-                                modifier = Modifier.size(dimens.rowIconSize * 0.85f)
+                                modifier = Modifier.size(18.dp)
                             )
-                            Spacer(modifier = Modifier.width(dimens.horizontalPadding * 0.45f))
+                            Spacer(modifier = Modifier.width(8.dp))
                             Text(
                                 text = "Continue to Home",
                                 style = MaterialTheme.typography.titleMedium,
@@ -2151,7 +2543,7 @@ private fun TransactionReadingAnimationCard(
     val dimens = LocalAppDimens.current
     val primaryColor = MaterialTheme.colorScheme.primary
     val secondaryColor = MaterialTheme.colorScheme.tertiary
-    val surfaceVariantColor = MaterialTheme.colorScheme.surfaceVariant
+    val surfaceVariantColor = MaterialTheme.colorScheme.surfaceContainerHigh
     val isRobolectric = remember { Build.FINGERPRINT.equals("robolectric", ignoreCase = true) }
 
     val deterministicTargetPhase = if (syncState.isCompleted) {
@@ -2204,13 +2596,13 @@ private fun TransactionReadingAnimationCard(
     val activeAmount = syncState.currentReadingAmount
 
     Surface(
-        shape = RoundedCornerShape(dimens.cardCornerRadius * 1.15f),
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.48f),
+        shape = RoundedCornerShape(28.dp),
+        color = MaterialTheme.colorScheme.surfaceContainerLow,
         modifier = modifier
             .border(
                 width = 1.5.dp,
                 color = primaryColor.copy(alpha = 0.32f),
-                shape = RoundedCornerShape(dimens.cardCornerRadius * 1.15f)
+                shape = RoundedCornerShape(28.dp)
             )
             .testTag("sms_transaction_reading_animation")
     ) {
@@ -2219,12 +2611,12 @@ private fun TransactionReadingAnimationCard(
                 .fillMaxSize()
                 .padding(dimens.cardPadding),
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(dimens.itemSpacing * 0.8f)
+            verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             // Live Transaction Being Read Ticker Pill (at top of scanner card for immediate visibility)
             Surface(
-                shape = RoundedCornerShape(dimens.smallCornerRadius),
-                color = MaterialTheme.colorScheme.surface,
+                shape = RoundedCornerShape(18.dp),
+                color = MaterialTheme.colorScheme.surfaceContainerHigh,
                 modifier = Modifier
                     .fillMaxWidth()
                     .testTag("sms_live_transaction_ticker")
@@ -2232,33 +2624,24 @@ private fun TransactionReadingAnimationCard(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(
-                            horizontal = dimens.horizontalPadding * 0.75f,
-                            vertical = dimens.itemSpacing * 0.65f
-                        ),
+                        .padding(horizontal = 14.dp, vertical = 10.dp),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(dimens.itemSpacing * 0.65f),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
                         modifier = Modifier.weight(1f)
                     ) {
                         val catAccent = categoryAccentColor(activeCategory)
-                        Box(
-                            modifier = Modifier
-                                .size(dimens.rowIconBoxSize * 0.85f)
-                                .clip(CircleShape)
-                                .background(catAccent.copy(alpha = 0.16f)),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Icon(
-                                imageVector = categoryIcon(activeCategory),
-                                contentDescription = activeCategory,
-                                tint = catAccent,
-                                modifier = Modifier.size(dimens.rowIconSize * 0.8f)
-                            )
-                        }
+                        SquircleIconBadge(
+                            icon = categoryIcon(activeCategory),
+                            tint = catAccent,
+                            containerColor = catAccent.copy(alpha = 0.16f),
+                            size = 40.dp,
+                            iconSize = 20.dp,
+                            contentDescription = activeCategory
+                        )
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
                                 text = activeTitle,
@@ -2269,7 +2652,7 @@ private fun TransactionReadingAnimationCard(
                                 overflow = TextOverflow.Ellipsis
                             )
                             Text(
-                                text = "🏦 $activeBank  •  $activeCategory",
+                                text = "$activeBank  •  $activeCategory",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 maxLines = 1,
@@ -2281,7 +2664,7 @@ private fun TransactionReadingAnimationCard(
                     if (activeAmount > 0.0) {
                         Text(
                             text = formatCurrency(activeAmount, currencySymbol),
-                            style = MaterialTheme.typography.titleSmall,
+                            style = MaterialTheme.typography.titleSmall.copy(fontFamily = ReceiptMonoFontFamily),
                             fontWeight = FontWeight.ExtraBold,
                             color = MaterialTheme.colorScheme.primary
                         )
@@ -2290,7 +2673,7 @@ private fun TransactionReadingAnimationCard(
                             imageVector = if (syncState.isCompleted) Icons.Default.Check else Icons.Default.Sync,
                             contentDescription = null,
                             tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(dimens.rowIconSize * 0.85f)
+                            modifier = Modifier.size(18.dp)
                         )
                     }
                 }
@@ -2302,18 +2685,18 @@ private fun TransactionReadingAnimationCard(
                     modifier = Modifier
                         .fillMaxWidth()
                         .horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(dimens.itemSpacing * 0.55f),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     syncState.recentReadTransactions.take(4).forEach { item ->
                         Surface(
                             shape = RoundedCornerShape(50),
-                            color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f)
+                            color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.55f)
                         ) {
                             Row(
                                 modifier = Modifier.padding(
-                                    horizontal = dimens.horizontalPadding * 0.6f,
-                                    vertical = dimens.itemSpacing * 0.35f
+                                    horizontal = 10.dp,
+                                    vertical = 5.dp
                                 ),
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.spacedBy(4.dp)
@@ -2322,11 +2705,11 @@ private fun TransactionReadingAnimationCard(
                                     imageVector = categoryIcon(item.category),
                                     contentDescription = item.category,
                                     tint = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.size(dimens.rowIconSize * 0.65f)
+                                    modifier = Modifier.size(14.dp)
                                 )
                                 Text(
                                     text = "${item.merchant.take(12)} • ${formatCurrency(item.amount, currencySymbol)}",
-                                    style = MaterialTheme.typography.labelSmall,
+                                    style = MaterialTheme.typography.labelSmall.copy(fontFamily = ReceiptMonoFontFamily),
                                     fontWeight = FontWeight.SemiBold,
                                     color = MaterialTheme.colorScheme.onPrimaryContainer,
                                     maxLines = 1
@@ -2337,7 +2720,7 @@ private fun TransactionReadingAnimationCard(
                 }
             }
 
-            // Large Full-Space Downward Laser & SMS Receipt Scanner Viewport (expands to fill the rest of the card)
+            // Large Full-Space Downward Laser & SMS Receipt Scanner Viewport
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -2354,7 +2737,6 @@ private fun TransactionReadingAnimationCard(
                     val centerY = h / 2f
                     val minDim = minOf(w, h)
 
-                    // Concentric radar pulse rings scaled to the expanded viewport
                     val maxRadius = minDim * 0.47f
                     drawCircle(
                         color = primaryColor.copy(alpha = 0.08f),
@@ -2374,14 +2756,13 @@ private fun TransactionReadingAnimationCard(
                         style = Stroke(width = 2.dp.toPx())
                     )
 
-                    // Large Stylized SMS Receipt Document filling the scanner viewport
                     val cardW = (w * 0.80f).coerceAtMost(380.dp.toPx())
                     val cardH = (h * 0.86f).coerceAtLeast(80.dp.toPx())
                     val cardLeft = centerX - cardW / 2f
                     val cardTop = centerY - cardH / 2f
                     val cardRight = cardLeft + cardW
                     val cardBottom = cardTop + cardH
-                    val cornerRad = 16.dp.toPx()
+                    val cornerRad = 18.dp.toPx()
 
                     drawRoundRect(
                         color = surfaceVariantColor.copy(alpha = 0.92f),
@@ -2397,7 +2778,6 @@ private fun TransactionReadingAnimationCard(
                         style = Stroke(width = 1.5.dp.toPx())
                     )
 
-                    // Viewfinder Corner Brackets around the scanner document
                     val bracketOffset = 8.dp.toPx()
                     val bracketLen = (minDim * 0.09f).coerceIn(14.dp.toPx(), 28.dp.toPx())
                     val bracketStroke = 3.dp.toPx()
@@ -2406,20 +2786,15 @@ private fun TransactionReadingAnimationCard(
                     val bTop = (cardTop - bracketOffset).coerceAtLeast(2.dp.toPx())
                     val bBottom = (cardBottom + bracketOffset).coerceAtMost(h - 2.dp.toPx())
 
-                    // Top-Left Bracket
                     drawLine(primaryColor, Offset(bLeft, bTop), Offset(bLeft + bracketLen, bTop), bracketStroke, StrokeCap.Round)
                     drawLine(primaryColor, Offset(bLeft, bTop), Offset(bLeft, bTop + bracketLen), bracketStroke, StrokeCap.Round)
-                    // Top-Right Bracket
                     drawLine(primaryColor, Offset(bRight, bTop), Offset(bRight - bracketLen, bTop), bracketStroke, StrokeCap.Round)
                     drawLine(primaryColor, Offset(bRight, bTop), Offset(bRight, bTop + bracketLen), bracketStroke, StrokeCap.Round)
-                    // Bottom-Left Bracket
                     drawLine(primaryColor, Offset(bLeft, bBottom), Offset(bLeft + bracketLen, bBottom), bracketStroke, StrokeCap.Round)
                     drawLine(primaryColor, Offset(bLeft, bBottom), Offset(bLeft, bBottom - bracketLen), bracketStroke, StrokeCap.Round)
-                    // Bottom-Right Bracket
                     drawLine(primaryColor, Offset(bRight, bBottom), Offset(bRight - bracketLen, bBottom), bracketStroke, StrokeCap.Round)
                     drawLine(primaryColor, Offset(bRight, bBottom), Offset(bRight, bBottom - bracketLen), bracketStroke, StrokeCap.Round)
 
-                    // Simulated SMS Header + Multi-line Transaction Rows (illuminate as downward laser passes them)
                     val lineStartX = cardLeft + cardW * 0.10f
                     val lineMaxW = cardW * 0.80f
                     val lineFractions = listOf(0.16f, 0.29f, 0.42f, 0.55f, 0.68f, 0.81f)
@@ -2439,7 +2814,6 @@ private fun TransactionReadingAnimationCard(
                         )
                     }
 
-                    // Downward-Sweeping Horizontal Laser Scan Beam + Trailing Luminous Wake Above Beam
                     val beamY = cardTop + (cardH * animatedScanPhase)
                     val trailHeight = (cardH * 0.22f).coerceIn(22.dp.toPx(), 68.dp.toPx())
                     val trailTop = (beamY - trailHeight).coerceAtLeast(cardTop)
@@ -2467,10 +2841,9 @@ private fun TransactionReadingAnimationCard(
                     )
                 }
 
-                // Floating center status icon badge scaled for the larger scanner
                 Box(
                     modifier = Modifier
-                        .size(dimens.rowIconBoxSize * 1.45f)
+                        .size(62.dp)
                         .clip(CircleShape)
                         .background(MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.92f))
                         .border(2.dp, primaryColor.copy(alpha = 0.55f), CircleShape),
@@ -2484,7 +2857,7 @@ private fun TransactionReadingAnimationCard(
                         },
                         contentDescription = activeTitle,
                         tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(dimens.rowIconSize * 1.35f)
+                        modifier = Modifier.size(28.dp)
                     )
                 }
             }
@@ -2494,9 +2867,8 @@ private fun TransactionReadingAnimationCard(
 
 /**
  * Link Duplicate SMS / Transaction Dialog (`LinkDuplicateTransactionDialog`):
- * - Opened when the user swipes right on any transaction row (or taps the Link Duplicate button).
- * - Displays the swiped transaction and highlights suggested duplicate matches (matching amount or close timestamp).
- * - Consolidates both transactions' SMS signatures, raw SMS messages, tags, and notes into a single primary record.
+ * - Displays BOTH full untruncated Original SMS and Selected Target SMS on top in monospace receipt font.
+ * - Candidate rows below show ONLY Merchant, DateTime, Account, and Amount in a connected M3 card stack.
  */
 @Composable
 fun LinkDuplicateTransactionDialog(
@@ -2507,6 +2879,7 @@ fun LinkDuplicateTransactionDialog(
     onConfirmLink: (primaryTx: ExpenseTransaction, duplicateTx: ExpenseTransaction) -> Unit
 ) {
     val dimens = LocalAppDimens.current
+    val performHaptic = rememberAppHapticPerformer()
     var searchQuery by remember { mutableStateOf("") }
 
     val candidates = remember(sourceTransaction.id, allTransactions, searchQuery) {
@@ -2521,7 +2894,6 @@ fun LinkDuplicateTransactionDialog(
                     tx.amount.toLong().toString().contains(q)
             }
         }
-        // Score candidates: exact amount match + close timestamp come first
         filtered.sortedWith(
             compareByDescending<ExpenseTransaction> {
                 kotlin.math.abs(it.amount - sourceTransaction.amount) < 0.01
@@ -2574,36 +2946,34 @@ fun LinkDuplicateTransactionDialog(
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 ReceiptTicketCard(
-                    containerColor = MaterialTheme.colorScheme.surface,
+                    containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
                     contentColor = MaterialTheme.colorScheme.onSurface
                 ) {
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(dimens.cardPadding),
-                        verticalArrangement = Arrangement.spacedBy(dimens.itemSpacing * 0.85f)
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
+                        Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                            ModalSheetDragHandle()
+                        }
+
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Box(
-                                    modifier = Modifier
-                                        .size(dimens.rowIconBoxSize * 0.85f)
-                                        .clip(CircleShape)
-                                        .background(MaterialTheme.colorScheme.primaryContainer),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Default.Link,
-                                        contentDescription = null,
-                                        tint = MaterialTheme.colorScheme.primary,
-                                        modifier = Modifier.size(dimens.rowIconSize * 0.85f)
-                                    )
-                                }
-                                Spacer(modifier = Modifier.width(dimens.horizontalPadding * 0.55f))
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                SquircleIconBadge(
+                                    icon = Icons.Default.Link,
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    containerColor = MaterialTheme.colorScheme.primaryContainer
+                                )
+                                Spacer(modifier = Modifier.width(12.dp))
                                 Column {
                                     Text(
                                         text = "Link Duplicate SMS / Tx",
@@ -2617,31 +2987,33 @@ fun LinkDuplicateTransactionDialog(
                                     )
                                 }
                             }
-                            IconButton(onClick = onDismiss) {
-                                Icon(Icons.Default.Close, contentDescription = "Close")
-                            }
+                            CircularTonalIconButton(
+                                icon = Icons.Default.Close,
+                                contentDescription = "Close",
+                                onClick = onDismiss
+                            )
                         }
 
                         ReceiptDashedDividerLine()
 
                         // Top Raw SMS Verification Panel: Full Original SMS + Full Selected Target SMS
                         Surface(
-                            shape = RoundedCornerShape(dimens.smallCornerRadius),
-                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
+                            shape = RoundedCornerShape(20.dp),
+                            color = MaterialTheme.colorScheme.surfaceContainerHigh,
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .border(
                                     width = 1.dp,
                                     color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.65f),
-                                    shape = RoundedCornerShape(dimens.smallCornerRadius)
+                                    shape = RoundedCornerShape(20.dp)
                                 )
                                 .testTag("link_duplicate_sms_verification_card")
                         ) {
                             Column(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .padding(dimens.cardPadding * 0.8f),
-                                verticalArrangement = Arrangement.spacedBy(dimens.itemSpacing * 0.65f)
+                                    .padding(14.dp),
+                                verticalArrangement = Arrangement.spacedBy(10.dp)
                             ) {
                                 Row(
                                     verticalAlignment = Alignment.CenterVertically,
@@ -2651,7 +3023,7 @@ fun LinkDuplicateTransactionDialog(
                                         imageVector = Icons.Default.Message,
                                         contentDescription = null,
                                         tint = MaterialTheme.colorScheme.primary,
-                                        modifier = Modifier.size(dimens.rowIconSize * 0.72f)
+                                        modifier = Modifier.size(16.dp)
                                     )
                                     Text(
                                         text = "Raw SMS Verification",
@@ -2663,8 +3035,8 @@ fun LinkDuplicateTransactionDialog(
 
                                 // 1. Full Untruncated Original SMS Box
                                 Surface(
-                                    shape = RoundedCornerShape(dimens.smallCornerRadius * 0.85f),
-                                    color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f),
+                                    shape = RoundedCornerShape(14.dp),
+                                    color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f),
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .testTag("link_duplicate_original_sms_box")
@@ -2672,7 +3044,7 @@ fun LinkDuplicateTransactionDialog(
                                     Column(
                                         modifier = Modifier
                                             .fillMaxWidth()
-                                            .padding(dimens.cardPadding * 0.7f),
+                                            .padding(12.dp),
                                         verticalArrangement = Arrangement.spacedBy(4.dp)
                                     ) {
                                         val primaryOrigSms = sourceSmsRecords.firstOrNull()
@@ -2694,13 +3066,13 @@ fun LinkDuplicateTransactionDialog(
                                         }
                                         Text(
                                             text = fullOriginalSmsText,
-                                            style = MaterialTheme.typography.bodySmall,
+                                            style = MaterialTheme.typography.bodySmall.copy(fontFamily = ReceiptMonoFontFamily),
                                             color = MaterialTheme.colorScheme.onSurface
                                         )
                                     }
                                 }
 
-                                // 2. Full Untruncated Selected Target SMS Box (animates smoothly when switching candidate)
+                                // 2. Full Untruncated Selected Target SMS Box
                                 AnimatedContent(
                                     targetState = selectedTarget?.id.orEmpty(),
                                     transitionSpec = {
@@ -2717,8 +3089,8 @@ fun LinkDuplicateTransactionDialog(
                                     }
 
                                     Surface(
-                                        shape = RoundedCornerShape(dimens.smallCornerRadius * 0.85f),
-                                        color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.55f),
+                                        shape = RoundedCornerShape(14.dp),
+                                        color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.65f),
                                         modifier = Modifier
                                             .fillMaxWidth()
                                             .testTag("link_duplicate_selected_sms_box")
@@ -2726,7 +3098,7 @@ fun LinkDuplicateTransactionDialog(
                                         Column(
                                             modifier = Modifier
                                                 .fillMaxWidth()
-                                                .padding(dimens.cardPadding * 0.7f),
+                                                .padding(12.dp),
                                             verticalArrangement = Arrangement.spacedBy(4.dp)
                                         ) {
                                             if (activeTarget != null) {
@@ -2749,7 +3121,7 @@ fun LinkDuplicateTransactionDialog(
                                                 }
                                                 Text(
                                                     text = fullSelectedSmsText,
-                                                    style = MaterialTheme.typography.bodySmall,
+                                                    style = MaterialTheme.typography.bodySmall.copy(fontFamily = ReceiptMonoFontFamily),
                                                     color = MaterialTheme.colorScheme.onSurface
                                                 )
                                             } else {
@@ -2773,17 +3145,14 @@ fun LinkDuplicateTransactionDialog(
 
                         // Concise Original Transaction Summary (Merchant, DateTime, Account, Amount ONLY)
                         Surface(
-                            shape = RoundedCornerShape(dimens.smallCornerRadius),
-                            color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f),
+                            shape = RoundedCornerShape(18.dp),
+                            color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.38f),
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .testTag("link_source_summary_card")
                         ) {
                             Column(
-                                modifier = Modifier.padding(
-                                    horizontal = dimens.horizontalPadding * 0.85f,
-                                    vertical = dimens.itemSpacing * 0.7f
-                                ),
+                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
                                 verticalArrangement = Arrangement.spacedBy(3.dp)
                             ) {
                                 Text(
@@ -2808,7 +3177,7 @@ fun LinkDuplicateTransactionDialog(
                                     Spacer(modifier = Modifier.width(8.dp))
                                     Text(
                                         text = formatCurrency(sourceTransaction.amount, currencySymbol),
-                                        style = MaterialTheme.typography.titleMedium,
+                                        style = MaterialTheme.typography.titleMedium.copy(fontFamily = ReceiptMonoFontFamily),
                                         fontWeight = FontWeight.ExtraBold,
                                         color = MaterialTheme.colorScheme.primary
                                     )
@@ -2830,7 +3199,7 @@ fun LinkDuplicateTransactionDialog(
                             placeholder = { Text("Merchant, amount, or account...") },
                             leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
                             singleLine = true,
-                            shape = RoundedCornerShape(dimens.smallCornerRadius),
+                            shape = RoundedCornerShape(50),
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .testTag("link_duplicate_search_input")
@@ -2838,15 +3207,15 @@ fun LinkDuplicateTransactionDialog(
 
                         if (candidates.isEmpty()) {
                             Surface(
-                                shape = RoundedCornerShape(dimens.smallCornerRadius),
-                                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                                shape = RoundedCornerShape(18.dp),
+                                color = MaterialTheme.colorScheme.surfaceContainerHigh,
                                 modifier = Modifier.fillMaxWidth()
                             ) {
                                 Text(
                                     text = "No other transactions found to link with.",
                                     style = MaterialTheme.typography.bodyMedium,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    modifier = Modifier.padding(dimens.cardPadding)
+                                    modifier = Modifier.padding(16.dp)
                                 )
                             }
                         } else {
@@ -2856,38 +3225,40 @@ fun LinkDuplicateTransactionDialog(
                                 fontWeight = FontWeight.Bold
                             )
 
+                            val visibleCandidates = candidates.take(8)
                             Column(
                                 modifier = Modifier.fillMaxWidth(),
-                                verticalArrangement = Arrangement.spacedBy(dimens.itemSpacing * 0.55f)
+                                verticalArrangement = Arrangement.spacedBy(3.dp)
                             ) {
-                                candidates.take(8).forEach { candidate ->
+                                visibleCandidates.forEachIndexed { idx, candidate ->
                                     val isSelected = candidate.id == selectedTargetId
+                                    val stackShape = groupedCardShape(index = idx, count = visibleCandidates.size, outerCorner = 20.dp, innerCorner = 6.dp)
 
                                     Surface(
-                                        shape = RoundedCornerShape(dimens.smallCornerRadius),
+                                        shape = stackShape,
                                         color = if (isSelected) {
-                                            MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.85f)
+                                            MaterialTheme.colorScheme.secondaryContainer
                                         } else {
-                                            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                                            MaterialTheme.colorScheme.surfaceContainerHigh
                                         },
                                         modifier = Modifier
                                             .fillMaxWidth()
-                                            .clip(RoundedCornerShape(dimens.smallCornerRadius))
+                                            .clip(stackShape)
                                             .border(
-                                                width = if (isSelected) 2.dp else 1.dp,
+                                                width = if (isSelected) 2.dp else 0.dp,
                                                 color = if (isSelected) MaterialTheme.colorScheme.primary else Color.Transparent,
-                                                shape = RoundedCornerShape(dimens.smallCornerRadius)
+                                                shape = stackShape
                                             )
-                                            .clickable { selectedTargetId = candidate.id }
+                                            .clickable {
+                                                performHaptic()
+                                                selectedTargetId = candidate.id
+                                            }
                                             .testTag("link_candidate_row_${candidate.id}")
                                     ) {
                                         Row(
                                             modifier = Modifier
                                                 .fillMaxWidth()
-                                                .padding(
-                                                    horizontal = dimens.horizontalPadding * 0.85f,
-                                                    vertical = dimens.itemSpacing * 0.75f
-                                                ),
+                                                .padding(horizontal = 14.dp, vertical = 12.dp),
                                             verticalAlignment = Alignment.CenterVertically,
                                             horizontalArrangement = Arrangement.SpaceBetween
                                         ) {
@@ -2910,7 +3281,7 @@ fun LinkDuplicateTransactionDialog(
                                             Spacer(modifier = Modifier.width(8.dp))
                                             Text(
                                                 text = formatCurrency(candidate.amount, currencySymbol),
-                                                style = MaterialTheme.typography.titleMedium,
+                                                style = MaterialTheme.typography.titleMedium.copy(fontFamily = ReceiptMonoFontFamily),
                                                 fontWeight = FontWeight.Bold,
                                                 color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
                                             )
@@ -2931,7 +3302,8 @@ fun LinkDuplicateTransactionDialog(
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                         modifier = Modifier.weight(1f)
                                     )
-                                    Switch(
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    M3CheckmarkSwitch(
                                         checked = keepTargetAsPrimary,
                                         onCheckedChange = { keepTargetAsPrimary = it },
                                         modifier = Modifier.testTag("keep_target_primary_switch")
@@ -2950,10 +3322,11 @@ fun LinkDuplicateTransactionDialog(
                             TextButton(onClick = onDismiss) {
                                 Text("Cancel")
                             }
-                            Spacer(modifier = Modifier.width(dimens.horizontalPadding * 0.5f))
+                            Spacer(modifier = Modifier.width(8.dp))
                             Button(
                                 onClick = {
                                     val target = selectedTarget ?: return@Button
+                                    performHaptic()
                                     if (keepTargetAsPrimary) {
                                         onConfirmLink(target, sourceTransaction)
                                     } else {
@@ -2961,15 +3334,15 @@ fun LinkDuplicateTransactionDialog(
                                     }
                                 },
                                 enabled = selectedTarget != null,
-                                shape = RoundedCornerShape(dimens.smallCornerRadius),
+                                shape = RoundedCornerShape(50),
                                 modifier = Modifier.testTag("confirm_link_duplicate_button")
                             ) {
                                 Icon(
                                     imageVector = Icons.Default.Link,
                                     contentDescription = null,
-                                    modifier = Modifier.size(dimens.rowIconSize * 0.78f)
+                                    modifier = Modifier.size(16.dp)
                                 )
-                                Spacer(modifier = Modifier.width(dimens.horizontalPadding * 0.35f))
+                                Spacer(modifier = Modifier.width(6.dp))
                                 Text("Link & Merge Duplicate")
                             }
                         }
@@ -2982,11 +3355,8 @@ fun LinkDuplicateTransactionDialog(
 
 /**
  * CSV Data Export Dialog (`ExportTransactionsCsvDialog`):
- * - Lets the user pick a period / date range (`Current Month`, `Current FY`, `Past FY`, `This Year`,
- *   `Past Year`, `Last 30 Days`, `Last 3 Months`, `Last 7 Days`, `All Time`, or `Custom Range`)
- *   and scope (`Current Scope` vs `Family + Personal`).
- * - Previews matching transaction count, total expenses, and total income before saving via
- *   Storage Access Framework (`CreateDocument("text/csv")`) or sharing via Android Share sheet.
+ * - Inspired by Screenshot 1 centered M3 28dp modal dialog with top hero icon, centered title,
+ *   tonal preset chips with leading icons, summary card, and right-aligned stadium actions.
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -2997,6 +3367,7 @@ fun ExportTransactionsCsvDialog(
     onShareCsv: (csvContent: String, suggestedFileName: String, count: Int, periodLabel: String) -> Unit = { _, _, _, _ -> }
 ) {
     val dimens = LocalAppDimens.current
+    val performHaptic = rememberAppHapticPerformer()
     val currency = uiState.activeCurrencySymbol
 
     var selectedPreset by remember { mutableStateOf(uiState.selectedDateRangePreset) }
@@ -3076,247 +3447,228 @@ fun ExportTransactionsCsvDialog(
                     .testTag("export_csv_dialog"),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                ReceiptTicketCard(
-                    containerColor = MaterialTheme.colorScheme.surface,
-                    contentColor = MaterialTheme.colorScheme.onSurface
+                Surface(
+                    shape = RoundedCornerShape(28.dp),
+                    color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                    tonalElevation = 6.dp
                 ) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(dimens.cardPadding),
-                    verticalArrangement = Arrangement.spacedBy(dimens.itemSpacing * 0.85f)
-                ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(dimens.cardPadding),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Box(
-                                modifier = Modifier
-                                    .size(dimens.rowIconBoxSize * 0.85f)
-                                    .clip(CircleShape)
-                                    .background(MaterialTheme.colorScheme.primaryContainer),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Download,
-                                    contentDescription = "Export CSV",
-                                    tint = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.size(dimens.rowIconSize * 0.85f)
-                                )
-                            }
-                            Spacer(modifier = Modifier.width(dimens.horizontalPadding * 0.55f))
-                            Column {
-                                Text(
-                                    text = "Export Transactions (CSV)",
-                                    style = MaterialTheme.typography.titleLarge,
-                                    fontWeight = FontWeight.Bold
-                                )
-                                Text(
-                                    text = "Select financial year, calendar year, or date range",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                        }
-                        IconButton(onClick = onDismiss) {
-                            Icon(Icons.Default.Close, contentDescription = "Close")
-                        }
-                    }
+                        M3ModalHeroHeader(
+                            icon = Icons.Default.Download,
+                            title = "Export Transactions (CSV)",
+                            subtitle = "Select financial year, calendar year, or date range"
+                        )
 
-                    ReceiptDashedDividerLine()
+                        ReceiptDashedDividerLine()
 
-                    Text(
-                        text = "Period / Date Range",
-                        style = MaterialTheme.typography.labelLarge,
-                        fontWeight = FontWeight.SemiBold,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-
-                    FlowRow(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(dimens.horizontalPadding * 0.4f),
-                        verticalArrangement = Arrangement.spacedBy(dimens.itemSpacing * 0.45f)
-                    ) {
-                        exportPresets.forEach { preset ->
-                            FilterChip(
-                                selected = selectedPreset == preset,
-                                onClick = {
-                                    if (preset == DateRangePreset.CUSTOM) {
-                                        selectedPreset = DateRangePreset.CUSTOM
-                                        showCustomPicker = true
-                                    } else {
-                                        selectedPreset = preset
-                                    }
-                                },
-                                leadingIcon = if (preset == DateRangePreset.CUSTOM) {
-                                    {
-                                        Icon(
-                                            imageVector = Icons.Default.CalendarMonth,
-                                            contentDescription = null,
-                                            modifier = Modifier.size(dimens.rowIconSize * 0.65f)
-                                        )
-                                    }
-                                } else {
-                                    null
-                                },
-                                label = {
-                                    Text(
-                                        text = if (preset == DateRangePreset.CUSTOM && selectedPreset == DateRangePreset.CUSTOM) {
-                                            periodDisplayLabel
-                                        } else {
-                                            preset.label
-                                        },
-                                        style = MaterialTheme.typography.labelSmall
-                                    )
-                                },
-                                modifier = Modifier.testTag("export_preset_chip_${preset.name.lowercase()}")
-                            )
-                        }
-                    }
-
-                    if (uiState.household != null) {
                         Text(
-                            text = "Transactions Scope",
+                            text = "Period / Date Range",
                             style = MaterialTheme.typography.labelLarge,
                             fontWeight = FontWeight.SemiBold,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
+
+                        FlowRow(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            exportPresets.forEach { preset ->
+                                val isSel = selectedPreset == preset
+                                FilterChip(
+                                    selected = isSel,
+                                    onClick = {
+                                        performHaptic()
+                                        if (preset == DateRangePreset.CUSTOM) {
+                                            selectedPreset = DateRangePreset.CUSTOM
+                                            showCustomPicker = true
+                                        } else {
+                                            selectedPreset = preset
+                                        }
+                                    },
+                                    leadingIcon = {
+                                        Icon(
+                                            imageVector = when {
+                                                preset == DateRangePreset.CUSTOM -> Icons.Default.CalendarMonth
+                                                isSel -> Icons.Default.Check
+                                                else -> Icons.Default.Tune
+                                            },
+                                            contentDescription = null,
+                                            modifier = Modifier.size(14.dp)
+                                        )
+                                    },
+                                    label = {
+                                        Text(
+                                            text = if (preset == DateRangePreset.CUSTOM && selectedPreset == DateRangePreset.CUSTOM) {
+                                                periodDisplayLabel
+                                            } else {
+                                                preset.label
+                                            },
+                                            style = MaterialTheme.typography.labelSmall
+                                        )
+                                    },
+                                    shape = RoundedCornerShape(12.dp),
+                                    colors = FilterChipDefaults.filterChipColors(
+                                        containerColor = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.45f),
+                                        selectedContainerColor = MaterialTheme.colorScheme.secondaryContainer
+                                    ),
+                                    modifier = Modifier.testTag("export_preset_chip_${preset.name.lowercase()}")
+                                )
+                            }
+                        }
+
+                        if (uiState.householdFeatureEnabled && uiState.household != null) {
+                            Text(
+                                text = "Transactions Scope",
+                                style = MaterialTheme.typography.labelLarge,
+                                fontWeight = FontWeight.SemiBold,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                CsvExportScope.entries.forEach { scopeOption ->
+                                    FilterChip(
+                                        selected = exportScope == scopeOption,
+                                        onClick = {
+                                            performHaptic()
+                                            exportScope = scopeOption
+                                        },
+                                        label = { Text(scopeOption.label, style = MaterialTheme.typography.labelSmall) },
+                                        shape = RoundedCornerShape(50),
+                                        modifier = Modifier.testTag("export_scope_chip_${scopeOption.name.lowercase()}")
+                                    )
+                                }
+                            }
+                        }
+
+                        // Live Export Summary Card
+                        Surface(
+                            shape = RoundedCornerShape(20.dp),
+                            color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.55f),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(14.dp),
+                                verticalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = periodDisplayLabel,
+                                        style = MaterialTheme.typography.titleSmall,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.onSecondaryContainer
+                                    )
+                                    Text(
+                                        text = "${filteredTransactions.size} rows",
+                                        style = MaterialTheme.typography.labelLarge.copy(fontFamily = ReceiptMonoFontFamily),
+                                        fontWeight = FontWeight.ExtraBold,
+                                        color = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.testTag("export_matching_count_text")
+                                    )
+                                }
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Text(
+                                        text = "Spent: ${formatCurrency(totalExpense, currency)}",
+                                        style = MaterialTheme.typography.bodySmall.copy(fontFamily = ReceiptMonoFontFamily),
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = MaterialTheme.colorScheme.onSecondaryContainer
+                                    )
+                                    Text(
+                                        text = "Income: ${formatCurrency(totalIncome, currency)}",
+                                        style = MaterialTheme.typography.bodySmall.copy(fontFamily = ReceiptMonoFontFamily),
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = BudgetSafeGreen
+                                    )
+                                }
+                            }
+                        }
+
+                        ReceiptDashedDividerLine()
+
                         Row(
                             modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(dimens.horizontalPadding * 0.45f)
-                        ) {
-                            CsvExportScope.entries.forEach { scopeOption ->
-                                FilterChip(
-                                    selected = exportScope == scopeOption,
-                                    onClick = { exportScope = scopeOption },
-                                    label = { Text(scopeOption.label, style = MaterialTheme.typography.labelSmall) },
-                                    modifier = Modifier.testTag("export_scope_chip_${scopeOption.name.lowercase()}")
-                                )
-                            }
-                        }
-                    }
-
-                    // Live Export Summary Card
-                    Surface(
-                        shape = RoundedCornerShape(dimens.smallCornerRadius),
-                        color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.5f),
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Column(
-                            modifier = Modifier.padding(dimens.cardPadding * 0.8f),
-                            verticalArrangement = Arrangement.spacedBy(dimens.itemSpacing * 0.45f)
-                        ) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Text(
-                                    text = periodDisplayLabel,
-                                    style = MaterialTheme.typography.titleSmall,
-                                    fontWeight = FontWeight.Bold,
-                                    color = MaterialTheme.colorScheme.onSecondaryContainer
-                                )
-                                Text(
-                                    text = "${filteredTransactions.size} rows",
-                                    style = MaterialTheme.typography.labelLarge,
-                                    fontWeight = FontWeight.ExtraBold,
-                                    color = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.testTag("export_matching_count_text")
-                                )
-                            }
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween
-                            ) {
-                                Text(
-                                    text = "Spent: ${formatCurrency(totalExpense, currency)}",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    fontWeight = FontWeight.SemiBold,
-                                    color = MaterialTheme.colorScheme.onSecondaryContainer
-                                )
-                                Text(
-                                    text = "Income: ${formatCurrency(totalIncome, currency)}",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    fontWeight = FontWeight.SemiBold,
-                                    color = BudgetSafeGreen
-                                )
-                            }
-                        }
-                    }
-
-                    ReceiptDashedDividerLine()
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        TextButton(onClick = onDismiss) {
-                            Text("Cancel")
-                        }
-
-                        Row(
-                            horizontalArrangement = Arrangement.spacedBy(dimens.horizontalPadding * 0.45f),
+                            horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            OutlinedButton(
-                                onClick = {
-                                    val csvText = CsvTransactionExporter.buildTransactionsCsv(
-                                        transactions = filteredTransactions,
-                                        currencySymbol = currency
-                                    )
-                                    val fileName = CsvTransactionExporter.suggestCsvFileName(
-                                        preset = selectedPreset,
-                                        selectedPeriod = uiState.selectedPeriod,
-                                        customRange = customRange
-                                    )
-                                    onShareCsv(csvText, fileName, filteredTransactions.size, periodDisplayLabel)
-                                },
-                                enabled = filteredTransactions.isNotEmpty(),
-                                shape = RoundedCornerShape(50),
-                                modifier = Modifier.testTag("share_export_csv_button")
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Share,
-                                    contentDescription = "Share CSV",
-                                    modifier = Modifier.size(dimens.rowIconSize * 0.75f)
-                                )
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text("Share")
+                            TextButton(onClick = onDismiss) {
+                                Text("Cancel")
                             }
 
-                            Button(
-                                onClick = {
-                                    val csvText = CsvTransactionExporter.buildTransactionsCsv(
-                                        transactions = filteredTransactions,
-                                        currencySymbol = currency
-                                    )
-                                    val fileName = CsvTransactionExporter.suggestCsvFileName(
-                                        preset = selectedPreset,
-                                        selectedPeriod = uiState.selectedPeriod,
-                                        customRange = customRange
-                                    )
-                                    onSaveCsvToFile(csvText, fileName, filteredTransactions.size, periodDisplayLabel)
-                                },
-                                enabled = filteredTransactions.isNotEmpty(),
-                                shape = RoundedCornerShape(50),
-                                modifier = Modifier.testTag("confirm_export_csv_button")
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Icon(
-                                    imageVector = Icons.Default.Download,
-                                    contentDescription = "Save CSV",
-                                    modifier = Modifier.size(dimens.rowIconSize * 0.78f)
-                                )
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text("Save CSV")
+                                OutlinedButton(
+                                    onClick = {
+                                        performHaptic()
+                                        val csvText = CsvTransactionExporter.buildTransactionsCsv(
+                                            transactions = filteredTransactions,
+                                            currencySymbol = currency
+                                        )
+                                        val fileName = CsvTransactionExporter.suggestCsvFileName(
+                                            preset = selectedPreset,
+                                            selectedPeriod = uiState.selectedPeriod,
+                                            customRange = customRange
+                                        )
+                                        onShareCsv(csvText, fileName, filteredTransactions.size, periodDisplayLabel)
+                                    },
+                                    enabled = filteredTransactions.isNotEmpty(),
+                                    shape = RoundedCornerShape(50),
+                                    modifier = Modifier.testTag("share_export_csv_button")
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Share,
+                                        contentDescription = "Share CSV",
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text("Share")
+                                }
+
+                                Button(
+                                    onClick = {
+                                        performHaptic()
+                                        val csvText = CsvTransactionExporter.buildTransactionsCsv(
+                                            transactions = filteredTransactions,
+                                            currencySymbol = currency
+                                        )
+                                        val fileName = CsvTransactionExporter.suggestCsvFileName(
+                                            preset = selectedPreset,
+                                            selectedPeriod = uiState.selectedPeriod,
+                                            customRange = customRange
+                                        )
+                                        onSaveCsvToFile(csvText, fileName, filteredTransactions.size, periodDisplayLabel)
+                                    },
+                                    enabled = filteredTransactions.isNotEmpty(),
+                                    shape = RoundedCornerShape(50),
+                                    modifier = Modifier.testTag("confirm_export_csv_button")
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Download,
+                                        contentDescription = "Save CSV",
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text("Save CSV")
+                                }
                             }
                         }
                     }
                 }
-            }
             }
         }
     }
@@ -3334,6 +3686,3 @@ fun ExportTransactionsCsvDialog(
         )
     }
 }
-
-
-
