@@ -231,6 +231,8 @@ class SmsInboxReader(private val context: Context) {
     suspend fun scanDeviceSmsInboxWithProgress(
         existingSignatures: Set<String>,
         maxMessages: Int = Int.MAX_VALUE,
+        minTimestampMillis: Long? = null,
+        maxTimestampMillis: Long? = null,
         batchSize: Int = DEFAULT_SMS_BATCH_SIZE,
         readerThreads: Int = DEFAULT_PARALLEL_READER_THREADS,
         perBatchDelayMs: Long = 45L,
@@ -261,16 +263,22 @@ class SmsInboxReader(private val context: Context) {
         for (uri: Uri in urisToTry) {
             if (processedAnyUri) break
             try {
-                val selection = if (uri == Telephony.Sms.CONTENT_URI) {
-                    "${Telephony.Sms.TYPE} = ?"
-                } else {
-                    null
+                val clauses = mutableListOf<String>()
+                val args = mutableListOf<String>()
+                if (uri == Telephony.Sms.CONTENT_URI) {
+                    clauses.add("${Telephony.Sms.TYPE} = ?")
+                    args.add(Telephony.Sms.MESSAGE_TYPE_INBOX.toString())
                 }
-                val selectionArgs = if (uri == Telephony.Sms.CONTENT_URI) {
-                    arrayOf(Telephony.Sms.MESSAGE_TYPE_INBOX.toString())
-                } else {
-                    null
+                if (minTimestampMillis != null) {
+                    clauses.add("${Telephony.Sms.DATE} >= ?")
+                    args.add(minTimestampMillis.toString())
                 }
+                if (maxTimestampMillis != null) {
+                    clauses.add("${Telephony.Sms.DATE} <= ?")
+                    args.add(maxTimestampMillis.toString())
+                }
+                val selection = clauses.takeIf { it.isNotEmpty() }?.joinToString(" AND ")
+                val selectionArgs = args.takeIf { it.isNotEmpty() }?.toTypedArray()
                 context.contentResolver.query(
                     uri,
                     projection,
@@ -304,8 +312,10 @@ class SmsInboxReader(private val context: Context) {
                                 val sender = cursor.getString(addressIdx).orEmpty()
                                 val body = cursor.getString(bodyIdx).orEmpty()
                                 val timestamp = cursor.getLong(dateIdx)
+                                val withinRange = (minTimestampMillis == null || timestamp >= minTimestampMillis) &&
+                                    (maxTimestampMillis == null || timestamp <= maxTimestampMillis)
                                 val key = "$sender|$timestamp|${body.trim()}"
-                                if (sender.isNotBlank() && body.isNotBlank() && seenRawKeys.add(key)) {
+                                if (withinRange && sender.isNotBlank() && body.isNotBlank() && seenRawKeys.add(key)) {
                                     rawRows.add(RawSmsRow(sender = sender, body = body, timestamp = timestamp))
                                 }
                             }
@@ -340,7 +350,9 @@ class SmsInboxReader(private val context: Context) {
      */
     fun scanDeviceSmsInbox(
         existingSignatures: Set<String>,
-        maxMessages: Int = Int.MAX_VALUE
+        maxMessages: Int = Int.MAX_VALUE,
+        minTimestampMillis: Long? = null,
+        maxTimestampMillis: Long? = null
     ): List<SmsCandidate> {
         val candidates = mutableListOf<SmsCandidate>()
         val seenSignatures = existingSignatures.toMutableSet()
@@ -362,16 +374,22 @@ class SmsInboxReader(private val context: Context) {
         for (uri: Uri in urisToTry) {
             if (processedAnyUri) break
             try {
-                val selection = if (uri == Telephony.Sms.CONTENT_URI) {
-                    "${Telephony.Sms.TYPE} = ?"
-                } else {
-                    null
+                val clauses = mutableListOf<String>()
+                val args = mutableListOf<String>()
+                if (uri == Telephony.Sms.CONTENT_URI) {
+                    clauses.add("${Telephony.Sms.TYPE} = ?")
+                    args.add(Telephony.Sms.MESSAGE_TYPE_INBOX.toString())
                 }
-                val selectionArgs = if (uri == Telephony.Sms.CONTENT_URI) {
-                    arrayOf(Telephony.Sms.MESSAGE_TYPE_INBOX.toString())
-                } else {
-                    null
+                if (minTimestampMillis != null) {
+                    clauses.add("${Telephony.Sms.DATE} >= ?")
+                    args.add(minTimestampMillis.toString())
                 }
+                if (maxTimestampMillis != null) {
+                    clauses.add("${Telephony.Sms.DATE} <= ?")
+                    args.add(maxTimestampMillis.toString())
+                }
+                val selection = clauses.takeIf { it.isNotEmpty() }?.joinToString(" AND ")
+                val selectionArgs = args.takeIf { it.isNotEmpty() }?.toTypedArray()
                 context.contentResolver.query(
                     uri,
                     projection,
@@ -397,8 +415,10 @@ class SmsInboxReader(private val context: Context) {
                         val sender = cursor.getString(addressIdx).orEmpty()
                         val body = cursor.getString(bodyIdx).orEmpty()
                         val timestamp = cursor.getLong(dateIdx)
+                        val withinRange = (minTimestampMillis == null || timestamp >= minTimestampMillis) &&
+                            (maxTimestampMillis == null || timestamp <= maxTimestampMillis)
 
-                        if (sender.isBlank() || body.isBlank()) continue
+                        if (!withinRange || sender.isBlank() || body.isBlank()) continue
                         count++
 
                         val parsed = BankParserFactory.parseSms(
@@ -510,16 +530,63 @@ class SmsInboxReader(private val context: Context) {
         fun normalizeSmsBody(body: String): String =
             body.trim().replace(Regex("\\s+"), " ").lowercase(Locale.US)
 
+        private val SYNTHETIC_AUTO_PARSED_REGEX = Regex(
+            pattern = "^(?:\\[[^\\]]*\\]\\s*)?auto[-\\s]?parsed\\s+from\\b.*$",
+            options = setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)
+        )
+
+        fun isSyntheticAutoParsedText(text: String): Boolean {
+            val trimmed = text.trim()
+            if (trimmed.isEmpty()) return false
+            val withoutLink = trimmed
+                .substringBefore("\n[Linked Duplicate:")
+                .substringBefore("[Linked Duplicate:")
+                .trim()
+            return SYNTHETIC_AUTO_PARSED_REGEX.matches(withoutLink)
+        }
+
+        fun stripSyntheticAutoParsedNote(notes: String): String {
+            if (notes.isBlank()) return ""
+            val hasLinkedSuffix = notes.contains("[Linked Duplicate:")
+            val linkedSuffix = if (hasLinkedSuffix) {
+                "[Linked Duplicate:" + notes.substringAfter("[Linked Duplicate:")
+            } else {
+                ""
+            }
+            val basePart = notes
+                .substringBefore("\n[Linked Duplicate:")
+                .substringBefore("[Linked Duplicate:")
+                .trim()
+            return if (SYNTHETIC_AUTO_PARSED_REGEX.matches(basePart)) {
+                linkedSuffix.trim()
+            } else {
+                notes
+            }
+        }
+
         /**
-         * Extracts the original raw SMS body from a transaction `notes` field, stripping any
-         * `[SENDER] ` prefix and any appended `\n[Linked Duplicate: ...]` metadata suffix.
+         * Extracts the original raw SMS body from a transaction `notes` field ONLY when it carries
+         * an explicit `[SENDER] <rawSmsBody>` prefix from a real SMS message (excluding Cash or
+         * legacy `"Auto-parsed from <merchant>"` placeholders), stripping any appended
+         * `\n[Linked Duplicate: ...]` metadata suffix.
          */
         fun extractRawSmsBodyFromNotes(notes: String): String {
             val withoutLinkSuffix = notes
                 .substringBefore("\n[Linked Duplicate:")
                 .substringBefore("[Linked Duplicate:")
                 .trim()
-            return withoutLinkSuffix.substringAfter("] ", withoutLinkSuffix).trim()
+            if (!withoutLinkSuffix.startsWith("[") || !withoutLinkSuffix.contains("] ")) {
+                return ""
+            }
+            val sender = withoutLinkSuffix.substringAfter("[").substringBefore("] ").trim()
+            val body = withoutLinkSuffix.substringAfter("] ").trim()
+            if (sender.isBlank() || sender.equals("Cash", ignoreCase = true) || body.isBlank()) {
+                return ""
+            }
+            if (isSyntheticAutoParsedText(body)) {
+                return ""
+            }
+            return body
         }
 
         fun buildSmsContentKey(body: String, timestamp: Long): String {

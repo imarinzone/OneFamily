@@ -108,6 +108,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.geometry.CornerRadius
@@ -140,6 +141,7 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.data.local.LocalAccountSessionManager
 import com.example.data.model.BudgetScope
+import com.example.data.model.ExpenseCategories
 import com.example.data.model.ExpenseTransaction
 import com.example.data.model.FinancialAccount
 import com.example.data.model.Household
@@ -247,6 +249,36 @@ fun CircularTonalIconButton(
     }
 }
 
+@Composable
+fun rememberCustomCategoryEmojis(): Map<String, String> =
+    LocalAccountSessionManager.customCategoryEmojis.collectAsStateWithLifecycle().value
+
+@Composable
+fun CategoryBadgeGlyph(
+    category: String,
+    tint: Color,
+    iconSize: Dp = 20.dp,
+    customEmoji: String? = rememberCustomCategoryEmojis()[category.trim().lowercase()],
+    contentDescription: String? = null
+) {
+    val cleanEmoji = customEmoji?.trim().orEmpty()
+    if (cleanEmoji.isNotEmpty()) {
+        Text(
+            text = cleanEmoji,
+            fontSize = (iconSize.value * 0.95f).sp,
+            textAlign = TextAlign.Center,
+            maxLines = 1
+        )
+    } else {
+        Icon(
+            imageVector = categoryIcon(category),
+            contentDescription = contentDescription,
+            tint = tint,
+            modifier = Modifier.size(iconSize)
+        )
+    }
+}
+
 /**
  * 16dp squircle pastel-tonal icon badge used in connected M3 card stacks.
  */
@@ -258,6 +290,7 @@ fun SquircleIconBadge(
     modifier: Modifier = Modifier,
     size: Dp = 46.dp,
     iconSize: Dp = 22.dp,
+    emoji: String? = null,
     contentDescription: String? = null
 ) {
     Box(
@@ -267,12 +300,22 @@ fun SquircleIconBadge(
             .background(containerColor),
         contentAlignment = Alignment.Center
     ) {
-        Icon(
-            imageVector = icon,
-            contentDescription = contentDescription,
-            tint = tint,
-            modifier = Modifier.size(iconSize)
-        )
+        val cleanEmoji = emoji?.trim().orEmpty()
+        if (cleanEmoji.isNotEmpty()) {
+            Text(
+                text = cleanEmoji,
+                fontSize = (iconSize.value * 0.96f).sp,
+                textAlign = TextAlign.Center,
+                maxLines = 1
+            )
+        } else {
+            Icon(
+                imageVector = icon,
+                contentDescription = contentDescription,
+                tint = tint,
+                modifier = Modifier.size(iconSize)
+            )
+        }
     }
 }
 
@@ -956,92 +999,92 @@ fun MonthPeriodSelectorBar(
                 }
                 .testTag("top_month_switcher_bar")
         ) {
-            AnimatedContent(
-                targetState = Triple(activePeriod, selectedDateRangePreset, periodLabel),
-                transitionSpec = {
-                    val movingForward = targetState.first >= initialState.first
-                    val enterSlide = slideInHorizontally(
-                        animationSpec = spring(
-                            dampingRatio = Spring.DampingRatioNoBouncy,
-                            stiffness = Spring.StiffnessMediumLow
-                        ),
-                        initialOffsetX = { fullWidth -> if (movingForward) fullWidth else -fullWidth }
-                    ) + fadeIn()
-                    val exitSlide = slideOutHorizontally(
-                        animationSpec = spring(
-                            dampingRatio = Spring.DampingRatioNoBouncy,
-                            stiffness = Spring.StiffnessMediumLow
-                        ),
-                        targetOffsetX = { fullWidth -> if (movingForward) -fullWidth else fullWidth }
-                    ) + fadeOut()
-                    enterSlide.togetherWith(exitSlide)
-                },
+            val prevPeriod = activePeriod.previousMonth()
+            val nextPeriod = activePeriod.nextMonth()
+            val topYearLabel = if (selectedDateRangePreset == DateRangePreset.MONTH) {
+                activePeriod.year.toString()
+            } else {
+                selectedDateRangePreset.label
+            }
+            val bottomMonthLabel = if (selectedDateRangePreset == DateRangePreset.MONTH) {
+                activePeriod.formatFullMonth()
+            } else {
+                periodLabel
+            }
+
+            Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .offset { IntOffset(animatedDragOffset.roundToInt(), 0) },
-                label = "full_bar_month_swap_animation"
-            ) { (periodState, presetState, labelState) ->
-                val prevPeriod = periodState.previousMonth()
-                val nextPeriod = periodState.nextMonth()
-                val topYearLabel = if (presetState == DateRangePreset.MONTH) {
-                    periodState.year.toString()
-                } else {
-                    presetState.label
-                }
-                val bottomMonthLabel = if (presetState == DateRangePreset.MONTH) {
-                    periodState.formatFullMonth()
-                } else {
-                    labelState
-                }
-
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 8.dp, vertical = 6.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally
+                    .padding(horizontal = 8.dp, vertical = 6.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
                 ) {
+                    // Left: Stationary Previous Arrow + Text-Only Animated Period
                     Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        // Left: Previous Month
-                        Row(
-                            modifier = Modifier
-                                .weight(1f)
-                                .clip(RoundedCornerShape(18.dp))
-                                .clickable {
-                                    performHaptic()
-                                    onStepMonth(-1)
-                                }
-                                .padding(horizontal = 6.dp, vertical = 6.dp)
-                                .testTag("prev_month_button"),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .size(30.dp)
-                                    .clip(CircleShape)
-                                    .background(MaterialTheme.colorScheme.surfaceContainerHigh),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Icon(
-                                    imageVector = Icons.AutoMirrored.Filled.KeyboardArrowLeft,
-                                    contentDescription = "Previous Month",
-                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    modifier = Modifier.size(18.dp)
-                                )
+                        modifier = Modifier
+                            .weight(1f)
+                            .clip(RoundedCornerShape(18.dp))
+                            .clickable {
+                                performHaptic()
+                                onStepMonth(-1)
                             }
-                            Spacer(modifier = Modifier.width(6.dp))
+                            .padding(horizontal = 6.dp, vertical = 6.dp)
+                            .testTag("prev_month_button"),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(30.dp)
+                                .clip(CircleShape)
+                                .background(MaterialTheme.colorScheme.surfaceContainerHigh),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.KeyboardArrowLeft,
+                                contentDescription = "Previous Month",
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(6.dp))
+                        AnimatedContent(
+                            targetState = prevPeriod,
+                            transitionSpec = {
+                                val movingForward = targetState >= initialState
+                                val enterSlide = slideInHorizontally(
+                                    animationSpec = spring(
+                                        dampingRatio = Spring.DampingRatioNoBouncy,
+                                        stiffness = Spring.StiffnessMediumLow
+                                    ),
+                                    initialOffsetX = { w -> if (movingForward) w / 2 else -w / 2 }
+                                ) + fadeIn()
+                                val exitSlide = slideOutHorizontally(
+                                    animationSpec = spring(
+                                        dampingRatio = Spring.DampingRatioNoBouncy,
+                                        stiffness = Spring.StiffnessMediumLow
+                                    ),
+                                    targetOffsetX = { w -> if (movingForward) -w / 2 else w / 2 }
+                                ) + fadeOut()
+                                enterSlide.togetherWith(exitSlide)
+                            },
+                            modifier = Modifier
+                                .clipToBounds()
+                                .offset { IntOffset((animatedDragOffset * 0.25f).roundToInt(), 0) },
+                            label = "prev_month_text_only_anim"
+                        ) { p ->
                             Column(horizontalAlignment = Alignment.Start) {
                                 Text(
-                                    text = prevPeriod.year.toString(),
+                                    text = p.year.toString(),
                                     style = MaterialTheme.typography.labelSmall.copy(fontFamily = ReceiptMonoFontFamily),
                                     color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.72f),
                                     maxLines = 1
                                 )
                                 Text(
-                                    text = prevPeriod.formatShortMonth(),
+                                    text = p.formatShortMonth(),
                                     style = MaterialTheme.typography.labelLarge,
                                     fontWeight = FontWeight.SemiBold,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -1049,32 +1092,58 @@ fun MonthPeriodSelectorBar(
                                 )
                             }
                         }
+                    }
 
-                        // Middle: Current Selected Period Pill
-                        Surface(
-                            shape = RoundedCornerShape(20.dp),
-                            color = MaterialTheme.colorScheme.primaryContainer,
+                    // Middle: Stationary Pill Container with Text-Only Animation
+                    Surface(
+                        shape = RoundedCornerShape(20.dp),
+                        color = MaterialTheme.colorScheme.primaryContainer,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(20.dp))
+                            .clickable {
+                                performHaptic()
+                                showCustomRangePicker = true
+                            }
+                            .testTag("center_month_year_pill")
+                    ) {
+                        AnimatedContent(
+                            targetState = Triple(activePeriod, topYearLabel, bottomMonthLabel),
+                            transitionSpec = {
+                                val movingForward = targetState.first >= initialState.first
+                                val enterSlide = slideInHorizontally(
+                                    animationSpec = spring(
+                                        dampingRatio = Spring.DampingRatioNoBouncy,
+                                        stiffness = Spring.StiffnessMediumLow
+                                    ),
+                                    initialOffsetX = { w -> if (movingForward) w / 2 else -w / 2 }
+                                ) + fadeIn()
+                                val exitSlide = slideOutHorizontally(
+                                    animationSpec = spring(
+                                        dampingRatio = Spring.DampingRatioNoBouncy,
+                                        stiffness = Spring.StiffnessMediumLow
+                                    ),
+                                    targetOffsetX = { w -> if (movingForward) -w / 2 else w / 2 }
+                                ) + fadeOut()
+                                enterSlide.togetherWith(exitSlide)
+                            },
                             modifier = Modifier
-                                .clip(RoundedCornerShape(20.dp))
-                                .clickable {
-                                    performHaptic()
-                                    showCustomRangePicker = true
-                                }
-                                .testTag("center_month_year_pill")
-                        ) {
+                                .clipToBounds()
+                                .padding(horizontal = 18.dp, vertical = 6.dp)
+                                .offset { IntOffset((animatedDragOffset * 0.35f).roundToInt(), 0) },
+                            label = "center_month_text_only_anim"
+                        ) { (_, yearTxt, monthTxt) ->
                             Column(
-                                modifier = Modifier.padding(horizontal = 18.dp, vertical = 6.dp),
                                 horizontalAlignment = Alignment.CenterHorizontally
                             ) {
                                 Text(
-                                    text = topYearLabel,
+                                    text = yearTxt,
                                     style = MaterialTheme.typography.labelSmall.copy(fontFamily = ReceiptMonoFontFamily),
                                     fontWeight = FontWeight.Bold,
                                     color = MaterialTheme.colorScheme.primary,
                                     maxLines = 1
                                 )
                                 Text(
-                                    text = bottomMonthLabel,
+                                    text = monthTxt,
                                     style = MaterialTheme.typography.titleMedium,
                                     fontWeight = FontWeight.Bold,
                                     color = MaterialTheme.colorScheme.onPrimaryContainer,
@@ -1082,51 +1151,77 @@ fun MonthPeriodSelectorBar(
                                 )
                             }
                         }
+                    }
 
-                        // Right: Next Month
-                        Row(
+                    // Right: Text-Only Animated Period + Stationary Next Arrow
+                    Row(
+                        modifier = Modifier
+                            .weight(1f)
+                            .clip(RoundedCornerShape(18.dp))
+                            .clickable {
+                                performHaptic()
+                                onStepMonth(1)
+                            }
+                            .padding(horizontal = 6.dp, vertical = 6.dp)
+                            .testTag("next_month_button"),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.End
+                    ) {
+                        AnimatedContent(
+                            targetState = nextPeriod,
+                            transitionSpec = {
+                                val movingForward = targetState >= initialState
+                                val enterSlide = slideInHorizontally(
+                                    animationSpec = spring(
+                                        dampingRatio = Spring.DampingRatioNoBouncy,
+                                        stiffness = Spring.StiffnessMediumLow
+                                    ),
+                                    initialOffsetX = { w -> if (movingForward) w / 2 else -w / 2 }
+                                ) + fadeIn()
+                                val exitSlide = slideOutHorizontally(
+                                    animationSpec = spring(
+                                        dampingRatio = Spring.DampingRatioNoBouncy,
+                                        stiffness = Spring.StiffnessMediumLow
+                                    ),
+                                    targetOffsetX = { w -> if (movingForward) -w / 2 else w / 2 }
+                                ) + fadeOut()
+                                enterSlide.togetherWith(exitSlide)
+                            },
                             modifier = Modifier
-                                .weight(1f)
-                                .clip(RoundedCornerShape(18.dp))
-                                .clickable {
-                                    performHaptic()
-                                    onStepMonth(1)
-                                }
-                                .padding(horizontal = 6.dp, vertical = 6.dp)
-                                .testTag("next_month_button"),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.End
-                        ) {
+                                .clipToBounds()
+                                .offset { IntOffset((animatedDragOffset * 0.25f).roundToInt(), 0) },
+                            label = "next_month_text_only_anim"
+                        ) { p ->
                             Column(horizontalAlignment = Alignment.End) {
                                 Text(
-                                    text = nextPeriod.year.toString(),
+                                    text = p.year.toString(),
                                     style = MaterialTheme.typography.labelSmall.copy(fontFamily = ReceiptMonoFontFamily),
                                     color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.72f),
                                     maxLines = 1
                                 )
                                 Text(
-                                    text = nextPeriod.formatShortMonth(),
+                                    text = p.formatShortMonth(),
                                     style = MaterialTheme.typography.labelLarge,
                                     fontWeight = FontWeight.SemiBold,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     maxLines = 1
                                 )
                             }
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Box(
-                                modifier = Modifier
-                                    .size(30.dp)
-                                    .clip(CircleShape)
-                                    .background(MaterialTheme.colorScheme.surfaceContainerHigh),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Icon(
-                                    imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
-                                    contentDescription = "Next Month",
-                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    modifier = Modifier.size(18.dp)
-                                )
-                            }
+                        }
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Box(
+                            modifier = Modifier
+                                .size(30.dp)
+                                .clip(CircleShape)
+                                .background(MaterialTheme.colorScheme.surfaceContainerHigh),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                                contentDescription = "Next Month",
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(18.dp)
+                            )
                         }
                     }
                 }
@@ -2182,7 +2277,6 @@ private fun AccountSummaryCard(
  * Supports `shape` (for 24dp outer / 6dp inner connected M3 card stacks) and two-way
  * progressive swipe physics with threshold icon bounce and haptic ticks.
  */
-@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun ExpenseTransactionItemCard(
     expense: ExpenseTransaction,
@@ -2194,12 +2288,15 @@ fun ExpenseTransactionItemCard(
     onDelete: () -> Unit = {},
     onEditTransaction: () -> Unit = {},
     onQuickChangeCategory: () -> Unit = {},
+    availableCategories: List<String> = ExpenseCategories.ALL,
     @Suppress("UNUSED_PARAMETER") onTagClick: (String) -> Unit = {},
     shape: Shape? = null,
     containerColor: Color? = null
 ) {
     val dimens = LocalAppDimens.current
     val performHaptic = rememberAppHapticPerformer()
+    val customEmojis = rememberCustomCategoryEmojis()
+    val customEmoji = customEmojis[expense.category.trim().lowercase()]
     val effectiveShape = shape ?: RoundedCornerShape(dimens.cardCornerRadius)
     val effectiveContainerColor = containerColor ?: MaterialTheme.colorScheme.surfaceContainerLow
 
@@ -2290,10 +2387,6 @@ fun ExpenseTransactionItemCard(
                         onTap = {
                             performHaptic()
                             onEditTransaction()
-                        },
-                        onLongPress = {
-                            performHaptic()
-                            onQuickChangeCategory()
                         }
                     )
                 }
@@ -2350,17 +2443,14 @@ fun ExpenseTransactionItemCard(
                     containerColor = catColor.copy(alpha = 0.16f),
                     size = dimens.rowIconBoxSize,
                     iconSize = dimens.rowIconSize,
-                    contentDescription = "${expense.category} (Long press to open category wheel)",
+                    emoji = customEmoji,
+                    contentDescription = "${expense.category} (Long press and slide to change category)",
                     modifier = Modifier
-                        .combinedClickable(
-                            onClick = {
-                                performHaptic()
-                                onEditTransaction()
-                            },
-                            onLongClick = {
-                                performHaptic()
-                                onQuickChangeCategory()
-                            }
+                        .categoryWheelLongPressGesture(
+                            transaction = expense,
+                            availableCategories = availableCategories,
+                            onTap = onEditTransaction,
+                            onFallbackQuickChange = onQuickChangeCategory
                         )
                         .testTag("category_pill_${expense.id}")
                 )

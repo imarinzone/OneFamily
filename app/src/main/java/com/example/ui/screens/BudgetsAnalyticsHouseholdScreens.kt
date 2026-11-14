@@ -46,6 +46,8 @@ import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.CurrencyExchange
+import androidx.compose.material.icons.filled.DeleteForever
+import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.ExpandLess
@@ -63,6 +65,7 @@ import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material.icons.filled.Verified
 import androidx.compose.material.icons.filled.VisibilityOff
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material.icons.filled.Window
 import androidx.compose.material.icons.outlined.AccountBalance
 import androidx.compose.material.icons.outlined.DarkMode
@@ -72,10 +75,12 @@ import androidx.compose.material.icons.outlined.Palette
 import androidx.compose.material.icons.outlined.Person
 import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material.icons.outlined.Vibration
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FilterChip
@@ -112,6 +117,7 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.data.local.LocalAccountSessionManager
 import com.example.data.model.BudgetScope
@@ -123,6 +129,7 @@ import com.example.data.model.WallpaperColorAccent
 import com.example.data.model.WallpaperDensity
 import com.example.data.model.WallpaperPatternStyle
 import com.example.ui.components.AccountsCarouselStrip
+import com.example.ui.components.CategoryBadgeGlyph
 import com.example.ui.components.CategoryDonutChart
 import com.example.ui.components.CircularTonalIconButton
 import com.example.ui.components.CustomDateRangePickerModal
@@ -142,8 +149,10 @@ import com.example.ui.components.ScopeSwitcherBar
 import com.example.ui.components.SquircleIconBadge
 import com.example.ui.components.ThemeModeSelectorBar
 import com.example.ui.components.categoryIcon
+import com.example.ui.components.categoryWheelLongPressGesture
 import com.example.ui.components.formatCurrency
 import com.example.ui.components.formatShortDate
+import com.example.ui.components.rememberCustomCategoryEmojis
 import com.example.ui.theme.AppThemeMode
 import com.example.ui.theme.BudgetDangerCoral
 import com.example.ui.theme.BudgetSafeGreen
@@ -159,6 +168,7 @@ import com.example.ui.viewmodel.DateRangePreset
 import com.example.ui.viewmodel.OneFamilyDashboardUiState
 import com.example.ui.viewmodel.YearMonthPeriod
 import kotlin.math.roundToInt
+import kotlinx.coroutines.delay
 
 /**
  * Home Screen (`HomeTabScreen`):
@@ -214,6 +224,8 @@ fun HomeTabScreen(
         uiState.selectedMemberFilter != "All" ||
         uiState.selectedSortOrder != "NEWEST"
 
+    val customEmojis = rememberCustomCategoryEmojis()
+
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
@@ -221,62 +233,14 @@ fun HomeTabScreen(
         contentPadding = PaddingValues(top = 6.dp, bottom = 88.dp),
         verticalArrangement = Arrangement.spacedBy(0.dp)
     ) {
-        // 0. Editorial M3 Header with Circular Tonal Action Pills
+        // 0. Clean Editorial M3 Header (Search, Filter & Export moved down with Transactions)
         item {
             EditorialScreenHeader(
                 title = "One Family",
                 countPillText = "${uiState.filteredExpenses.size} receipts",
                 subtitle = uiState.periodLabel,
                 modifier = Modifier.padding(bottom = 6.dp),
-                actions = {
-                    CircularTonalIconButton(
-                        icon = Icons.AutoMirrored.Filled.ReceiptLong,
-                        contentDescription = "All Transactions Page",
-                        onClick = {
-                            performHaptic()
-                            onOpenAllTransactionsPage()
-                        },
-                        modifier = Modifier.testTag("home_open_transactions_page_button")
-                    )
-                    CircularTonalIconButton(
-                        icon = Icons.Default.Search,
-                        contentDescription = "Search Receipts",
-                        onClick = { filtersExpanded = !filtersExpanded },
-                        containerColor = if (uiState.searchQuery.isNotBlank()) {
-                            MaterialTheme.colorScheme.primaryContainer
-                        } else {
-                            MaterialTheme.colorScheme.surfaceContainerHigh
-                        },
-                        contentColor = if (uiState.searchQuery.isNotBlank()) {
-                            MaterialTheme.colorScheme.onPrimaryContainer
-                        } else {
-                            MaterialTheme.colorScheme.onSurface
-                        },
-                        modifier = Modifier.testTag("toggle_search_button")
-                    )
-                    CircularTonalIconButton(
-                        icon = Icons.Default.FilterList,
-                        contentDescription = "Filters",
-                        onClick = { filtersExpanded = !filtersExpanded },
-                        containerColor = if (filtersExpanded || hasActiveFilter) {
-                            MaterialTheme.colorScheme.primaryContainer
-                        } else {
-                            MaterialTheme.colorScheme.surfaceContainerHigh
-                        },
-                        contentColor = if (filtersExpanded || hasActiveFilter) {
-                            MaterialTheme.colorScheme.onPrimaryContainer
-                        } else {
-                            MaterialTheme.colorScheme.onSurface
-                        },
-                        modifier = Modifier.testTag("toggle_filters_button")
-                    )
-                    CircularTonalIconButton(
-                        icon = Icons.Default.Download,
-                        contentDescription = "Export CSV",
-                        onClick = onExportCsvClick,
-                        modifier = Modifier.testTag("home_export_csv_button")
-                    )
-                }
+                actions = {}
             )
         }
 
@@ -359,31 +323,22 @@ fun HomeTabScreen(
             }
         }
 
-        // 3B. Dedicated "All Transactions" Navigation Card + Quick Type Filter Strip (including Excluded)
-        item {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = dimens.horizontalPadding)
-                    .padding(bottom = 8.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
+        // 4. Quick Undo Bar on Home Screen when a transaction was just swiped
+        if (uiState.canUndoLastAction) {
+            item {
                 Surface(
-                    shape = RoundedCornerShape(22.dp),
-                    color = MaterialTheme.colorScheme.secondaryContainer,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clip(RoundedCornerShape(22.dp))
-                        .clickable {
-                            performHaptic()
-                            onOpenAllTransactionsPage()
-                        }
-                        .testTag("open_all_transactions_page_button")
+                        .padding(horizontal = dimens.horizontalPadding)
+                        .padding(bottom = 8.dp)
+                        .testTag("home_undo_swipe_bar"),
+                    shape = RoundedCornerShape(18.dp),
+                    color = MaterialTheme.colorScheme.secondaryContainer
                 ) {
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(horizontal = 16.dp, vertical = 12.dp),
+                            .padding(horizontal = 14.dp, vertical = 8.dp),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
@@ -391,45 +346,136 @@ fun HomeTabScreen(
                             verticalAlignment = Alignment.CenterVertically,
                             modifier = Modifier.weight(1f)
                         ) {
-                            SquircleIconBadge(
-                                icon = Icons.AutoMirrored.Filled.ReceiptLong,
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.Undo,
+                                contentDescription = null,
                                 tint = MaterialTheme.colorScheme.onSecondaryContainer,
-                                containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.55f),
-                                size = 40.dp,
-                                iconSize = 20.dp
+                                modifier = Modifier.size(18.dp)
                             )
-                            Spacer(modifier = Modifier.width(12.dp))
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    text = "All Transactions",
-                                    style = MaterialTheme.typography.titleMedium,
-                                    fontWeight = FontWeight.Bold,
-                                    color = MaterialTheme.colorScheme.onSecondaryContainer
-                                )
-                                Text(
-                                    text = buildString {
-                                        append("${uiState.activeExpenses.size} in ${uiState.periodLabel}")
-                                        if (uiState.excludedTransactionsCount > 0) {
-                                            append(" • ${uiState.excludedTransactionsCount} excluded")
-                                        }
-                                    },
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.8f)
-                                )
-                            }
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = uiState.statusBannerMessage ?: "Swipe action applied.",
+                                style = MaterialTheme.typography.bodySmall,
+                                fontWeight = FontWeight.Medium,
+                                color = MaterialTheme.colorScheme.onSecondaryContainer,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
                         }
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.ArrowForward,
-                            contentDescription = "Open All Transactions Page",
-                            tint = MaterialTheme.colorScheme.onSecondaryContainer
+                        TextButton(
+                            onClick = {
+                                performHaptic()
+                                onUndoLastSwipeAction()
+                            },
+                            modifier = Modifier.testTag("home_undo_swipe_button")
+                        ) {
+                            Text(
+                                text = "Undo Swipe",
+                                style = MaterialTheme.typography.labelLarge,
+                                fontWeight = FontWeight.ExtraBold,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        // 5. Transactions Section Header + Inline Search, Filter & Export Controls
+        item {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 6.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = dimens.horizontalPadding, vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text(
+                            text = if (uiState.selectedTypeFilter.equals("EXCLUDED", ignoreCase = true)) {
+                                "EXCLUDED"
+                            } else {
+                                "TRANSACTIONS"
+                            },
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.Bold,
+                            letterSpacing = 1.1.sp,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                        Surface(
+                            shape = RoundedCornerShape(50),
+                            color = MaterialTheme.colorScheme.surfaceContainerHighest
+                        ) {
+                            Text(
+                                text = "${uiState.filteredExpenses.size}",
+                                style = MaterialTheme.typography.labelSmall.copy(fontFamily = ReceiptMonoFontFamily),
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 3.dp)
+                            )
+                        }
+                    }
+
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        CircularTonalIconButton(
+                            icon = Icons.Default.Search,
+                            contentDescription = "Search Receipts",
+                            onClick = { filtersExpanded = !filtersExpanded },
+                            containerColor = if (uiState.searchQuery.isNotBlank()) {
+                                MaterialTheme.colorScheme.primaryContainer
+                            } else {
+                                MaterialTheme.colorScheme.surfaceContainerHigh
+                            },
+                            contentColor = if (uiState.searchQuery.isNotBlank()) {
+                                MaterialTheme.colorScheme.onPrimaryContainer
+                            } else {
+                                MaterialTheme.colorScheme.onSurface
+                            },
+                            modifier = Modifier.testTag("toggle_search_button")
+                        )
+                        CircularTonalIconButton(
+                            icon = Icons.Default.FilterList,
+                            contentDescription = "Filters",
+                            onClick = { filtersExpanded = !filtersExpanded },
+                            containerColor = if (filtersExpanded || hasActiveFilter) {
+                                MaterialTheme.colorScheme.primaryContainer
+                            } else {
+                                MaterialTheme.colorScheme.surfaceContainerHigh
+                            },
+                            contentColor = if (filtersExpanded || hasActiveFilter) {
+                                MaterialTheme.colorScheme.onPrimaryContainer
+                            } else {
+                                MaterialTheme.colorScheme.onSurface
+                            },
+                            modifier = Modifier.testTag("toggle_filters_button")
+                        )
+                        CircularTonalIconButton(
+                            icon = Icons.Default.Download,
+                            contentDescription = "Export CSV",
+                            onClick = onExportCsvClick,
+                            modifier = Modifier.testTag("home_export_csv_button")
                         )
                     }
                 }
 
-                // Quick Type Filter Strip (All / Expenses / Income / Excluded)
+                // Quick Type Filter Strip (All / Expenses / Income / Excluded) placed right with Transactions
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
+                        .padding(horizontal = dimens.horizontalPadding)
                         .horizontalScroll(rememberScrollState()),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalAlignment = Alignment.CenterVertically
@@ -479,7 +525,7 @@ fun HomeTabScreen(
             }
         }
 
-        // 4. Expandable M3 Search & Filter Drawer
+        // 5B. Expandable M3 Search & Filter Drawer down with Transactions
         if (uiState.selectedCategoryFilter != "All" || filtersExpanded || hasActiveFilter) {
             item {
                 Column(
@@ -507,11 +553,11 @@ fun HomeTabScreen(
                                 modifier = Modifier.padding(horizontal = 14.dp, vertical = 7.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Icon(
-                                    imageVector = categoryIcon(uiState.selectedCategoryFilter),
-                                    contentDescription = null,
+                                CategoryBadgeGlyph(
+                                    category = uiState.selectedCategoryFilter,
                                     tint = catAccent,
-                                    modifier = Modifier.size(16.dp)
+                                    iconSize = 16.dp,
+                                    customEmoji = customEmojis[uiState.selectedCategoryFilter.trim().lowercase()]
                                 )
                                 Spacer(modifier = Modifier.width(6.dp))
                                 Text(
@@ -655,10 +701,11 @@ fun HomeTabScreen(
                                             },
                                             leadingIcon = if (cat != "All") {
                                                 {
-                                                    Icon(
-                                                        imageVector = categoryIcon(cat),
-                                                        contentDescription = null,
-                                                        modifier = Modifier.size(16.dp)
+                                                    CategoryBadgeGlyph(
+                                                        category = cat,
+                                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                        iconSize = 16.dp,
+                                                        customEmoji = customEmojis[cat.trim().lowercase()]
                                                     )
                                                 }
                                             } else {
@@ -710,74 +757,7 @@ fun HomeTabScreen(
             }
         }
 
-        // 4B. Quick Undo Bar on Home Screen when a transaction was just swiped
-        if (uiState.canUndoLastAction) {
-            item {
-                Surface(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = dimens.horizontalPadding)
-                        .padding(bottom = 8.dp)
-                        .testTag("home_undo_swipe_bar"),
-                    shape = RoundedCornerShape(18.dp),
-                    color = MaterialTheme.colorScheme.secondaryContainer
-                ) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 14.dp, vertical = 8.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.weight(1f)
-                        ) {
-                            Icon(
-                                imageVector = Icons.AutoMirrored.Filled.Undo,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.onSecondaryContainer,
-                                modifier = Modifier.size(18.dp)
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text(
-                                text = uiState.statusBannerMessage ?: "Swipe action applied.",
-                                style = MaterialTheme.typography.bodySmall,
-                                fontWeight = FontWeight.Medium,
-                                color = MaterialTheme.colorScheme.onSecondaryContainer,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                        }
-                        TextButton(
-                            onClick = {
-                                performHaptic()
-                                onUndoLastSwipeAction()
-                            },
-                            modifier = Modifier.testTag("home_undo_swipe_button")
-                        ) {
-                            Text(
-                                text = "Undo Swipe",
-                                style = MaterialTheme.typography.labelLarge,
-                                fontWeight = FontWeight.ExtraBold,
-                                color = MaterialTheme.colorScheme.primary
-                            )
-                        }
-                    }
-                }
-            }
-        }
-
-        // 5. Perforated Receipt Section Header
-        item {
-            PerforatedSectionHeader(
-                title = "Recent Receipts",
-                countBadge = "${uiState.filteredExpenses.size}",
-                modifier = Modifier.padding(bottom = 4.dp)
-            )
-        }
-
-        // 6. Connected 24dp/6dp Recent Transaction Preview Stack (or Tactile Empty Receipt State)
+        // 6. Connected 24dp/6dp Transactions Stack (or Tactile Empty Receipt State)
         if (uiState.filteredExpenses.isEmpty()) {
             item {
                 Surface(
@@ -846,9 +826,13 @@ fun HomeTabScreen(
                 }
             }
         } else {
-            val recentPreview = uiState.filteredExpenses.take(5)
+            val displayedHomeTransactions = if (filtersExpanded || hasActiveFilter) {
+                uiState.filteredExpenses
+            } else {
+                uiState.filteredExpenses.take(8)
+            }
             itemsIndexed(
-                items = recentPreview,
+                items = displayedHomeTransactions,
                 key = { _, tx -> "${tx.visibility}_${tx.id}" }
             ) { idx, expense ->
                 Box(
@@ -867,40 +851,43 @@ fun HomeTabScreen(
                         onDelete = { onDeleteTransaction(expense) },
                         onEditTransaction = { onEditTransaction(expense) },
                         onQuickChangeCategory = { onQuickChangeCategory(expense) },
+                        availableCategories = uiState.availableCategories,
                         onTagClick = { clickedTag -> onSelectTag(clickedTag) },
-                        shape = groupedCardShape(index = idx, count = recentPreview.size),
+                        shape = groupedCardShape(index = idx, count = displayedHomeTransactions.size),
                         containerColor = MaterialTheme.colorScheme.surfaceContainerLow
                     )
                 }
             }
 
-            item {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = dimens.horizontalPadding, vertical = 8.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    FilledTonalButton(
-                        onClick = {
-                            performHaptic()
-                            onOpenAllTransactionsPage()
-                        },
-                        shape = RoundedCornerShape(50),
+            if (uiState.filteredExpenses.size > displayedHomeTransactions.size) {
+                item {
+                    Box(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .testTag("view_all_transactions_footer_button")
+                            .padding(horizontal = dimens.horizontalPadding, vertical = 8.dp),
+                        contentAlignment = Alignment.Center
                     ) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.ReceiptLong,
-                            contentDescription = null,
-                            modifier = Modifier.size(18.dp)
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(
-                            text = "Open All Transactions (${uiState.filteredExpenses.size})",
-                            fontWeight = FontWeight.Bold
-                        )
+                        FilledTonalButton(
+                            onClick = {
+                                performHaptic()
+                                onOpenAllTransactionsPage()
+                            },
+                            shape = RoundedCornerShape(50),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("view_all_transactions_footer_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.ReceiptLong,
+                                contentDescription = null,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = "View All Transactions (${uiState.filteredExpenses.size})",
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
                     }
                 }
             }
@@ -1387,6 +1374,7 @@ fun AllTransactionsScreen(
                         onDelete = { onDeleteTransaction(expense) },
                         onEditTransaction = { onEditTransaction(expense) },
                         onQuickChangeCategory = { onQuickChangeCategory(expense) },
+                        availableCategories = uiState.availableCategories,
                         onTagClick = { clickedTag -> onSelectTag(clickedTag) },
                         shape = groupedCardShape(index = idx, count = uiState.filteredExpenses.size),
                         containerColor = MaterialTheme.colorScheme.surfaceContainerLow
@@ -1482,6 +1470,7 @@ fun AnalyticsTabScreen(
             }
         }
     }
+    val customEmojis = rememberCustomCategoryEmojis()
 
     LazyColumn(
         modifier = Modifier
@@ -1497,17 +1486,7 @@ fun AnalyticsTabScreen(
                 countPillText = "${filteredAnalysisTransactions.size} items",
                 subtitle = uiState.periodLabel,
                 modifier = Modifier.padding(bottom = 10.dp),
-                actions = {
-                    CircularTonalIconButton(
-                        icon = Icons.AutoMirrored.Filled.ReceiptLong,
-                        contentDescription = "All Transactions",
-                        onClick = {
-                            performHaptic()
-                            onOpenAllTransactionsPage()
-                        },
-                        modifier = Modifier.testTag("analytics_open_all_transactions_button")
-                    )
-                }
+                actions = {}
             )
         }
 
@@ -1756,15 +1735,11 @@ fun AnalyticsTabScreen(
                                                 Box(
                                                     modifier = Modifier
                                                         .clip(RoundedCornerShape(14.dp))
-                                                        .combinedClickable(
-                                                            onClick = {
-                                                                performHaptic()
-                                                                onEditTransaction(tx)
-                                                            },
-                                                            onLongClick = {
-                                                                performHaptic()
-                                                                onQuickChangeCategory(tx)
-                                                            }
+                                                        .categoryWheelLongPressGesture(
+                                                            transaction = tx,
+                                                            availableCategories = uiState.availableCategories,
+                                                            onTap = { onEditTransaction(tx) },
+                                                            onFallbackQuickChange = { onQuickChangeCategory(tx) }
                                                         )
                                                         .testTag("analytics_month_tx_category_icon_${tx.id}")
                                                 ) {
@@ -1774,6 +1749,7 @@ fun AnalyticsTabScreen(
                                                         containerColor = catColor.copy(alpha = 0.16f),
                                                         size = 38.dp,
                                                         iconSize = 18.dp,
+                                                        emoji = customEmojis[tx.category.trim().lowercase()],
                                                         contentDescription = tx.category
                                                     )
                                                 }
@@ -1895,6 +1871,7 @@ fun AnalyticsTabScreen(
                                     containerColor = catColor.copy(alpha = 0.16f),
                                     size = dimens.rowIconBoxSize,
                                     iconSize = dimens.rowIconSize,
+                                    emoji = customEmojis[catItem.category.trim().lowercase()],
                                     contentDescription = catItem.category
                                 )
                                 Spacer(modifier = Modifier.width(14.dp))
@@ -1952,15 +1929,11 @@ fun AnalyticsTabScreen(
                                                 Box(
                                                     modifier = Modifier
                                                         .clip(RoundedCornerShape(12.dp))
-                                                        .combinedClickable(
-                                                            onClick = {
-                                                                performHaptic()
-                                                                onEditTransaction(tx)
-                                                            },
-                                                            onLongClick = {
-                                                                performHaptic()
-                                                                onQuickChangeCategory(tx)
-                                                            }
+                                                        .categoryWheelLongPressGesture(
+                                                            transaction = tx,
+                                                            availableCategories = uiState.availableCategories,
+                                                            onTap = { onEditTransaction(tx) },
+                                                            onFallbackQuickChange = { onQuickChangeCategory(tx) }
                                                         )
                                                         .testTag("analysis_tx_category_icon_${tx.id}")
                                                 ) {
@@ -1970,6 +1943,7 @@ fun AnalyticsTabScreen(
                                                         containerColor = catColor.copy(alpha = 0.14f),
                                                         size = 34.dp,
                                                         iconSize = 16.dp,
+                                                        emoji = customEmojis[tx.category.trim().lowercase()],
                                                         contentDescription = tx.category
                                                     )
                                                 }
@@ -2184,9 +2158,22 @@ fun BudgetsTabScreen(
     var filtersExpanded by rememberSaveable { mutableStateOf(false) }
     var showBudgetCustomRangePicker by rememberSaveable { mutableStateOf(false) }
 
+    val customEmojis = rememberCustomCategoryEmojis()
+
     val activateInlineEditor: (CategorySpendProgress) -> Unit = { item ->
         performHaptic()
+        val prevCat = activeInlineCategory
+        if (prevCat != null && !prevCat.equals(item.category, ignoreCase = true)) {
+            val prevParsed = inlineBudgetInput.trim().toDoubleOrNull()
+            if (prevParsed != null && prevParsed > 0.0) {
+                onSaveCategoryBudgetInline(prevCat, prevParsed)
+            }
+        }
         if (activeInlineCategory != null && activeInlineCategory.equals(item.category, ignoreCase = true)) {
+            val curParsed = inlineBudgetInput.trim().toDoubleOrNull()
+            if (curParsed != null && curParsed > 0.0 && kotlin.math.abs(curParsed - item.limit) > 0.001) {
+                onSaveCategoryBudgetInline(item.category, curParsed)
+            }
             activeInlineCategory = null
         } else {
             activeInlineCategory = item.category
@@ -2432,7 +2419,7 @@ fun BudgetsTabScreen(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = "Tap any category envelope to edit its limit inline",
+                        text = "Tap any category envelope to edit — changes auto-save",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.weight(1f)
@@ -2512,6 +2499,7 @@ fun BudgetsTabScreen(
                                 containerColor = catColor.copy(alpha = 0.16f),
                                 size = dimens.rowIconBoxSize,
                                 iconSize = dimens.rowIconSize,
+                                emoji = customEmojis[item.category.trim().lowercase()],
                                 contentDescription = item.category
                             )
                             Spacer(modifier = Modifier.width(14.dp))
@@ -2559,18 +2547,31 @@ fun BudgetsTabScreen(
                             }
                         }
 
-                        // Inline Numeric Budget Editor (no modal/new screen opened)
+                        // Inline Numeric Budget Editor (auto-saves smoothly; only Delete/Remove button shown)
                         AnimatedVisibility(visible = isEditingInline) {
                             val inlineError = if (inlineBudgetInput.isNotEmpty()) {
                                 validateNonNegativeAmount(inlineBudgetInput)
                             } else {
                                 null
                             }
+
+                            LaunchedEffect(isEditingInline, inlineBudgetInput) {
+                                if (isEditingInline && inlineError == null) {
+                                    val parsedLimit = inlineBudgetInput.trim().toDoubleOrNull()
+                                    if (parsedLimit != null && parsedLimit > 0.0 && kotlin.math.abs(parsedLimit - item.limit) > 0.001) {
+                                        delay(350L)
+                                        onSaveCategoryBudgetInline(item.category, parsedLimit)
+                                    }
+                                }
+                            }
+
                             val commitInlineBudget = {
                                 if (inlineError == null) {
                                     performHaptic()
-                                    val parsedLimit = inlineBudgetInput.trim().toDoubleOrNull() ?: 0.0
-                                    onSaveCategoryBudgetInline(item.category, parsedLimit)
+                                    val parsedLimit = inlineBudgetInput.trim().toDoubleOrNull()
+                                    if (parsedLimit != null && (parsedLimit > 0.0 || item.limit > 0.0)) {
+                                        onSaveCategoryBudgetInline(item.category, parsedLimit)
+                                    }
                                     activeInlineCategory = null
                                 }
                             }
@@ -2588,7 +2589,7 @@ fun BudgetsTabScreen(
                                         value = inlineBudgetInput,
                                         onValueChange = { inlineBudgetInput = sanitizeDecimalInput(it) },
                                         label = { Text("Monthly Limit ($currency)") },
-                                        placeholder = { Text("0 to clear") },
+                                        placeholder = { Text("Auto-saves as you type") },
                                         isError = inlineError != null,
                                         supportingText = inlineError?.let { err -> { Text(err) } },
                                         keyboardOptions = KeyboardOptions(
@@ -2602,46 +2603,20 @@ fun BudgetsTabScreen(
                                             .weight(1f)
                                             .testTag("inline_category_budget_input_$safeTag")
                                     )
-                                    Button(
-                                        onClick = commitInlineBudget,
-                                        enabled = inlineError == null,
-                                        shape = CircleShape,
-                                        contentPadding = PaddingValues(0.dp),
-                                        modifier = Modifier
-                                            .size(48.dp)
-                                            .testTag("inline_save_category_budget_$safeTag")
+                                    IconButton(
+                                        onClick = {
+                                            performHaptic()
+                                            onSaveCategoryBudgetInline(item.category, 0.0)
+                                            inlineBudgetInput = ""
+                                            activeInlineCategory = null
+                                        },
+                                        modifier = Modifier.testTag("inline_clear_category_budget_$safeTag")
                                     ) {
                                         Icon(
-                                            imageVector = Icons.Default.Check,
-                                            contentDescription = "Save Category Budget",
-                                            modifier = Modifier.size(20.dp)
+                                            imageVector = Icons.Default.DeleteOutline,
+                                            contentDescription = "Remove Budget Limit",
+                                            tint = MaterialTheme.colorScheme.error
                                         )
-                                    }
-                                    if (item.limit > 0.0) {
-                                        IconButton(
-                                            onClick = {
-                                                performHaptic()
-                                                onSaveCategoryBudgetInline(item.category, 0.0)
-                                                activeInlineCategory = null
-                                            },
-                                            modifier = Modifier.testTag("inline_clear_category_budget_$safeTag")
-                                        ) {
-                                            Icon(
-                                                imageVector = Icons.Default.Clear,
-                                                contentDescription = "Clear Budget Limit",
-                                                tint = MaterialTheme.colorScheme.error
-                                            )
-                                        }
-                                    } else {
-                                        IconButton(
-                                            onClick = { activeInlineCategory = null },
-                                            modifier = Modifier.testTag("inline_cancel_category_budget_$safeTag")
-                                        ) {
-                                            Icon(
-                                                imageVector = Icons.Default.Close,
-                                                contentDescription = "Cancel Inline Edit"
-                                            )
-                                        }
                                     }
                                 }
                             }
@@ -2721,6 +2696,8 @@ fun HouseholdTabScreen(
     onSendTestFcmAlertClick: () -> Unit = {},
     onRunStabilityCheckClick: () -> Unit = {},
     onSignOutClick: () -> Unit = {},
+    isDeletingAccount: Boolean = false,
+    onDeleteAccountAndDataClick: () -> Unit = {},
     onCreateHousehold: (String, Double) -> Unit,
     onJoinByCode: (String) -> Unit,
     onInviteByEmail: (String) -> Unit,
@@ -2760,6 +2737,68 @@ fun HouseholdTabScreen(
     var newHouseholdLimit by remember { mutableStateOf("") }
     var joinCodeInput by remember { mutableStateOf("") }
     var inviteEmailInput by remember { mutableStateOf("") }
+    var showDeleteAccountConfirmDialog by rememberSaveable { mutableStateOf(false) }
+
+    if (showDeleteAccountConfirmDialog) {
+        AlertDialog(
+            onDismissRequest = {
+                if (!isDeletingAccount) {
+                    showDeleteAccountConfirmDialog = false
+                }
+            },
+            icon = {
+                Icon(
+                    imageVector = Icons.Default.Warning,
+                    contentDescription = "Permanent Deletion Warning",
+                    tint = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.size(28.dp)
+                )
+            },
+            title = {
+                Text(
+                    text = "Delete Account & All Data?",
+                    fontWeight = FontWeight.Bold
+                )
+            },
+            text = {
+                Text(
+                    text = "This permanently deletes all your personal expenses, budgets, financial accounts, and profile from Firebase and this device, removes your household membership (or deletes the household if you are the sole member), and deletes your account. Data is permanently erased and cannot be recovered.",
+                    style = MaterialTheme.typography.bodyMedium
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        performHaptic()
+                        showDeleteAccountConfirmDialog = false
+                        onDeleteAccountAndDataClick()
+                    },
+                    enabled = !isDeletingAccount,
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.error,
+                        contentColor = MaterialTheme.colorScheme.onError
+                    ),
+                    modifier = Modifier.testTag("confirm_delete_account_confirm_button")
+                ) {
+                    Text("Delete Forever", fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = {
+                        performHaptic()
+                        showDeleteAccountConfirmDialog = false
+                    },
+                    enabled = !isDeletingAccount,
+                    modifier = Modifier.testTag("confirm_delete_account_cancel_button")
+                ) {
+                    Text("Cancel")
+                }
+            },
+            shape = RoundedCornerShape(28.dp),
+            modifier = Modifier.testTag("confirm_delete_account_dialog")
+        )
+    }
 
     LazyColumn(
         modifier = Modifier
@@ -4443,9 +4482,10 @@ fun HouseholdTabScreen(
                             performHaptic()
                             onSignOutClick()
                         },
+                        enabled = !isDeletingAccount,
                         colors = ButtonDefaults.buttonColors(
-                            containerColor = MaterialTheme.colorScheme.error,
-                            contentColor = MaterialTheme.colorScheme.onError
+                            containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                            contentColor = MaterialTheme.colorScheme.onSecondaryContainer
                         ),
                         shape = RoundedCornerShape(50),
                         modifier = Modifier.testTag("sign_out_button")
@@ -4457,6 +4497,91 @@ fun HouseholdTabScreen(
                         )
                         Spacer(modifier = Modifier.width(6.dp))
                         Text("Logout")
+                    }
+                }
+            }
+        }
+
+        // 6. Permanent Delete Account & All Data Card (True Hard-Delete from Firebase & Device)
+        item {
+            Spacer(modifier = Modifier.height(10.dp))
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = dimens.horizontalPadding)
+                    .border(
+                        width = 1.dp,
+                        color = MaterialTheme.colorScheme.error.copy(alpha = 0.32f),
+                        shape = RoundedCornerShape(24.dp)
+                    ),
+                shape = RoundedCornerShape(24.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.24f)
+                ),
+                elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(dimens.cardPadding),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        SquircleIconBadge(
+                            icon = Icons.Default.DeleteForever,
+                            tint = MaterialTheme.colorScheme.error,
+                            containerColor = MaterialTheme.colorScheme.errorContainer
+                        )
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Column(modifier = Modifier.padding(end = 8.dp)) {
+                            Text(
+                                text = "Delete Account & Data",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.error
+                            )
+                            Text(
+                                text = "Permanently erase all Firebase & local data and remove account",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+
+                    Button(
+                        onClick = {
+                            performHaptic()
+                            showDeleteAccountConfirmDialog = true
+                        },
+                        enabled = !isDeletingAccount,
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.error,
+                            contentColor = MaterialTheme.colorScheme.onError
+                        ),
+                        shape = RoundedCornerShape(50),
+                        modifier = Modifier.testTag("delete_account_and_data_button")
+                    ) {
+                        if (isDeletingAccount) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(16.dp),
+                                strokeWidth = 2.dp,
+                                color = MaterialTheme.colorScheme.onError
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Deleting...")
+                        } else {
+                            Icon(
+                                imageVector = Icons.Default.DeleteForever,
+                                contentDescription = "Delete Account and All Data",
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Delete")
+                        }
                     }
                 }
             }

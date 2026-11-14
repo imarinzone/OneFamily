@@ -1,8 +1,16 @@
 package com.example.ui.viewmodel
 
+import android.app.Activity
 import android.content.Context
+import android.content.ContextWrapper
+import androidx.credentials.ClearCredentialStateRequest
+import androidx.credentials.CredentialManager
+import androidx.credentials.CustomCredential
+import androidx.credentials.GetCredentialRequest
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.R
+import com.example.data.local.LocalAccountDataStore
 import com.example.data.local.LocalAccountSessionManager
 import com.example.data.model.AccountSectionType
 import com.example.data.model.BudgetScope
@@ -17,9 +25,15 @@ import com.example.data.sms.RawSmsRow
 import com.example.data.sms.SmsCandidate
 import com.example.data.sms.SmsInboxReader
 import com.example.data.sms.TransactionNotificationHelper
+import com.google.android.libraries.identity.googleid.GetSignInWithGoogleOption
+import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
+import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential.Companion.TYPE_GOOGLE_ID_TOKEN_CREDENTIAL
+import com.google.firebase.Firebase
+import com.google.firebase.auth.FirebaseAuthRecentLoginRequiredException
+import com.google.firebase.auth.GoogleAuthProvider
+import com.google.firebase.auth.auth
 import com.google.firebase.firestore.FirebaseFirestoreException
 import com.ritesh.parser.core.TransactionType
-import com.ritesh.parser.core.bank.BankParserFactory
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Locale
@@ -45,7 +59,9 @@ import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withContext
 
 enum class DateRangePreset(val label: String) {
@@ -59,6 +75,79 @@ enum class DateRangePreset(val label: String) {
     LAST_7_DAYS("Last 7 Days"),
     ALL_TIME("All Time"),
     CUSTOM("Custom Range")
+}
+
+enum class SmsSyncPeriodOption(val label: String) {
+    THIS_MONTH("This Month"),
+    LAST_30_DAYS("Last 30 Days"),
+    LAST_90_DAYS("Last 3 Months"),
+    LAST_180_DAYS("Last 6 Months"),
+    CURRENT_FY("This FY"),
+    LAST_365_DAYS("Last 1 Year"),
+    ALL_TIME("All Time"),
+    CUSTOM("Custom Range");
+
+    fun computeBoundsMillis(
+        customRange: Pair<Long, Long>? = null,
+        referenceMillis: Long = System.currentTimeMillis()
+    ): Pair<Long?, Long?> {
+        val refCal = Calendar.getInstance().apply { timeInMillis = referenceMillis }
+        val currentYear = refCal.get(Calendar.YEAR)
+        val currentMonth = refCal.get(Calendar.MONTH)
+        val currentFyStartYear = if (currentMonth >= Calendar.APRIL) currentYear else currentYear - 1
+
+        fun dayStart(year: Int, month: Int, day: Int): Long {
+            return Calendar.getInstance().apply {
+                set(Calendar.YEAR, year)
+                set(Calendar.MONTH, month)
+                set(Calendar.DAY_OF_MONTH, day)
+                set(Calendar.HOUR_OF_DAY, 0)
+                set(Calendar.MINUTE, 0)
+                set(Calendar.SECOND, 0)
+                set(Calendar.MILLISECOND, 0)
+            }.timeInMillis
+        }
+
+        return when (this) {
+            ALL_TIME -> null to null
+            THIS_MONTH -> dayStart(currentYear, currentMonth, 1) to referenceMillis
+            LAST_30_DAYS -> (referenceMillis - 30L * 86_400_000L) to referenceMillis
+            LAST_90_DAYS -> (referenceMillis - 90L * 86_400_000L) to referenceMillis
+            LAST_180_DAYS -> (referenceMillis - 180L * 86_400_000L) to referenceMillis
+            CURRENT_FY -> dayStart(currentFyStartYear, Calendar.APRIL, 1) to referenceMillis
+            LAST_365_DAYS -> (referenceMillis - 365L * 86_400_000L) to referenceMillis
+            CUSTOM -> {
+                if (customRange != null) {
+                    minOf(customRange.first, customRange.second) to maxOf(customRange.first, customRange.second)
+                } else {
+                    (referenceMillis - 90L * 86_400_000L) to referenceMillis
+                }
+            }
+        }
+    }
+
+    fun formatRangeSummary(
+        customRange: Pair<Long, Long>? = null,
+        referenceMillis: Long = System.currentTimeMillis()
+    ): String {
+        if (this == ALL_TIME) return "All Time"
+        val shortFmt = SimpleDateFormat("dd MMM yyyy", Locale.getDefault())
+        if (this == CUSTOM) {
+            return if (customRange != null) {
+                val lo = minOf(customRange.first, customRange.second)
+                val hi = maxOf(customRange.first, customRange.second)
+                "${shortFmt.format(lo)} – ${shortFmt.format(hi)}"
+            } else {
+                "Pick Dates"
+            }
+        }
+        val (minTs, _) = computeBoundsMillis(customRange, referenceMillis)
+        return if (minTs != null) {
+            "Since ${shortFmt.format(minTs)}"
+        } else {
+            label
+        }
+    }
 }
 
 object DateRangeFilterUtils {
@@ -449,12 +538,18 @@ class OneFamilyViewModel(
     private val _customCategories = MutableStateFlow<List<String>>(emptyList())
     private val _smsCandidates = MutableStateFlow<List<SmsCandidate>>(emptyList())
     private val _smsSyncProgress = MutableStateFlow(SmsSyncProgressState())
+    private val _smsSyncPeriodOption = MutableStateFlow(SmsSyncPeriodOption.ALL_TIME)
+    private val _smsSyncCustomRange = MutableStateFlow<Pair<Long, Long>?>(null)
+    private val _isDeletingAccount = MutableStateFlow(false)
     private val _statusBanner = MutableStateFlow<String?>(null)
     private val _errorMessage = MutableStateFlow<String?>(null)
     private val _lastUndoableAction = MutableStateFlow<UndoableSwipeAction?>(null)
 
     val smsCandidates: StateFlow<List<SmsCandidate>> = _smsCandidates.asStateFlow()
     val smsSyncProgress: StateFlow<SmsSyncProgressState> = _smsSyncProgress.asStateFlow()
+    val smsSyncPeriodOption: StateFlow<SmsSyncPeriodOption> = _smsSyncPeriodOption.asStateFlow()
+    val smsSyncCustomRange: StateFlow<Pair<Long, Long>?> = _smsSyncCustomRange.asStateFlow()
+    val isDeletingAccount: StateFlow<Boolean> = _isDeletingAccount.asStateFlow()
     val lastUndoableAction: StateFlow<UndoableSwipeAction?> = _lastUndoableAction.asStateFlow()
     val statusBanner: StateFlow<String?> = _statusBanner.asStateFlow()
 
@@ -1143,19 +1238,20 @@ class OneFamilyViewModel(
         _sortOrder.value = sortOrder
     }
 
-    fun addCustomCategory(categoryName: String, context: Context? = null) {
+    fun addCustomCategory(categoryName: String, emoji: String = "", context: Context? = null) {
         val cleaned = ExpenseCategories.normalizeCategory(categoryName)
         if (cleaned.isNotBlank() && ExpenseCategories.ALL.none { it.equals(cleaned, ignoreCase = true) }) {
             val existing = _customCategories.value
             if (existing.none { it.equals(cleaned, ignoreCase = true) }) {
                 _customCategories.value = existing + cleaned
             }
-            com.example.data.local.LocalAccountSessionManager.addCustomCategory(context, cleaned)
+            com.example.data.local.LocalAccountSessionManager.addCustomCategory(context, cleaned, emoji)
         }
     }
 
     fun addCustomCategoryWithOptionalBudget(
         categoryName: String,
+        emoji: String = "",
         optionalMonthlyLimit: Double,
         alertThresholdPercent: Int = 80,
         isShared: Boolean = false,
@@ -1166,7 +1262,7 @@ class OneFamilyViewModel(
             _errorMessage.value = "Please enter a valid category name."
             return
         }
-        addCustomCategory(cleaned, context)
+        addCustomCategory(cleaned, emoji, context)
         if (optionalMonthlyLimit > 0.0) {
             saveCategoryBudget(
                 category = cleaned,
@@ -1175,7 +1271,8 @@ class OneFamilyViewModel(
                 isShared = isShared
             )
         } else {
-            _statusBanner.value = "Added custom category '$cleaned'."
+            val prefix = emoji.trim().takeIf { it.isNotBlank() }?.let { "$it " }.orEmpty()
+            _statusBanner.value = "Added custom category '$prefix$cleaned'."
         }
     }
 
@@ -1218,6 +1315,31 @@ class OneFamilyViewModel(
         )
     }
 
+    fun selectSmsSyncPeriod(option: SmsSyncPeriodOption) {
+        _smsSyncPeriodOption.value = option
+    }
+
+    fun selectSmsSyncCustomRange(startMillis: Long, endMillis: Long) {
+        val lo = minOf(startMillis, endMillis)
+        val hi = maxOf(startMillis, endMillis)
+        val normalizedStart = Calendar.getInstance().apply {
+            timeInMillis = lo
+            set(Calendar.HOUR_OF_DAY, 0)
+            set(Calendar.MINUTE, 0)
+            set(Calendar.SECOND, 0)
+            set(Calendar.MILLISECOND, 0)
+        }.timeInMillis
+        val normalizedEnd = Calendar.getInstance().apply {
+            timeInMillis = hi
+            set(Calendar.HOUR_OF_DAY, 23)
+            set(Calendar.MINUTE, 59)
+            set(Calendar.SECOND, 59)
+            set(Calendar.MILLISECOND, 999)
+        }.timeInMillis
+        _smsSyncCustomRange.value = normalizedStart to normalizedEnd
+        _smsSyncPeriodOption.value = SmsSyncPeriodOption.CUSTOM
+    }
+
     /**
      * Runs the concurrent pipelined producer-consumer SMS batch reading + transaction adding engine:
      * - Reader Pool: `readerThreads` (>= 5, default 6) threads parse raw SMS batches in parallel.
@@ -1233,7 +1355,9 @@ class OneFamilyViewModel(
         readerThreads: Int = SmsInboxReader.DEFAULT_PARALLEL_READER_THREADS,
         writerThreads: Int = SmsInboxReader.DEFAULT_PARALLEL_WRITER_THREADS,
         batchSize: Int = SmsInboxReader.DEFAULT_SMS_BATCH_SIZE,
-        perBatchDelayMs: Long = 35L
+        perBatchDelayMs: Long = 35L,
+        minTimestampMillis: Long? = null,
+        maxTimestampMillis: Long? = null
     ): Pair<List<SmsCandidate>, Int> = coroutineScope {
         val effectiveReaderThreads = readerThreads.coerceAtLeast(SmsInboxReader.MIN_PARALLEL_THREADS)
         val effectiveWriterThreads = writerThreads.coerceAtLeast(SmsInboxReader.MIN_PARALLEL_THREADS)
@@ -1340,8 +1464,12 @@ class OneFamilyViewModel(
             }
 
             val discovered = if (rawRowsOverride != null) {
+                val filteredRows = rawRowsOverride.filter { row ->
+                    (minTimestampMillis == null || row.timestamp >= minTimestampMillis) &&
+                        (maxTimestampMillis == null || row.timestamp <= maxTimestampMillis)
+                }
                 smsInboxReader.parseSmsBatchesInParallel(
-                    rawRows = rawRowsOverride,
+                    rawRows = filteredRows,
                     existingSignatures = existingSignatures,
                     batchSize = effectiveBatchSize,
                     readerThreads = effectiveReaderThreads,
@@ -1367,6 +1495,8 @@ class OneFamilyViewModel(
                     batchSize = effectiveBatchSize,
                     readerThreads = effectiveReaderThreads,
                     perBatchDelayMs = perBatchDelayMs,
+                    minTimestampMillis = minTimestampMillis,
+                    maxTimestampMillis = maxTimestampMillis,
                     onProgress = { readCount, totalCount, matchedCount ->
                         synchronized(syncProgressLock) {
                             val cur = _smsSyncProgress.value
@@ -1440,13 +1570,18 @@ class OneFamilyViewModel(
 
                 val stateSignatures = (state.personalExpenses + state.sharedExpenses)
                     .flatMap { tx ->
-                        val rawBody = tx.notes.substringAfter("] ", tx.notes).trim()
+                        val rawBody = SmsInboxReader.extractRawSmsBodyFromNotes(tx.notes)
                         val contentKeys = if (rawBody.isNotBlank() && tx.smsSignature.isNotBlank()) {
                             SmsInboxReader.buildSmsAdjacentContentKeys(rawBody, tx.transactionDateMillis)
                         } else {
                             emptyList()
                         }
-                        tx.linkedSmsSignatures + listOf(tx.smsSignature, tx.id) + contentKeys
+                        val idKeys = if (tx.smsSignature.isNotBlank() || tx.id.startsWith("sms_")) {
+                            listOf(tx.id)
+                        } else {
+                            emptyList()
+                        }
+                        tx.linkedSmsSignatures + listOf(tx.smsSignature) + idKeys + contentKeys
                     }
                     .filter { sig -> sig.isNotBlank() }
                     .flatMap { listOf(it, it.removePrefix("sms_")) }
@@ -1458,6 +1593,8 @@ class OneFamilyViewModel(
 
                 val existingSignatures = stateSignatures + repoSignatures
                 val userName = currentUserName.ifBlank { state.userProfile?.displayName ?: "Me" }
+                val (minTimestampMillis, maxTimestampMillis) = _smsSyncPeriodOption.value
+                    .computeBoundsMillis(_smsSyncCustomRange.value)
 
                 val (discovered, totalImported) = runParallelSmsBatchPipeline(
                     rawRowsOverride = null,
@@ -1467,7 +1604,9 @@ class OneFamilyViewModel(
                     readerThreads = configuredReaders,
                     writerThreads = configuredWriters,
                     batchSize = configuredBatchSize,
-                    perBatchDelayMs = 45L
+                    perBatchDelayMs = 45L,
+                    minTimestampMillis = minTimestampMillis,
+                    maxTimestampMillis = maxTimestampMillis
                 )
 
                 if (discovered.isNotEmpty()) {
@@ -1513,7 +1652,7 @@ class OneFamilyViewModel(
                     }
                 } else if (!silentIfEmpty) {
                     val totalExistingSms = (state.personalExpenses + state.sharedExpenses)
-                        .count { it.smsSignature.isNotBlank() }
+                        .count { LocalAccountDataStore.getSmsMessageForTransaction(it) != null }
                     _statusBanner.value = if (totalExistingSms > 0) {
                         "All $totalExistingSms SMS receipts are synced."
                     } else {
@@ -1594,11 +1733,6 @@ class OneFamilyViewModel(
         } else {
             _errorMessage.value = "SMS did not match a bank/UPI debit or credit alert."
         }
-    }
-
-    fun loadSampleBankSmsBatch(context: Context? = null) {
-        // No-op: Only transactions parsed from actual device SMS or manually entered by the user are permitted in the ledger.
-        _statusBanner.value = "Only actual device SMS receipts and manual transactions are permitted."
     }
 
     fun importSmsCandidate(
@@ -1722,7 +1856,7 @@ class OneFamilyViewModel(
             } else {
                 type
             }
-            addCustomCategory(normalizedCategory, context)
+            addCustomCategory(normalizedCategory, context = context)
             val state = uiState.value
             val tags = tagsInput.split(",", " ")
                 .map { it.trim().removePrefix("#") }
@@ -1769,7 +1903,12 @@ class OneFamilyViewModel(
                         originalPrimary = primaryTx,
                         deletedDuplicate = duplicateTx
                     )
-                    _statusBanner.value = "Linked '${duplicateTx.title}' into '${merged.title}' (${merged.linkedSmsSignatures.size + 1} SMS)."
+                    val linkedSmsCount = LocalAccountDataStore.getLinkedSmsMessagesForTransaction(merged).size
+                    _statusBanner.value = if (linkedSmsCount > 0) {
+                        "Linked '${duplicateTx.title}' into '${merged.title}' ($linkedSmsCount SMS)."
+                    } else {
+                        "Linked '${duplicateTx.title}' into '${merged.title}'."
+                    }
                 }
                 .onFailure { err ->
                     _errorMessage.value = err.localizedMessage ?: "Could not link duplicate transaction."
@@ -2256,6 +2395,81 @@ class OneFamilyViewModel(
                     _errorMessage.value = err.localizedMessage ?: "Failed to send invite."
                 }
         }
+    }
+
+    /**
+     * Permanently hard-deletes all user data from Firebase Firestore (and local storage),
+     * deletes the Firebase Auth account (re-authenticating via Google CredentialManager if
+     * required), clears local credentials/session, and invokes [onAccountDeleted].
+     */
+    fun deleteAllUserDataAndAccount(
+        context: Context,
+        credentialManager: CredentialManager,
+        onAccountDeleted: () -> Unit
+    ) {
+        if (_isDeletingAccount.value) return
+        _isDeletingAccount.value = true
+
+        viewModelScope.launch {
+            try {
+                // 1. Permanently delete all Firestore documents & local records while authenticated
+                repository.deleteAllUserData(currentUserId).getOrThrow()
+
+                // 2. Delete the Firebase Auth account if backed by Firebase Authentication
+                val firebaseUser = runCatching { Firebase.auth.currentUser }.getOrNull()
+                if (firebaseUser != null && firebaseUser.uid == currentUserId) {
+                    try {
+                        firebaseUser.delete().await()
+                    } catch (_: FirebaseAuthRecentLoginRequiredException) {
+                        val clientId = runCatching {
+                            context.getString(R.string.default_web_client_id)
+                        }.getOrNull()?.takeIf { it.isNotBlank() }
+                            ?: error("Google Sign-In configuration missing for account deletion re-verification.")
+                        val signInOption = GetSignInWithGoogleOption.Builder(serverClientId = clientId).build()
+                        val request = GetCredentialRequest.Builder()
+                            .addCredentialOption(signInOption)
+                            .build()
+                        val activityCtx = context.findHostActivity() ?: context
+                        val credResult = credentialManager.getCredential(activityCtx, request)
+                        val cred = credResult.credential
+                        if (cred is CustomCredential && cred.type == TYPE_GOOGLE_ID_TOKEN_CREDENTIAL) {
+                            val idToken = GoogleIdTokenCredential.createFrom(cred.data).idToken
+                            val authCred = GoogleAuthProvider.getCredential(idToken, null)
+                            firebaseUser.reauthenticate(authCred).await()
+                            firebaseUser.delete().await()
+                        } else {
+                            error("Re-authentication failed. Please sign out, sign back in with Google, and retry.")
+                        }
+                    }
+                }
+
+                // 3. Clear CredentialManager & local session state inside NonCancellable
+                withContext(NonCancellable) {
+                    runCatching {
+                        credentialManager.clearCredentialState(ClearCredentialStateRequest())
+                    }
+                    LocalAccountSessionManager.deleteLocalUserAccount(context, currentUserId)
+                    runCatching { Firebase.auth.signOut() }
+                    _isDeletingAccount.value = false
+                    withContext(Dispatchers.Main) {
+                        onAccountDeleted()
+                    }
+                }
+            } catch (e: CancellationException) {
+                _isDeletingAccount.value = false
+                throw e
+            } catch (e: Exception) {
+                _isDeletingAccount.value = false
+                _errorMessage.value = e.localizedMessage
+                    ?: "Could not permanently delete account and data. Please try again."
+            }
+        }
+    }
+
+    private tailrec fun Context.findHostActivity(): Activity? = when (this) {
+        is Activity -> this
+        is ContextWrapper -> baseContext.findHostActivity()
+        else -> null
     }
 
     private fun handleStreamError(error: Throwable) {

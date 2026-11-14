@@ -31,7 +31,7 @@ before(async () => {
 
 after(async () => {
   if (testEnv) {
-    await testEnv.clearFirestore();
+    await testEnv.cleanup();
   }
 });
 
@@ -355,6 +355,114 @@ test("Excluded expenses: isExcludedFromExpense boolean allowed on create/update,
       })
   );
 });
+
+test("Account hard-deletion: sole owner can hard-delete personal data, household, and joinCode; multi-member owner can hand off ownership and remove self, while Bob cannot evict Alice", async () => {
+  const aliceDb = testEnv.authenticatedContext(ALICE_UID).firestore();
+  const bobDb = testEnv.authenticatedContext(BOB_UID).firestore();
+  const now = new Date(Date.now() - 2000);
+
+  // 1. Sole-owner household + personal records
+  await testEnv.withSecurityRulesDisabled(async (context) => {
+    const db = context.firestore();
+    await db.collection("users").doc(ALICE_UID).set({
+      uid: ALICE_UID,
+      displayName: "Alice",
+      personalMonthlyBudget: 25000,
+      currencySymbol: "₹",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.collection("users").doc(ALICE_UID).collection("personal_expenses").doc("p_1").set({
+      userId: ALICE_UID,
+      userName: "Alice",
+      title: "Coffee",
+      amount: 250,
+      type: "EXPENSE",
+      category: "Food & Dining",
+      accountName: "HDFC",
+      paymentMode: "UPI",
+      visibility: "PERSONAL",
+      transactionDateMillis: 1730000000000,
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.collection("households").doc("sole_hh").set({
+      name: "Alice Home",
+      ownerUid: ALICE_UID,
+      joinCode: "SOLE01",
+      memberUids: [ALICE_UID],
+      monthlyBudgetLimit: 50000,
+      currencySymbol: "₹",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.collection("household_codes").doc("SOLE01").set({
+      joinCode: "SOLE01",
+      householdId: "sole_hh",
+      householdName: "Alice Home",
+      ownerUid: ALICE_UID,
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    // 2. Multi-member household owned by Alice with Bob as member
+    await db.collection("households").doc("multi_hh").set({
+      name: "Shared Home",
+      ownerUid: ALICE_UID,
+      joinCode: "MULT02",
+      memberUids: [ALICE_UID, BOB_UID],
+      memberNames: { [ALICE_UID]: "Alice", [BOB_UID]: "Bob" },
+      memberEmails: { [ALICE_UID]: "alice@test.com", [BOB_UID]: "bob@test.com" },
+      monthlyBudgetLimit: 80000,
+      currencySymbol: "₹",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.collection("household_codes").doc("MULT02").set({
+      joinCode: "MULT02",
+      householdId: "multi_hh",
+      householdName: "Shared Home",
+      ownerUid: ALICE_UID,
+      createdAt: now,
+      updatedAt: now,
+    });
+  });
+
+  // Bob cannot evict Alice or seize ownerUid
+  await assertFails(
+    bobDb.collection("households").doc("multi_hh").update({
+      ownerUid: BOB_UID,
+      memberUids: [BOB_UID],
+      updatedAt: new Date(Date.now() - 1000),
+    })
+  );
+
+  // Alice can hand off household_codes ownerUid to Bob and remove herself from multi_hh
+  await assertSucceeds(
+    aliceDb.collection("household_codes").doc("MULT02").update({
+      ownerUid: BOB_UID,
+      updatedAt: new Date(Date.now() - 800),
+    })
+  );
+  await assertSucceeds(
+    aliceDb.collection("households").doc("multi_hh").update({
+      ownerUid: BOB_UID,
+      memberUids: [BOB_UID],
+      memberNames: { [BOB_UID]: "Bob" },
+      memberEmails: { [BOB_UID]: "bob@test.com" },
+      updatedAt: new Date(Date.now() - 700),
+    })
+  );
+
+  // Alice can hard-delete her sole household, join code, personal expenses, and user profile
+  await assertSucceeds(aliceDb.collection("household_codes").doc("SOLE01").delete());
+  await assertSucceeds(aliceDb.collection("households").doc("sole_hh").delete());
+  await assertSucceeds(
+    aliceDb.collection("users").doc(ALICE_UID).collection("personal_expenses").doc("p_1").delete()
+  );
+  await assertSucceeds(aliceDb.collection("users").doc(ALICE_UID).delete());
+});
+
 
 
 

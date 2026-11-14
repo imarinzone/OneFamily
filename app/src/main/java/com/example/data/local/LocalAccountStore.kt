@@ -53,6 +53,7 @@ object LocalAccountSessionManager {
     private const val KEY_STABILITY_DIAGNOSTICS = "stability_diagnostics_json"
     private const val KEY_HOUSEHOLD_FEATURE_ENABLED = "household_feature_enabled"
     private const val KEY_CUSTOM_CATEGORIES = "custom_categories_json"
+    private const val KEY_CUSTOM_CATEGORY_EMOJIS = "custom_category_emojis_json"
     private const val KEY_AMOLED_DARK_ENABLED = "amoled_dark_enabled"
     private const val KEY_HAPTIC_FEEDBACK_ENABLED = "haptic_feedback_enabled"
 
@@ -94,6 +95,9 @@ object LocalAccountSessionManager {
     private val _customCategories = MutableStateFlow<List<String>>(emptyList())
     val customCategories: StateFlow<List<String>> = _customCategories.asStateFlow()
 
+    private val _customCategoryEmojis = MutableStateFlow<Map<String, String>>(emptyMap())
+    val customCategoryEmojis: StateFlow<Map<String, String>> = _customCategoryEmojis.asStateFlow()
+
     private val _amoledDarkEnabled = MutableStateFlow(false)
     val amoledDarkEnabled: StateFlow<Boolean> = _amoledDarkEnabled.asStateFlow()
 
@@ -131,6 +135,7 @@ object LocalAccountSessionManager {
                 .ifEmpty { seedInitialStabilityBreadcrumbs() }
             _householdFeatureEnabled.value = prefs.getBoolean(KEY_HOUSEHOLD_FEATURE_ENABLED, false)
             _customCategories.value = decodeCustomCategories(prefs.getString(KEY_CUSTOM_CATEGORIES, null))
+            _customCategoryEmojis.value = decodeCustomCategoryEmojis(prefs.getString(KEY_CUSTOM_CATEGORY_EMOJIS, null))
             _amoledDarkEnabled.value = prefs.getBoolean(KEY_AMOLED_DARK_ENABLED, false)
             _hapticFeedbackEnabled.value = prefs.getBoolean(KEY_HAPTIC_FEEDBACK_ENABLED, true)
             initialized = true
@@ -155,7 +160,27 @@ object LocalAccountSessionManager {
         prefs(context).edit().putBoolean(KEY_HAPTIC_FEEDBACK_ENABLED, enabled).apply()
     }
 
-    fun addCustomCategory(context: Context?, rawCategory: String) {
+    fun extractFirstEmojiCluster(raw: String): String {
+        val trimmed = raw.trim()
+        if (trimmed.isBlank()) return ""
+        val iterator = java.text.BreakIterator.getCharacterInstance()
+        iterator.setText(trimmed)
+        val start = iterator.first()
+        val end = iterator.next()
+        return if (start != java.text.BreakIterator.DONE && end != java.text.BreakIterator.DONE && end > start) {
+            trimmed.substring(start, end)
+        } else {
+            trimmed.take(2)
+        }
+    }
+
+    fun emojiForCategory(category: String): String? {
+        val key = category.trim().lowercase()
+        if (key.isBlank()) return null
+        return _customCategoryEmojis.value[key]?.takeIf { it.isNotBlank() }
+    }
+
+    fun addCustomCategory(context: Context?, rawCategory: String, emoji: String = "") {
         val cleaned = rawCategory.trim()
         if (cleaned.length < 2) return
         if (context != null) ensureInitialized(context)
@@ -163,10 +188,27 @@ object LocalAccountSessionManager {
             .filter { it.isNotBlank() }
             .distinctBy { it.lowercase() }
         _customCategories.value = updated
+
+        val cleanEmoji = extractFirstEmojiCluster(emoji)
+        val updatedEmojis = if (cleanEmoji.isNotBlank()) {
+            _customCategoryEmojis.value + (cleaned.lowercase() to cleanEmoji)
+        } else {
+            _customCategoryEmojis.value
+        }
+        if (cleanEmoji.isNotBlank()) {
+            _customCategoryEmojis.value = updatedEmojis
+        }
+
         if (context != null) {
             val arr = JSONArray()
             updated.forEach { arr.put(it) }
-            prefs(context).edit().putString(KEY_CUSTOM_CATEGORIES, arr.toString()).apply()
+            val editor = prefs(context).edit().putString(KEY_CUSTOM_CATEGORIES, arr.toString())
+            if (cleanEmoji.isNotBlank()) {
+                val obj = JSONObject()
+                updatedEmojis.forEach { (k, v) -> obj.put(k, v) }
+                editor.putString(KEY_CUSTOM_CATEGORY_EMOJIS, obj.toString())
+            }
+            editor.apply()
         }
     }
 
@@ -180,6 +222,21 @@ object LocalAccountSessionManager {
             }
         }.distinctBy { it.lowercase() }
     }.getOrDefault(emptyList())
+
+    private fun decodeCustomCategoryEmojis(raw: String?): Map<String, String> = runCatching {
+        if (raw.isNullOrBlank()) return emptyMap()
+        val obj = JSONObject(raw)
+        buildMap {
+            val keys = obj.keys()
+            while (keys.hasNext()) {
+                val key = keys.next()
+                val value = obj.optString(key, "").trim()
+                if (key.isNotBlank() && value.isNotBlank()) {
+                    put(key.trim().lowercase(), value)
+                }
+            }
+        }
+    }.getOrDefault(emptyMap())
 
     private fun seedInitialStabilityBreadcrumbs(): List<StabilityDiagnosticEntry> {
         val deviceLabel = "${Build.MANUFACTURER} ${Build.MODEL} (SDK ${Build.VERSION.SDK_INT})"
@@ -556,6 +613,34 @@ object LocalAccountSessionManager {
         }
     }
 
+    fun deleteLocalUserAccount(context: Context, uid: String) {
+        ensureInitialized(context)
+        val p = prefs(context)
+        val accountsObj = getCredentialsMap(p)
+        val keysToRemove = mutableListOf<String>()
+        val iter = accountsObj.keys()
+        while (iter.hasNext()) {
+            val key = iter.next()
+            val rec = accountsObj.optJSONObject(key)
+            if (rec?.optString("uid") == uid && key != DEFAULT_TEST_USERNAME) {
+                keysToRemove.add(key)
+            }
+        }
+        keysToRemove.forEach { accountsObj.remove(it) }
+        val editor = p.edit()
+            .putString(KEY_CREDENTIALS_MAP, accountsObj.toString())
+            .remove("initial_sms_sync_done_$uid")
+        if (_activeUser.value?.uid == uid) {
+            _activeUser.value = null
+            _customCategories.value = emptyList()
+            _customCategoryEmojis.value = emptyMap()
+            editor.remove(KEY_ACTIVE_USER)
+                .remove(KEY_CUSTOM_CATEGORIES)
+                .remove(KEY_CUSTOM_CATEGORY_EMOJIS)
+        }
+        editor.apply()
+    }
+
     private fun seedBuiltInTestAccount(prefs: SharedPreferences) {
         val accountsObj = getCredentialsMap(prefs)
         val existing = accountsObj.optJSONObject(DEFAULT_TEST_USERNAME)
@@ -648,20 +733,65 @@ object LocalAccountDataStore {
             val p = prefs() ?: return
             profilesFlow.value = decodeProfiles(p.getString(KEY_PROFILES, null))
             householdsFlow.value = decodeHouseholds(p.getString(KEY_HOUSEHOLDS, null))
-            val rawExpenses = decodeExpenses(p.getString(KEY_EXPENSES, null))
-            val validExpenses = rawExpenses.filter {
-                it.userId == LocalAccountSessionManager.DEFAULT_TEST_UID ||
-                    (!it.id.startsWith("mock_tx_") && !it.id.startsWith("demo_"))
+            val rawSmsMap = decodeSmsRawMap(p.getString(KEY_SMS_RAW_MAP, null))
+            val cleanedSmsMap = rawSmsMap.filterValues { rec ->
+                rec.body.isNotBlank() &&
+                    !rec.sender.equals("Cash", ignoreCase = true) &&
+                    !com.example.data.sms.SmsInboxReader.isSyntheticAutoParsedText(rec.body)
             }
+            smsRawMapFlow.value = cleanedSmsMap
+            if (cleanedSmsMap.size != rawSmsMap.size) {
+                saveSmsRawMap(cleanedSmsMap)
+            }
+            val rawExpenses = decodeExpenses(p.getString(KEY_EXPENSES, null))
+            val validExpenses = rawExpenses
+                .filter {
+                    it.userId == LocalAccountSessionManager.DEFAULT_TEST_UID ||
+                        (!it.id.startsWith("mock_tx_") && !it.id.startsWith("demo_"))
+                }
+                .map { sanitizeUnbackedSmsTransaction(it) }
             val dedupedExpenses = deduplicateSmsExpenses(validExpenses)
             expensesFlow.value = dedupedExpenses
-            if (dedupedExpenses.size != rawExpenses.size) {
+            if (dedupedExpenses != rawExpenses) {
                 saveExpenses(dedupedExpenses)
             }
             budgetsFlow.value = decodeBudgets(p.getString(KEY_BUDGETS, null))
             accountsFlow.value = decodeAccounts(p.getString(KEY_ACCOUNTS, null))
-            smsRawMapFlow.value = decodeSmsRawMap(p.getString(KEY_SMS_RAW_MAP, null))
             loaded = true
+        }
+    }
+
+    fun sanitizeUnbackedSmsTransaction(tx: ExpenseTransaction): ExpenseTransaction {
+        val cleanedNotes = com.example.data.sms.SmsInboxReader.stripSyntheticAutoParsedNote(tx.notes)
+        val wasSyntheticAutoParsed = cleanedNotes != tx.notes ||
+            com.example.data.sms.SmsInboxReader.isSyntheticAutoParsedText(tx.notes)
+        val isCashMockUnbacked = tx.id.startsWith("mock_tx_") &&
+            tx.notes.trim().startsWith("[Cash]", ignoreCase = true)
+        if (!wasSyntheticAutoParsed && !isCashMockUnbacked) {
+            return tx
+        }
+        val finalNotes = if (isCashMockUnbacked) "" else cleanedNotes
+        val explicitSig = tx.smsSignature.trim()
+        val cachedSms = if (explicitSig.isNotBlank()) {
+            (smsRawMapFlow.value[explicitSig] ?: smsRawMapFlow.value[explicitSig.removePrefix("sms_")])
+                ?.takeIf {
+                    it.body.isNotBlank() &&
+                        !it.sender.equals("Cash", ignoreCase = true) &&
+                        !com.example.data.sms.SmsInboxReader.isSyntheticAutoParsedText(it.body)
+                }
+        } else {
+            null
+        }
+        val notesSmsBody = com.example.data.sms.SmsInboxReader.extractRawSmsBodyFromNotes(finalNotes)
+        val hasGenuineSms = cachedSms != null || notesSmsBody.isNotBlank()
+        return if (hasGenuineSms) {
+            tx.copy(notes = finalNotes)
+        } else {
+            tx.copy(
+                notes = finalNotes,
+                smsSignature = "",
+                tags = tx.tags.filterNot { it.equals("sms-auto", ignoreCase = true) }
+            )
         }
     }
 
@@ -669,7 +799,12 @@ object LocalAccountDataStore {
         val clean = signature.trim().removePrefix("sms_")
         if (clean.isBlank()) return null
         val map = smsRawMapFlow.value
-        return map[signature.trim()] ?: map[clean]
+        val rec = map[signature.trim()] ?: map[clean]
+        return rec?.takeIf {
+            it.body.isNotBlank() &&
+                !it.sender.equals("Cash", ignoreCase = true) &&
+                !com.example.data.sms.SmsInboxReader.isSyntheticAutoParsedText(it.body)
+        }
     }
 
     fun getAllExistingSmsSignatures(uid: String): Set<String> = synchronized(storeLock) {
@@ -690,7 +825,8 @@ object LocalAccountDataStore {
                     .flatMap { rec ->
                         com.example.data.sms.SmsInboxReader.buildSmsAdjacentContentKeys(rec.body, rec.timestamp)
                     }
-                tx.linkedSmsSignatures + listOf(tx.smsSignature, tx.id) + notesKeys + cachedKeys
+                val docSig = if (tx.smsSignature.isNotBlank() || tx.id.startsWith("sms_")) listOf(tx.id) else emptyList()
+                tx.linkedSmsSignatures + listOf(tx.smsSignature) + docSig + notesKeys + cachedKeys
             }
             .filter { it.isNotBlank() }
             .flatMap { listOf(it, it.removePrefix("sms_")) }
@@ -703,13 +839,15 @@ object LocalAccountDataStore {
      * with zero fixed-bucket boundary splits) never produces duplicate transactions in the ledger.
      */
     fun deduplicateSmsExpenses(list: List<ExpenseTransaction>): List<ExpenseTransaction> {
-        if (list.size <= 1) return list
+        if (list.isEmpty()) return list
+        val sanitizedList = list.map { sanitizeUnbackedSmsTransaction(it) }
+        if (sanitizedList.size <= 1) return sanitizedList
         val result = mutableListOf<ExpenseTransaction>()
         val seenSignatures = mutableSetOf<String>()
         val seenSlidingBodyTimestamps = mutableMapOf<String, MutableList<Long>>()
 
         // Synthetic mock entries are preserved only for the demo Test User; real users never get synthetic entries
-        val cleaned = list.filter {
+        val cleaned = sanitizedList.filter {
             it.userId == LocalAccountSessionManager.DEFAULT_TEST_UID ||
                 (!it.id.startsWith("mock_tx_") && !it.id.startsWith("demo_"))
         }
@@ -781,30 +919,41 @@ object LocalAccountDataStore {
     }
 
     fun getSmsMessageForTransaction(tx: ExpenseTransaction): SmsRawRecord? {
-        val sig = tx.smsSignature.ifBlank { tx.id.removePrefix("sms_") }
-        if (sig.isNotBlank()) {
-            smsRawMapFlow.value[sig]?.let { return it }
+        val explicitSig = tx.smsSignature.trim()
+        val docSmsSig = if (tx.id.startsWith("sms_")) tx.id.removePrefix("sms_").trim() else ""
+        val lookupSig = explicitSig.ifBlank { docSmsSig }
+        if (lookupSig.isNotBlank()) {
+            val cached = smsRawMapFlow.value[explicitSig]
+                ?: smsRawMapFlow.value[lookupSig]
+                ?: smsRawMapFlow.value[lookupSig.removePrefix("sms_")]
+            if (cached != null &&
+                cached.body.isNotBlank() &&
+                !cached.sender.equals("Cash", ignoreCase = true) &&
+                !com.example.data.sms.SmsInboxReader.isSyntheticAutoParsedText(cached.body)
+            ) {
+                return cached
+            }
         }
-        // Fallback if the raw SMS was stored in notes
-        val notes = tx.notes.substringBefore("\n[Linked Duplicate:").substringBefore("[Linked Duplicate:").trim()
+        // Fallback ONLY if an actual `[SENDER] <rawSmsBody>` message was stored in notes
+        val notes = tx.notes
+            .substringBefore("\n[Linked Duplicate:")
+            .substringBefore("[Linked Duplicate:")
+            .trim()
         if (notes.startsWith("[") && notes.contains("] ")) {
-            val sender = notes.substringAfter("[").substringBefore("]")
+            val sender = notes.substringAfter("[").substringBefore("] ").trim()
             val body = notes.substringAfter("] ").trim()
-            if (body.isNotBlank()) {
+            if (sender.isNotBlank() &&
+                !sender.equals("Cash", ignoreCase = true) &&
+                body.isNotBlank() &&
+                !com.example.data.sms.SmsInboxReader.isSyntheticAutoParsedText(body)
+            ) {
                 return SmsRawRecord(
-                    signature = sig,
+                    signature = lookupSig,
                     sender = sender,
                     body = body,
                     timestamp = tx.transactionDateMillis
                 )
             }
-        } else if (tx.smsSignature.isNotBlank() && notes.isNotBlank()) {
-            return SmsRawRecord(
-                signature = tx.smsSignature,
-                sender = tx.accountName,
-                body = notes,
-                timestamp = tx.transactionDateMillis
-            )
         }
         return null
     }
@@ -919,7 +1068,7 @@ object LocalAccountDataStore {
                 MockItemDef(0, 13, 20, "Swiggy Gourmet Dinner", 1240.0, "EXPENSE", "Food & Dining", "HDFC Salary A/c", "UPI", true, "VM-HDFCBK", "Rs. 1,240.00 debited from A/c XX4321 on 13-11-2026 at Swiggy via UPI Ref 4433221100. Avl Bal: Rs. 72,910.00.", "4433221100"),
                 MockItemDef(0, 15, 12, "Tata Power Electricity Bill", 2100.0, "EXPENSE", "Bills & Utilities", "ICICI Savings A/c", "UPI", true, "VM-ICICIB", "Rs. 2,100.00 debited from A/c XX9012 on 15-11-2026 to Tata Power Electricity Bill via UPI Ref 5566778899. Avl Bal: Rs. 33,120.00.", "5566778899"),
                 MockItemDef(0, 17, 17, "Zara Clothing & Apparel", 4500.0, "EXPENSE", "Shopping", "Axis Neo Credit Card", "CARD", false, "AX-AXISBK", "Alert: Rs. 4,500.00 spent on Axis Card 7788 at Zara Clothing on 17-11-2026. Avail Limit: Rs. 1,42,700.00.", "TX778817"),
-                MockItemDef(0, 19, 15, "Local Bakery Treat", 450.0, "EXPENSE", "Food & Dining", "Cash Pocket", "CASH", false, "Cash", "Cash payment of Rs. 450.00 at Local Bakery.", "CSH019"),
+                MockItemDef(0, 19, 15, "Local Bakery Treat", 450.0, "EXPENSE", "Food & Dining", "Cash Pocket", "CASH", false, "", "", "CSH019"),
 
                 // Month -1 (Previous Month)
                 MockItemDef(-1, 1, 10, "Infosys Tech Ltd Salary", 85000.0, "INCOME", "Salary & Income", "HDFC Salary A/c", "BANK", true, "VM-HDFCBK", "Rs. 85,000.00 credited to your A/c XX4321 on 01-10-2026 by INFOSYS TECH LTD SALARY NEFT Ref 9900112233. Avl Bal: Rs. 98,200.00.", "9900112233"),
@@ -954,16 +1103,20 @@ object LocalAccountDataStore {
                 }
                 val txMillis = cal.timeInMillis
                 val docId = "mock_tx_${idx + 1}"
-                val sig = "mock_sms_sig_${idx + 1}"
+                val hasSmsBacking = def.sender.isNotBlank() &&
+                    !def.sender.equals("Cash", ignoreCase = true) &&
+                    def.smsBody.isNotBlank()
+                val sig = if (hasSmsBacking) "mock_sms_sig_${idx + 1}" else ""
                 val targetHouseholdId = if (def.isShared) householdId else ""
 
-                // Cache realistic raw bank SMS for each mock transaction so EditTransactionDialog shows the raw SMS
-                rawMapUpdates[sig] = SmsRawRecord(
-                    signature = sig,
-                    sender = def.sender,
-                    body = def.smsBody,
-                    timestamp = txMillis
-                )
+                if (hasSmsBacking) {
+                    rawMapUpdates[sig] = SmsRawRecord(
+                        signature = sig,
+                        sender = def.sender,
+                        body = def.smsBody,
+                        timestamp = txMillis
+                    )
+                }
 
                 mockList.add(
                     ExpenseTransaction(
@@ -978,7 +1131,7 @@ object LocalAccountDataStore {
                         accountName = def.accountName,
                         paymentMode = def.paymentMode,
                         tags = listOf("mock-sample", def.accountName.lowercase().replace(" ", "-")),
-                        notes = "[${def.sender}] ${def.smsBody}",
+                        notes = if (hasSmsBacking) "[${def.sender}] ${def.smsBody}" else "",
                         visibility = if (def.isShared) "SHARED" else "PERSONAL",
                         smsSignature = sig,
                         referenceNumber = def.ref,
@@ -1742,7 +1895,9 @@ object LocalAccountDataStore {
         val combinedSignatures = buildList {
             addAll(primaryTx.linkedSmsSignatures)
             if (duplicateTx.smsSignature.isNotBlank()) add(duplicateTx.smsSignature)
-            if (duplicateTx.id.isNotBlank()) add(duplicateTx.id)
+            if (duplicateTx.smsSignature.isNotBlank() || duplicateTx.id.startsWith("sms_")) {
+                add(duplicateTx.id)
+            }
             addAll(duplicateTx.linkedSmsSignatures)
         }.distinct()
 
@@ -1752,13 +1907,14 @@ object LocalAccountDataStore {
             .distinct()
             .take(10)
 
+        val cleanedPrimaryNotes = com.example.data.sms.SmsInboxReader.stripSyntheticAutoParsedNote(primaryTx.notes)
         val linkNoteSuffix = "[Linked Duplicate: ${duplicateTx.title} • ${duplicateTx.accountName}]"
-        val combinedNotes = if (primaryTx.notes.contains(linkNoteSuffix)) {
-            primaryTx.notes
-        } else if (primaryTx.notes.isBlank()) {
+        val combinedNotes = if (cleanedPrimaryNotes.contains(linkNoteSuffix)) {
+            cleanedPrimaryNotes
+        } else if (cleanedPrimaryNotes.isBlank()) {
             linkNoteSuffix
         } else {
-            "${primaryTx.notes}\n$linkNoteSuffix"
+            "$cleanedPrimaryNotes\n$linkNoteSuffix"
         }.take(500)
 
         val mergedPrimary = primaryTx.copy(
@@ -1923,6 +2079,78 @@ object LocalAccountDataStore {
         val updated = accountsFlow.value.filterNot { it.id == accountId }
         accountsFlow.value = updated
         saveAccounts(updated)
+    }
+
+    /**
+     * Permanently hard-deletes all local records owned by [uid] (profile, personal & authored shared
+     * expenses, budgets, accounts, cached SMS signatures, and sole-member households, or removes
+     * [uid] from multi-member households).
+     */
+    fun deleteAllUserData(uid: String) = synchronized(storeLock) {
+        if (uid.isBlank()) return@synchronized
+
+        // 1. Collect signatures of user's deleted expenses so we purge their local SMS raw cache entries too
+        val userExpenses = expensesFlow.value.filter { it.userId == uid }
+        val sigsToPurge = userExpenses.flatMap { tx ->
+            listOf(tx.smsSignature, tx.smsSignature.removePrefix("sms_"), tx.id, tx.id.removePrefix("sms_")) +
+                tx.linkedSmsSignatures.flatMap { listOf(it, it.removePrefix("sms_")) }
+        }.filter { it.isNotBlank() }.toSet()
+
+        // 2. Households: hard-delete sole-member households; remove uid from multi-member households
+        val hMap = householdsFlow.value.toMutableMap()
+        val deletedHouseholdIds = mutableSetOf<String>()
+        for ((hid, hh) in householdsFlow.value) {
+            if (uid in hh.memberUids || hh.ownerUid == uid) {
+                val remaining = hh.memberUids.filter { it.isNotBlank() && it != uid }
+                if (remaining.isEmpty()) {
+                    hMap.remove(hid)
+                    deletedHouseholdIds.add(hid)
+                } else {
+                    val nextOwner = if (hh.ownerUid == uid) remaining.first() else hh.ownerUid
+                    hMap[hid] = hh.copy(
+                        ownerUid = nextOwner,
+                        memberUids = remaining,
+                        memberNames = hh.memberNames - uid,
+                        memberEmails = hh.memberEmails - uid,
+                        updatedAt = Timestamp.now()
+                    )
+                }
+            }
+        }
+        householdsFlow.value = hMap
+        saveHouseholds(hMap)
+
+        // 3. Hard-delete expenses, budgets, accounts, profile, and SMS cache
+        val remainingExpenses = expensesFlow.value.filterNot {
+            it.userId == uid || (it.householdId.isNotBlank() && it.householdId in deletedHouseholdIds)
+        }
+        expensesFlow.value = remainingExpenses
+        saveExpenses(remainingExpenses)
+
+        val remainingBudgets = budgetsFlow.value.filterNot {
+            it.userId == uid || (it.householdId.isNotBlank() && it.householdId in deletedHouseholdIds)
+        }
+        budgetsFlow.value = remainingBudgets
+        saveBudgets(remainingBudgets)
+
+        val removedAccountIds = accountsFlow.value.filter { it.userId == uid }.map { it.id }.toSet()
+        removedAccountIds.forEach { accountTimestampMap.remove(it) }
+        val remainingAccounts = accountsFlow.value.filterNot { it.userId == uid }
+        accountsFlow.value = remainingAccounts
+        saveAccounts(remainingAccounts)
+
+        val pMap = profilesFlow.value.toMutableMap()
+        pMap.remove(uid)
+        profilesFlow.value = pMap
+        saveProfiles(pMap)
+
+        if (sigsToPurge.isNotEmpty()) {
+            val updatedSmsMap = smsRawMapFlow.value.filterKeys { key ->
+                key !in sigsToPurge && key.removePrefix("sms_") !in sigsToPurge
+            }
+            smsRawMapFlow.value = updatedSmsMap
+            saveSmsRawMap(updatedSmsMap)
+        }
     }
 
     // --- JSON SERIALIZATION HELPERS ---

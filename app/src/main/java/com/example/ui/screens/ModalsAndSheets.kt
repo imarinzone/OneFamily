@@ -18,6 +18,7 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -121,6 +122,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.platform.testTag
@@ -129,15 +131,19 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.example.data.export.CsvExportScope
 import com.example.data.export.CsvTransactionExporter
 import com.example.data.local.LocalAccountDataStore
+import com.example.data.local.LocalAccountSessionManager
 import com.example.data.local.SmsRawRecord
 import com.example.data.model.ExpenseCategories
 import com.example.data.model.ExpenseTransaction
 import com.example.data.model.FinancialAccount
+import com.example.data.sms.SmsInboxReader
+import com.example.ui.components.CategoryBadgeGlyph
 import com.example.ui.components.CircularTonalIconButton
 import com.example.ui.components.CustomDateRangePickerModal
 import com.example.ui.components.M3CheckmarkSwitch
@@ -147,6 +153,7 @@ import com.example.ui.components.SquircleIconBadge
 import com.example.ui.components.ThemeModeSelectorBar
 import com.example.ui.components.categoryIcon
 import com.example.ui.components.formatCurrency
+import com.example.ui.components.rememberCustomCategoryEmojis
 import com.example.ui.theme.AppThemeMode
 import com.example.ui.theme.BudgetSafeGreen
 import com.example.ui.theme.HouseholdBadgeIndigo
@@ -160,6 +167,7 @@ import com.example.ui.viewmodel.CategorySpendProgress
 import com.example.ui.viewmodel.DateRangeFilterUtils
 import com.example.ui.viewmodel.DateRangePreset
 import com.example.ui.viewmodel.OneFamilyDashboardUiState
+import com.example.ui.viewmodel.SmsSyncPeriodOption
 import com.example.ui.viewmodel.SmsSyncProgressState
 import java.text.SimpleDateFormat
 import java.util.Calendar
@@ -521,12 +529,15 @@ private fun InteractiveReceiptSheet(
                                 Spacer(modifier = Modifier.width(44.dp))
                             }
 
+                            val customEmojis = rememberCustomCategoryEmojis()
+                            val activeCatEmoji = customEmojis[category.trim().lowercase()]
                             SquircleIconBadge(
                                 icon = categoryIcon(category),
                                 tint = catAccent,
                                 containerColor = catAccent.copy(alpha = 0.16f),
                                 size = 46.dp,
                                 iconSize = 22.dp,
+                                emoji = activeCatEmoji,
                                 contentDescription = category
                             )
 
@@ -781,28 +792,52 @@ private fun InteractiveReceiptSheet(
                             }
                         }
 
+                        val receiptContext = LocalContext.current
+                        val customEmojis = rememberCustomCategoryEmojis()
+                        var customCategoryEmoji by remember { mutableStateOf("") }
+
                         AnimatedVisibility(visible = showCustomCategoryField) {
-                            OutlinedTextField(
-                                value = customCategoryInput,
-                                onValueChange = {
-                                    customCategoryInput = it.take(40)
-                                    if (it.isNotBlank()) {
-                                        val trimmed = it.trim()
-                                        category = trimmed
-                                        if (trimmed.equals("Salary & Income", ignoreCase = true)) {
-                                            type = "INCOME"
-                                        }
-                                    }
-                                },
-                                label = { Text("Custom Category") },
-                                isError = customCatError != null,
-                                supportingText = customCatError?.let { err -> { Text(err) } },
-                                singleLine = true,
-                                shape = RoundedCornerShape(16.dp),
+                            Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .padding(bottom = 8.dp)
-                            )
+                                    .padding(bottom = 8.dp),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalAlignment = Alignment.Top
+                            ) {
+                                OutlinedTextField(
+                                    value = customCategoryEmoji,
+                                    onValueChange = {
+                                        customCategoryEmoji = LocalAccountSessionManager.extractFirstEmojiCluster(it)
+                                    },
+                                    label = { Text("Emoji") },
+                                    placeholder = { Text("✨") },
+                                    singleLine = true,
+                                    textStyle = MaterialTheme.typography.titleMedium.copy(textAlign = TextAlign.Center),
+                                    shape = RoundedCornerShape(16.dp),
+                                    modifier = Modifier
+                                        .width(82.dp)
+                                        .testTag("receipt_custom_category_emoji_input")
+                                )
+                                OutlinedTextField(
+                                    value = customCategoryInput,
+                                    onValueChange = {
+                                        customCategoryInput = it.take(40)
+                                        if (it.isNotBlank()) {
+                                            val trimmed = it.trim()
+                                            category = trimmed
+                                            if (trimmed.equals("Salary & Income", ignoreCase = true)) {
+                                                type = "INCOME"
+                                            }
+                                        }
+                                    },
+                                    label = { Text("Custom Category") },
+                                    isError = customCatError != null,
+                                    supportingText = customCatError?.let { err -> { Text(err) } },
+                                    singleLine = true,
+                                    shape = RoundedCornerShape(16.dp),
+                                    modifier = Modifier.weight(1f)
+                                )
+                            }
                         }
 
                         FlowRow(
@@ -813,10 +848,18 @@ private fun InteractiveReceiptSheet(
                             allCats.forEach { cat ->
                                 val isSelected = category.equals(cat, ignoreCase = true)
                                 val chipAccent = categoryAccentColor(cat)
+                                val neutralBg = MaterialTheme.colorScheme.surfaceContainerHighest
+                                val neutralFg = MaterialTheme.colorScheme.onSurfaceVariant
+                                val chipEmoji = customEmojis[cat.trim().lowercase()]
                                 val catChipTag = cat.lowercase().replace(Regex("[^a-z0-9]+"), "_").trim('_')
                                 Surface(
                                     shape = RoundedCornerShape(50),
-                                    color = if (isSelected) chipAccent else chipAccent.copy(alpha = 0.14f),
+                                    color = if (isSelected) chipAccent else neutralBg,
+                                    border = if (isSelected) {
+                                        null
+                                    } else {
+                                        BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f))
+                                    },
                                     modifier = Modifier
                                         .clip(RoundedCornerShape(50))
                                         .clickable {
@@ -841,17 +884,18 @@ private fun InteractiveReceiptSheet(
                                         verticalAlignment = Alignment.CenterVertically,
                                         horizontalArrangement = Arrangement.spacedBy(5.dp)
                                     ) {
-                                        Icon(
-                                            imageVector = categoryIcon(cat),
-                                            contentDescription = null,
-                                            tint = if (isSelected) Color.White else chipAccent,
-                                            modifier = Modifier.size(15.dp)
+                                        CategoryBadgeGlyph(
+                                            category = cat,
+                                            tint = if (isSelected) Color.White else neutralFg,
+                                            iconSize = 15.dp,
+                                            customEmoji = chipEmoji,
+                                            contentDescription = null
                                         )
                                         Text(
                                             text = cat,
                                             style = MaterialTheme.typography.labelSmall,
                                             fontWeight = FontWeight.Bold,
-                                            color = if (isSelected) Color.White else chipAccent
+                                            color = if (isSelected) Color.White else neutralFg
                                         )
                                     }
                                 }
@@ -1093,6 +1137,13 @@ private fun InteractiveReceiptSheet(
                                     } else {
                                         category
                                     }
+                                    if (showCustomCategoryField && customCategoryInput.isNotBlank() && customCategoryEmoji.isNotBlank()) {
+                                        LocalAccountSessionManager.addCustomCategory(
+                                            context = receiptContext,
+                                            rawCategory = finalCat,
+                                            emoji = customCategoryEmoji
+                                        )
+                                    }
                                     val effectiveExcluded = type == "EXPENSE" && isExcludedFromExpense
                                     onSaveExcluded(effectiveExcluded)
                                     onSave(
@@ -1304,7 +1355,7 @@ fun EditTransactionDialog(
         initialPaymentMode = transaction.paymentMode,
         initialAccountName = transaction.accountName,
         initialTagsInput = transaction.tags.joinToString(", "),
-        initialNotes = transaction.notes,
+        initialNotes = SmsInboxReader.stripSyntheticAutoParsedNote(transaction.notes),
         initialIsShared = transaction.visibility == "SHARED" && hasHousehold,
         initialIsExcludedFromExpense = transaction.isExcludedFromExpense,
         initialDateMillis = transaction.transactionDateMillis,
@@ -2068,14 +2119,19 @@ fun AddCustomCategoryDialog(
     defaultShared: Boolean,
     currencySymbol: String,
     onDismiss: () -> Unit,
-    onSave: (categoryName: String, optionalMonthlyLimit: Double?, alertThresholdPercent: Int, isShared: Boolean) -> Unit
+    onSave: (categoryName: String, emoji: String, optionalMonthlyLimit: Double?, alertThresholdPercent: Int, isShared: Boolean) -> Unit
 ) {
     val dimens = LocalAppDimens.current
     val performHaptic = rememberAppHapticPerformer()
     var categoryName by remember { mutableStateOf("") }
+    var emojiInput by remember { mutableStateOf("✨") }
     var optionalLimitText by remember { mutableStateOf("") }
     var isShared by remember { mutableStateOf(hasHousehold && defaultShared) }
     var attemptedSave by remember { mutableStateOf(false) }
+
+    val quickPickEmojis = remember {
+        listOf("✨", "🐾", "🏋️", "📚", "☕", "🎮", "🎁", "✈️", "🚗", "🐶", "💡", "🎵", "🧴", "🧋", "🏡", "🎓")
+    }
 
     val categoryNameError = if (attemptedSave || categoryName.isNotEmpty()) {
         validateCategoryName(categoryName)
@@ -2104,28 +2160,102 @@ fun AddCustomCategoryDialog(
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
                     val accent = categoryAccentColor(categoryName.ifBlank { "Custom" })
-                    M3ModalHeroHeader(
-                        icon = categoryIcon(categoryName.ifBlank { "Custom" }),
-                        title = "New Custom Category",
-                        subtitle = "Add a custom category with an optional monthly budget",
-                        iconTint = accent
-                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        SquircleIconBadge(
+                            icon = categoryIcon(categoryName.ifBlank { "Custom" }),
+                            tint = accent,
+                            containerColor = accent.copy(alpha = 0.16f),
+                            size = 50.dp,
+                            iconSize = 24.dp,
+                            emoji = emojiInput.trim().takeIf { it.isNotBlank() },
+                            contentDescription = categoryName.ifBlank { "Custom Category" }
+                        )
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "New Custom Category",
+                                style = MaterialTheme.typography.titleLarge,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                            Text(
+                                text = "Pick an emoji icon & optional monthly budget",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
 
                     ReceiptDashedDividerLine()
 
-                    OutlinedTextField(
-                        value = categoryName,
-                        onValueChange = { categoryName = it.take(40) },
-                        label = { Text("Category Name") },
-                        placeholder = { Text("e.g. Pet Care, Books, Fitness") },
-                        isError = categoryNameError != null,
-                        supportingText = categoryNameError?.let { err -> { Text(err) } },
-                        singleLine = true,
-                        shape = RoundedCornerShape(16.dp),
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        verticalAlignment = Alignment.Top
+                    ) {
+                        OutlinedTextField(
+                            value = emojiInput,
+                            onValueChange = { raw ->
+                                emojiInput = LocalAccountSessionManager.extractFirstEmojiCluster(raw)
+                            },
+                            label = { Text("Emoji") },
+                            placeholder = { Text("✨") },
+                            textStyle = MaterialTheme.typography.headlineSmall.copy(textAlign = TextAlign.Center),
+                            singleLine = true,
+                            shape = RoundedCornerShape(16.dp),
+                            modifier = Modifier
+                                .width(84.dp)
+                                .testTag("custom_category_emoji_input")
+                        )
+                        OutlinedTextField(
+                            value = categoryName,
+                            onValueChange = { categoryName = it.take(40) },
+                            label = { Text("Category Name") },
+                            placeholder = { Text("e.g. Pet Care, Books, Fitness") },
+                            isError = categoryNameError != null,
+                            supportingText = categoryNameError?.let { err -> { Text(err) } },
+                            singleLine = true,
+                            shape = RoundedCornerShape(16.dp),
+                            modifier = Modifier
+                                .weight(1f)
+                                .testTag("custom_category_name_input")
+                        )
+                    }
+
+                    Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .testTag("custom_category_name_input")
-                    )
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        quickPickEmojis.forEachIndexed { idx, presetEmoji ->
+                            val isChosen = emojiInput == presetEmoji
+                            Surface(
+                                shape = CircleShape,
+                                color = if (isChosen) accent.copy(alpha = 0.22f) else MaterialTheme.colorScheme.surfaceContainerHighest,
+                                border = if (isChosen) BorderStroke(1.5.dp, accent) else null,
+                                modifier = Modifier
+                                    .size(40.dp)
+                                    .clip(CircleShape)
+                                    .clickable {
+                                        performHaptic()
+                                        emojiInput = presetEmoji
+                                    }
+                                    .testTag("custom_category_emoji_preset_$idx")
+                            ) {
+                                Box(contentAlignment = Alignment.Center) {
+                                    Text(
+                                        text = presetEmoji,
+                                        fontSize = 18.sp
+                                    )
+                                }
+                            }
+                        }
+                    }
 
                     OutlinedTextField(
                         value = optionalLimitText,
@@ -2188,7 +2318,13 @@ fun AddCustomCategoryDialog(
                                 if (nameErr == null && limitErr == null) {
                                     performHaptic()
                                     val parsedLimit = optionalLimitText.trim().takeIf { it.isNotBlank() }?.toDoubleOrNull()
-                                    onSave(categoryName.trim(), parsedLimit, 80, hasHousehold && isShared)
+                                    onSave(
+                                        categoryName.trim(),
+                                        emojiInput.trim().ifBlank { "✨" },
+                                        parsedLimit,
+                                        80,
+                                        hasHousehold && isShared
+                                    )
                                 }
                             },
                             shape = RoundedCornerShape(50),
@@ -2371,19 +2507,21 @@ fun AddAccountDialog(
     val performHaptic = rememberAppHapticPerformer()
     val bankAccounts = remember(accounts) {
         accounts.filter {
-            it.accountType.equals("BANK", ignoreCase = true) ||
-                it.accountType.equals("UPI", ignoreCase = true)
+            it.accountType.trim().equals("BANK", ignoreCase = true)
         }
     }
     var accountType by remember { mutableStateOf(initialAccountType) }
     var bankName by remember { mutableStateOf("") }
-    var selectedLinkedBankId by remember { mutableStateOf(bankAccounts.firstOrNull()?.id.orEmpty()) }
-    var linkedBankNameInput by remember { mutableStateOf(bankAccounts.firstOrNull()?.name.orEmpty()) }
+    var selectedLinkedBankId by remember(bankAccounts) { mutableStateOf(bankAccounts.firstOrNull()?.id.orEmpty()) }
     var lastFour by remember { mutableStateOf("") }
     var balanceText by remember { mutableStateOf("") }
     var creditLimitText by remember { mutableStateOf("") }
     var spendLimitText by remember { mutableStateOf("") }
     var attemptedSave by remember { mutableStateOf(false) }
+
+    val selectedLinkedBank = remember(bankAccounts, selectedLinkedBankId) {
+        bankAccounts.firstOrNull { it.id == selectedLinkedBankId } ?: bankAccounts.firstOrNull()
+    }
 
     val bankNameError = if (attemptedSave || bankName.isNotEmpty()) {
         if (bankName.trim().length < 2) "Enter a valid bank, card, or wallet name (min 2 chars)." else null
@@ -2417,10 +2555,8 @@ fun AddAccountDialog(
     } else {
         null
     }
-    val linkedBankError = if (accountType == "DEBIT_CARD" && attemptedSave &&
-        selectedLinkedBankId.isBlank() && linkedBankNameInput.trim().length < 2
-    ) {
-        "Select or enter the linked bank account."
+    val linkedBankError = if (accountType == "DEBIT_CARD" && selectedLinkedBank == null) {
+        "Add a Bank account first to link a Debit Card."
     } else {
         null
     }
@@ -2468,7 +2604,6 @@ fun AddAccountDialog(
                                     if (type == "DEBIT_CARD" && selectedLinkedBankId.isBlank() && bankAccounts.isNotEmpty()) {
                                         val firstBank = bankAccounts.first()
                                         selectedLinkedBankId = firstBank.id
-                                        linkedBankNameInput = firstBank.name
                                         if (bankName.isBlank()) bankName = firstBank.bankName
                                     }
                                 },
@@ -2493,7 +2628,7 @@ fun AddAccountDialog(
                     if (accountType == "DEBIT_CARD") {
                         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                             Text(
-                                text = "Link to Bank Account",
+                                text = "Link to Existing Bank Account",
                                 style = MaterialTheme.typography.labelLarge,
                                 fontWeight = FontWeight.SemiBold,
                                 color = MaterialTheme.colorScheme.primary
@@ -2504,7 +2639,7 @@ fun AddAccountDialog(
                                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                                 ) {
                                     bankAccounts.forEach { bankAcc ->
-                                        val isLinked = selectedLinkedBankId == bankAcc.id
+                                        val isLinked = selectedLinkedBank?.id == bankAcc.id
                                         val chipLabel = if (bankAcc.lastFourDigits.isNotBlank()) {
                                             "${bankAcc.name} ••${bankAcc.lastFourDigits}"
                                         } else {
@@ -2515,7 +2650,6 @@ fun AddAccountDialog(
                                             onClick = {
                                                 performHaptic()
                                                 selectedLinkedBankId = bankAcc.id
-                                                linkedBankNameInput = bankAcc.name
                                                 if (bankName.isBlank() || bankAccounts.any { it.bankName.equals(bankName, ignoreCase = true) }) {
                                                     bankName = bankAcc.bankName
                                                 }
@@ -2537,25 +2671,23 @@ fun AddAccountDialog(
                                         )
                                     }
                                 }
+                            } else {
+                                Surface(
+                                    shape = RoundedCornerShape(16.dp),
+                                    color = MaterialTheme.colorScheme.errorContainer,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .testTag("debit_card_requires_bank_notice")
+                                ) {
+                                    Text(
+                                        text = "Add a Bank account first. Debit cards can only be linked to an existing Bank account.",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        fontWeight = FontWeight.Medium,
+                                        color = MaterialTheme.colorScheme.onErrorContainer,
+                                        modifier = Modifier.padding(12.dp)
+                                    )
+                                }
                             }
-                            OutlinedTextField(
-                                value = linkedBankNameInput,
-                                onValueChange = {
-                                    linkedBankNameInput = it.take(80)
-                                    if (bankAccounts.none { b -> b.name.equals(it.trim(), ignoreCase = true) }) {
-                                        selectedLinkedBankId = ""
-                                    }
-                                },
-                                label = { Text("Linked Bank Account Name") },
-                                placeholder = { Text("e.g. HDFC Salary A/c") },
-                                isError = linkedBankError != null,
-                                supportingText = linkedBankError?.let { err -> { Text(err) } },
-                                singleLine = true,
-                                shape = RoundedCornerShape(16.dp),
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .testTag("add_account_linked_bank_input")
-                            )
                         }
                     }
 
@@ -2690,9 +2822,7 @@ fun AddAccountDialog(
                                 } else {
                                     null
                                 }
-                                val lnkErr = if (accountType == "DEBIT_CARD" &&
-                                    selectedLinkedBankId.isBlank() && linkedBankNameInput.trim().length < 2
-                                ) {
+                                val lnkErr = if (accountType == "DEBIT_CARD" && selectedLinkedBank == null) {
                                     "Invalid"
                                 } else {
                                     null
@@ -2720,12 +2850,13 @@ fun AddAccountDialog(
                                         lastFour,
                                         balanceText.trim().toDoubleOrNull() ?: 0.0,
                                         if (accountType == "CREDIT_CARD") creditLimitText.trim().toDoubleOrNull() ?: 0.0 else 0.0,
-                                        if (accountType == "DEBIT_CARD") selectedLinkedBankId else "",
-                                        if (accountType == "DEBIT_CARD") linkedBankNameInput.trim() else "",
+                                        if (accountType == "DEBIT_CARD") selectedLinkedBank?.id.orEmpty() else "",
+                                        if (accountType == "DEBIT_CARD") selectedLinkedBank?.name.orEmpty() else "",
                                         spendLimitText.trim().toDoubleOrNull() ?: 0.0
                                     )
                                 }
                             },
+                            enabled = linkedBankError == null,
                             shape = RoundedCornerShape(50),
                             modifier = Modifier.testTag("save_account_button")
                         ) {
@@ -2750,13 +2881,30 @@ fun FirstTimeSmsSyncScreen(
     onStartSyncClick: () -> Unit,
     onContinueToAppClick: () -> Unit,
     onSkipClick: () -> Unit,
-    currencySymbol: String = "₹"
+    currencySymbol: String = "₹",
+    selectedPeriodOption: SmsSyncPeriodOption = SmsSyncPeriodOption.ALL_TIME,
+    customDateRange: Pair<Long, Long>? = null,
+    onSelectPeriodOption: (SmsSyncPeriodOption) -> Unit = {},
+    onSelectCustomDateRange: (Long, Long) -> Unit = { _, _ -> }
 ) {
     val dimens = LocalAppDimens.current
     val density = LocalDensity.current
     val performHaptic = rememberAppHapticPerformer()
     val hasStartedOrFinished = syncState.isSyncing || syncState.isCompleted
     var topControlsHeightPx by remember { mutableIntStateOf(0) }
+    var showCustomRangePicker by remember { mutableStateOf(false) }
+
+    if (showCustomRangePicker) {
+        CustomDateRangePickerModal(
+            initialStartMillis = customDateRange?.first,
+            initialEndMillis = customDateRange?.second,
+            onDismiss = { showCustomRangePicker = false },
+            onApplyRange = { startMillis, endMillis ->
+                onSelectCustomDateRange(startMillis, endMillis)
+                showCustomRangePicker = false
+            }
+        )
+    }
 
     Surface(
         modifier = Modifier
@@ -2841,7 +2989,7 @@ fun FirstTimeSmsSyncScreen(
                             )
                             Text(
                                 text = if (hasStartedOrFinished) {
-                                    "Batch ${syncState.processedBatchesCount}/${syncState.totalBatchesCount.coerceAtLeast(1)}  •  Bank & UPI Scanner"
+                                    "Batch ${syncState.processedBatchesCount}/${syncState.totalBatchesCount.coerceAtLeast(1)}  •  ${selectedPeriodOption.label}"
                                 } else {
                                     "Bank & UPI Receipt Scanner"
                                 },
@@ -2863,7 +3011,7 @@ fun FirstTimeSmsSyncScreen(
                                     .fillMaxWidth()
                                     .padding(dimens.cardPadding),
                                 horizontalAlignment = Alignment.CenterHorizontally,
-                                verticalArrangement = Arrangement.spacedBy(8.dp)
+                                verticalArrangement = Arrangement.spacedBy(10.dp)
                             ) {
                                 Text(
                                     text = "On-Device Thermal Receipt Indexing",
@@ -2877,6 +3025,108 @@ fun FirstTimeSmsSyncScreen(
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     textAlign = TextAlign.Center
                                 )
+
+                                ReceiptDashedDividerLine()
+
+                                // SMS Fetch Period Selector
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .testTag("sms_sync_period_selector"),
+                                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.CalendarMonth,
+                                                contentDescription = "Fetch SMS Period",
+                                                tint = MaterialTheme.colorScheme.primary,
+                                                modifier = Modifier.size(16.dp)
+                                            )
+                                            Text(
+                                                text = "Fetch SMS From",
+                                                style = MaterialTheme.typography.labelLarge,
+                                                fontWeight = FontWeight.Bold,
+                                                color = MaterialTheme.colorScheme.onSurface
+                                            )
+                                        }
+                                        Surface(
+                                            shape = RoundedCornerShape(50),
+                                            color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.72f)
+                                        ) {
+                                            Text(
+                                                text = selectedPeriodOption.formatRangeSummary(customDateRange),
+                                                style = MaterialTheme.typography.labelSmall.copy(fontFamily = ReceiptMonoFontFamily),
+                                                fontWeight = FontWeight.Bold,
+                                                color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                                modifier = Modifier
+                                                    .padding(horizontal = 10.dp, vertical = 4.dp)
+                                                    .testTag("sms_sync_selected_period_label")
+                                            )
+                                        }
+                                    }
+
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .horizontalScroll(rememberScrollState()),
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        SmsSyncPeriodOption.entries.forEach { option ->
+                                            val isSelected = selectedPeriodOption == option
+                                            FilterChip(
+                                                selected = isSelected,
+                                                onClick = {
+                                                    performHaptic()
+                                                    if (option == SmsSyncPeriodOption.CUSTOM) {
+                                                        showCustomRangePicker = true
+                                                    } else {
+                                                        onSelectPeriodOption(option)
+                                                    }
+                                                },
+                                                label = {
+                                                    Text(
+                                                        text = if (option == SmsSyncPeriodOption.CUSTOM && customDateRange != null) {
+                                                            option.formatRangeSummary(customDateRange)
+                                                        } else {
+                                                            option.label
+                                                        },
+                                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
+                                                    )
+                                                },
+                                                leadingIcon = if (isSelected) {
+                                                    {
+                                                        Icon(
+                                                            imageVector = Icons.Default.Check,
+                                                            contentDescription = null,
+                                                            modifier = Modifier.size(FilterChipDefaults.IconSize)
+                                                        )
+                                                    }
+                                                } else if (option == SmsSyncPeriodOption.CUSTOM) {
+                                                    {
+                                                        Icon(
+                                                            imageVector = Icons.Default.CalendarMonth,
+                                                            contentDescription = null,
+                                                            modifier = Modifier.size(FilterChipDefaults.IconSize)
+                                                        )
+                                                    }
+                                                } else {
+                                                    null
+                                                },
+                                                shape = RoundedCornerShape(50),
+                                                modifier = Modifier.testTag("sms_period_chip_${option.name.lowercase()}")
+                                            )
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
@@ -3630,7 +3880,7 @@ fun LinkDuplicateTransactionDialog(
                                         val origHeaderMeta = if (primaryOrigSms != null && primaryOrigSms.sender.isNotBlank()) {
                                             "Original SMS • ${primaryOrigSms.sender} (${formatExactDateTime(primaryOrigSms.timestamp)})"
                                         } else {
-                                            "Original SMS • ${formatExactDateTime(sourceTransaction.transactionDateMillis)}"
+                                            "Original Transaction • ${formatExactDateTime(sourceTransaction.transactionDateMillis)}"
                                         }
                                         Text(
                                             text = origHeaderMeta,
@@ -3641,7 +3891,8 @@ fun LinkDuplicateTransactionDialog(
                                         val fullOriginalSmsText = if (sourceSmsRecords.isNotEmpty()) {
                                             sourceSmsRecords.joinToString("\n\n") { it.body }
                                         } else {
-                                            sourceTransaction.notes.ifBlank { "Manual transaction (no raw SMS attached)" }
+                                            SmsInboxReader.stripSyntheticAutoParsedNote(sourceTransaction.notes)
+                                                .ifBlank { "Manual transaction (no raw SMS attached)" }
                                         }
                                         Text(
                                             text = fullOriginalSmsText,
@@ -3685,7 +3936,7 @@ fun LinkDuplicateTransactionDialog(
                                                 val selHeaderMeta = if (primarySelSms != null && primarySelSms.sender.isNotBlank()) {
                                                     "Selected SMS • ${primarySelSms.sender} (${formatExactDateTime(primarySelSms.timestamp)})"
                                                 } else {
-                                                    "Selected SMS • ${formatExactDateTime(activeTarget.transactionDateMillis)}"
+                                                    "Selected Transaction • ${formatExactDateTime(activeTarget.transactionDateMillis)}"
                                                 }
                                                 Text(
                                                     text = selHeaderMeta,
@@ -3696,7 +3947,8 @@ fun LinkDuplicateTransactionDialog(
                                                 val fullSelectedSmsText = if (activeTargetSms.isNotEmpty()) {
                                                     activeTargetSms.joinToString("\n\n") { it.body }
                                                 } else {
-                                                    activeTarget.notes.ifBlank { "Manual transaction (no raw SMS attached)" }
+                                                    SmsInboxReader.stripSyntheticAutoParsedNote(activeTarget.notes)
+                                                        .ifBlank { "Manual transaction (no raw SMS attached)" }
                                                 }
                                                 Text(
                                                     text = fullSelectedSmsText,

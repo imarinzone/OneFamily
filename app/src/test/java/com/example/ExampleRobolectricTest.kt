@@ -41,6 +41,8 @@ import com.example.data.repository.OneFamilyRepository
 import com.example.data.sms.RawSmsRow
 import com.example.data.sms.SmsInboxReader
 import com.example.data.sms.TransactionNotificationHelper
+import androidx.compose.ui.geometry.Offset
+import com.example.ui.components.CategoryWheelOverlayHost
 import com.example.ui.components.MonthlyBarGraph
 import com.example.ui.components.categoryIcon
 import com.example.ui.components.formatCompactCurrency
@@ -61,7 +63,6 @@ import com.example.ui.screens.FirstTimeSmsSyncScreen
 import com.example.ui.screens.HomeTabScreen
 import com.example.ui.screens.HouseholdTabScreen
 import com.example.ui.screens.LinkDuplicateTransactionDialog
-import com.example.ui.screens.QuickCategoryPickerDialog
 import com.example.ui.screens.mergeSelectedDatePreservingTime
 import com.example.ui.viewmodel.CategorySpendProgress
 import com.ritesh.parser.core.bank.BankParserFactory
@@ -1901,7 +1902,7 @@ class ExampleRobolectricTest {
     fun `test BudgetsTabScreen supports inline category budget editing, removes duplicate trend graph, and supports custom category with optional budget`() {
         var savedCategoryAndLimit: Pair<String, Double>? = null
         var showCustomDialog by mutableStateOf(false)
-        var createdCustomCategory: Pair<String, Double?>? = null
+        var createdCustomCategory: Triple<String, String, Double?>? = null
 
         var uiState by mutableStateOf(
             OneFamilyDashboardUiState(
@@ -1963,8 +1964,8 @@ class ExampleRobolectricTest {
                         defaultShared = false,
                         currencySymbol = "₹",
                         onDismiss = { showCustomDialog = false },
-                        onSave = { catName, optionalLimit, _, _ ->
-                            createdCustomCategory = catName to optionalLimit
+                        onSave = { catName, emoji, optionalLimit, _, _ ->
+                            createdCustomCategory = Triple(catName, emoji, optionalLimit)
                             showCustomDialog = false
                         }
                     )
@@ -1977,7 +1978,7 @@ class ExampleRobolectricTest {
         assertTrue(composeTestRule.onAllNodesWithTag("monthly_bar_graph_scroll_container").fetchSemanticsNodes().isEmpty())
         assertTrue(composeTestRule.onAllNodesWithTag("salary_income_trend_canvas").fetchSemanticsNodes().isEmpty())
 
-        // 2. User taps Set Budget on Groceries -> expands inline numeric field inside the card without opening any modal screen
+        // 2. User taps Set Budget on Groceries -> expands inline numeric field without any tick button; auto-saves automatically
         composeTestRule.onNodeWithTag("budgets_tab_list")
             .performScrollToNode(hasTestTag("category_budget_card_groceries"))
         composeTestRule.onNodeWithTag("set_category_budget_groceries").performClick()
@@ -1985,28 +1986,39 @@ class ExampleRobolectricTest {
 
         assertTrue(composeTestRule.onAllNodesWithTag("add_custom_category_dialog").fetchSemanticsNodes().isEmpty())
         assertTrue(composeTestRule.onAllNodesWithTag("category_budget_limit_input").fetchSemanticsNodes().isEmpty())
+        composeTestRule.onNodeWithTag("budgets_tab_list")
+            .performScrollToNode(hasTestTag("inline_clear_category_budget_groceries"))
         composeTestRule.onNodeWithTag("inline_category_budget_input_groceries").assertIsDisplayed()
+        assertTrue(
+            "Tick save button must be removed so budgets auto-save",
+            composeTestRule.onAllNodesWithTag("inline_save_category_budget_groceries").fetchSemanticsNodes().isEmpty()
+        )
+        composeTestRule.onNodeWithTag("inline_clear_category_budget_groceries").assertIsDisplayed()
 
         composeTestRule.onNodeWithTag("inline_category_budget_input_groceries")
             .performTextReplacement("12000")
-        composeTestRule.waitForIdle()
-
-        composeTestRule.onNodeWithTag("inline_save_category_budget_groceries").performClick()
+        composeTestRule.mainClock.advanceTimeBy(500)
         composeTestRule.waitForIdle()
         assertEquals("Groceries" to 12000.0, savedCategoryAndLimit)
 
-        // 3. Tapping "Custom Category" opens AddCustomCategoryDialog where Monthly Budget is optional
+        // Delete/Remove budget button clears limit back to 0.0
+        composeTestRule.onNodeWithTag("inline_clear_category_budget_groceries").performClick()
+        composeTestRule.waitForIdle()
+        assertEquals("Groceries" to 0.0, savedCategoryAndLimit)
+
+        // 3. Tapping "Custom Category" opens AddCustomCategoryDialog with emoji selection and optional Monthly Budget
         composeTestRule.onNodeWithTag("budgets_tab_list")
             .performScrollToNode(hasTestTag("add_category_budget_button"))
         composeTestRule.onNodeWithTag("add_category_budget_button").performClick()
         composeTestRule.waitForIdle()
 
         composeTestRule.onNodeWithTag("add_custom_category_dialog").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("custom_category_emoji_input").performTextReplacement("🐶")
         composeTestRule.onNodeWithTag("custom_category_name_input").performTextReplacement("Pet Care")
-        // Leave optional budget blank -> saves with null optional limit
+        // Leave optional budget blank -> saves with null optional limit and chosen emoji
         composeTestRule.onNodeWithTag("save_custom_category_button").performClick()
         composeTestRule.waitForIdle()
-        assertEquals("Pet Care" to null, createdCustomCategory)
+        assertEquals(Triple("Pet Care", "🐶", null), createdCustomCategory)
     }
 
     @Test
@@ -2836,7 +2848,7 @@ class ExampleRobolectricTest {
     }
 
     @Test
-    fun `test AllTransactionsScreen page navigation, Exclude from Expenses toggle and filter, and long-press Category Icon Circular Scroll Wheel`() {
+    fun `test Home search filter export placement, Exclude from Expenses toggle and filter, and single-long-press half-circle Category Wheel`() {
         val now = System.currentTimeMillis()
         var txList by mutableStateOf(
             listOf(
@@ -2870,7 +2882,6 @@ class ExampleRobolectricTest {
         )
         var showAllTxPage by mutableStateOf(false)
         var selectedTypeFilter by mutableStateOf("All")
-        var wheelTargetTx by mutableStateOf<ExpenseTransaction?>(null)
 
         composeTestRule.setContent {
             val nonExcludedSpent = txList.filter { !it.isExcludedFromExpense }.sumOf { it.amount }
@@ -2894,78 +2905,85 @@ class ExampleRobolectricTest {
                 excludedTransactionsCount = excludedCount
             )
             OneFamilyTheme {
-                if (showAllTxPage) {
-                    AllTransactionsScreen(
-                        uiState = uiState,
-                        onBackClick = { showAllTxPage = false },
-                        onSelectType = { selectedTypeFilter = it },
-                        onToggleExcludeTransaction = { target ->
-                            txList = txList.map {
-                                if (it.id == target.id) it.copy(isExcludedFromExpense = !it.isExcludedFromExpense) else it
+                CategoryWheelOverlayHost(
+                    availableCategories = ExpenseCategories.ALL,
+                    onCommitCategory = { targetTx, newCategory ->
+                        txList = txList.map {
+                            if (it.id == targetTx.id) it.copy(category = newCategory) else it
+                        }
+                    }
+                ) {
+                    if (showAllTxPage) {
+                        AllTransactionsScreen(
+                            uiState = uiState,
+                            onBackClick = { showAllTxPage = false },
+                            onSelectType = { selectedTypeFilter = it },
+                            onToggleExcludeTransaction = { target ->
+                                txList = txList.map {
+                                    if (it.id == target.id) it.copy(isExcludedFromExpense = !it.isExcludedFromExpense) else it
+                                }
                             }
-                        },
-                        onQuickChangeCategory = { wheelTargetTx = it }
-                    )
-                } else {
-                    HomeTabScreen(
-                        uiState = uiState,
-                        onScopeSelected = {},
-                        onSelectType = { selectedTypeFilter = it },
-                        onToggleExcludeTransaction = { target ->
-                            txList = txList.map {
-                                if (it.id == target.id) it.copy(isExcludedFromExpense = !it.isExcludedFromExpense) else it
-                            }
-                        },
-                        onQuickChangeCategory = { wheelTargetTx = it },
-                        onOpenAllTransactionsPage = { showAllTxPage = true }
-                    )
-                }
-
-                if (wheelTargetTx != null) {
-                    val activeTx = wheelTargetTx!!
-                    QuickCategoryPickerDialog(
-                        transaction = activeTx,
-                        availableCategories = ExpenseCategories.ALL,
-                        onDismiss = { wheelTargetTx = null },
-                        onSelectCategory = { newCategory ->
-                            txList = txList.map {
-                                if (it.id == activeTx.id) it.copy(category = newCategory) else it
-                            }
-                            wheelTargetTx = null
-                        },
-                        onOpenFullEditor = { wheelTargetTx = null }
-                    )
+                        )
+                    } else {
+                        HomeTabScreen(
+                            uiState = uiState,
+                            onScopeSelected = {},
+                            onSelectType = { selectedTypeFilter = it },
+                            onToggleExcludeTransaction = { target ->
+                                txList = txList.map {
+                                    if (it.id == target.id) it.copy(isExcludedFromExpense = !it.isExcludedFromExpense) else it
+                                }
+                            },
+                            onOpenAllTransactionsPage = { showAllTxPage = true }
+                        )
+                    }
                 }
             }
         }
         composeTestRule.waitForIdle()
 
-        // 1. Click "All Transactions" navigation card on Home -> opens dedicated AllTransactionsScreen page
+        // 1. Top "All Transactions" buttons are removed; Search, Filter & Export sit down with Transactions
+        assertTrue(
+            "Top All Transactions button must be removed from Home",
+            composeTestRule.onAllNodesWithTag("open_all_transactions_page_button").fetchSemanticsNodes().isEmpty()
+        )
+        assertTrue(
+            "Header All Transactions icon button must be removed from Home",
+            composeTestRule.onAllNodesWithTag("home_open_transactions_page_button").fetchSemanticsNodes().isEmpty()
+        )
         composeTestRule.onNodeWithTag("home_tab_list")
-            .performScrollToNode(hasTestTag("open_all_transactions_page_button"))
-        composeTestRule.onNodeWithTag("open_all_transactions_page_button").performClick()
-        composeTestRule.waitForIdle()
-        assertTrue(showAllTxPage)
-        composeTestRule.onNodeWithTag("all_transactions_screen_list").assertIsDisplayed()
+            .performScrollToNode(hasTestTag("toggle_search_button"))
+        composeTestRule.onNodeWithTag("toggle_search_button").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("toggle_filters_button").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("home_export_csv_button").assertIsDisplayed()
 
-        // 2. Long-press the transaction's category icon -> opens 360° Circular Scroll Wheel category editor
-        composeTestRule.onNodeWithTag("all_transactions_screen_list")
+        // 2. Single long-press + slide + release on category icon commits without a second click
+        composeTestRule.onNodeWithTag("home_tab_list")
             .performScrollToNode(hasTestTag("category_pill_tx_wheel_1"))
         composeTestRule.onNodeWithTag("category_pill_tx_wheel_1")
-            .performTouchInput { longClick() }
+            .performTouchInput {
+                down(center)
+                advanceEventTime(650)
+            }
+        composeTestRule.mainClock.advanceTimeBy(700)
         composeTestRule.waitForIdle()
 
-        composeTestRule.onNodeWithTag("circular_category_wheel_dialog").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("category_wheel_scrim").assertIsDisplayed()
         composeTestRule.onNodeWithTag("circular_category_wheel").assertIsDisplayed()
 
-        // Step the circular wheel to the next category using the wheel step button and apply
-        composeTestRule.onNodeWithTag("wheel_step_next_button").performScrollTo().performClick()
-        composeTestRule.waitForIdle()
-        composeTestRule.onNodeWithTag("circular_wheel_apply_button").performScrollTo().performClick()
+        composeTestRule.onNodeWithTag("category_pill_tx_wheel_1")
+            .performTouchInput {
+                moveBy(Offset(0f, -150f))
+                up()
+            }
         composeTestRule.waitForIdle()
 
         val updatedCategory = txList.first { it.id == "tx_wheel_1" }.category
-        assertTrue("Category should update after rotating circular wheel", updatedCategory != "Food & Dining")
+        assertTrue("Category should commit immediately on finger release after single long-press drag", updatedCategory != "Food & Dining")
+        assertTrue(
+            "Scrim should dismiss automatically after finger release",
+            composeTestRule.onAllNodesWithTag("category_wheel_scrim").fetchSemanticsNodes().isEmpty()
+        )
 
         // 3. Exclude "Client Dinner Reimbursement" from expenses via the card's exclude toggle button
         composeTestRule.onNodeWithTag("exclude_tx_button_tx_wheel_1").performClick()
@@ -2974,15 +2992,23 @@ class ExampleRobolectricTest {
         assertTrue(txList.first { it.id == "tx_wheel_1" }.isExcludedFromExpense)
         composeTestRule.onNodeWithTag("excluded_tx_badge_tx_wheel_1", useUnmergedTree = true).assertExists()
 
-        // 4. Filter by "Expenses" -> excluded transaction is hidden, only non-excluded expense remains
-        composeTestRule.onNodeWithTag("all_tx_type_chip_expense").performScrollTo().performClick()
+        // 4. Filter by "Expenses" directly from the Transactions filter strip -> excluded transaction is hidden
+        composeTestRule.onNodeWithTag("home_tab_list")
+            .performScrollToNode(hasTestTag("quick_type_filter_chip_expense"))
+        composeTestRule.onNodeWithTag("quick_type_filter_chip_expense").performClick()
         composeTestRule.waitForIdle()
         assertTrue(composeTestRule.onAllNodesWithText("Client Dinner Reimbursement").fetchSemanticsNodes().isEmpty())
+        composeTestRule.onNodeWithTag("home_tab_list")
+            .performScrollToNode(hasTestTag("expense_card_tx_normal_2"))
         composeTestRule.onNodeWithText("Daily Milk & Bread").assertIsDisplayed()
 
         // 5. Filter by "Excluded" -> shows ONLY the excluded transaction!
-        composeTestRule.onNodeWithTag("all_tx_type_chip_excluded").performScrollTo().performClick()
+        composeTestRule.onNodeWithTag("home_tab_list")
+            .performScrollToNode(hasTestTag("quick_excluded_filter_chip"))
+        composeTestRule.onNodeWithTag("quick_excluded_filter_chip").performClick()
         composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("home_tab_list")
+            .performScrollToNode(hasTestTag("expense_card_tx_wheel_1"))
         composeTestRule.onNodeWithText("Client Dinner Reimbursement").assertIsDisplayed()
         assertTrue(composeTestRule.onAllNodesWithText("Daily Milk & Bread").fetchSemanticsNodes().isEmpty())
     }

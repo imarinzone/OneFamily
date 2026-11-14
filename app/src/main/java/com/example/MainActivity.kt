@@ -105,6 +105,7 @@ import com.example.data.sms.TransactionNotificationHelper
 import com.example.ui.auth.AuthScreen
 import com.example.ui.auth.signOut
 import com.example.ui.components.AppDecoratedBackground
+import com.example.ui.components.CategoryWheelOverlayHost
 import com.example.ui.components.MonthPeriodSelectorBar
 import com.example.ui.screens.AccountsTabScreen
 import com.example.ui.screens.AddAccountDialog
@@ -302,6 +303,9 @@ fun OneFamilyMainShell(
 
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val smsSyncProgress by viewModel.smsSyncProgress.collectAsStateWithLifecycle()
+    val smsSyncPeriodOption by viewModel.smsSyncPeriodOption.collectAsStateWithLifecycle()
+    val smsSyncCustomRange by viewModel.smsSyncCustomRange.collectAsStateWithLifecycle()
+    val isDeletingAccount by viewModel.isDeletingAccount.collectAsStateWithLifecycle()
     val tabs = OneFamilyNavTab.entries
     val pagerState = rememberPagerState(initialPage = 0, pageCount = { tabs.size })
     val currentTab = tabs[pagerState.currentPage]
@@ -422,7 +426,6 @@ fun OneFamilyMainShell(
     val triggerSmsSync = {
         viewModel.resetSmsSyncProgress()
         showSmsSyncScreen = true
-        startOrRequestSmsSync()
     }
 
     val navigateToTab: (OneFamilyNavTab) -> Unit = { tab ->
@@ -473,7 +476,13 @@ fun OneFamilyMainShell(
                     viewModel.resetSmsSyncProgress()
                     showSmsSyncScreen = false
                 },
-                currencySymbol = currency
+                currencySymbol = currency,
+                selectedPeriodOption = smsSyncPeriodOption,
+                customDateRange = smsSyncCustomRange,
+                onSelectPeriodOption = { viewModel.selectSmsSyncPeriod(it) },
+                onSelectCustomDateRange = { startMs, endMs ->
+                    viewModel.selectSmsSyncCustomRange(startMs, endMs)
+                }
             )
         } else {
             if (showAllTransactionsPage) {
@@ -486,7 +495,13 @@ fun OneFamilyMainShell(
                 }
             }
 
-            BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+            CategoryWheelOverlayHost(
+                availableCategories = uiState.availableCategories,
+                onCommitCategory = { tx, newCategory ->
+                    viewModel.quickUpdateTransactionCategory(tx, newCategory)
+                }
+            ) {
+                BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
                 val isWideScreen = maxWidth >= 600.dp
 
                 val topDateSelector: @Composable () -> Unit = {
@@ -689,6 +704,14 @@ fun OneFamilyMainShell(
                                                 scope = coroutineScope
                                             )
                                         },
+                                        isDeletingAccount = isDeletingAccount,
+                                        onDeleteAccountAndDataClick = {
+                                            viewModel.deleteAllUserDataAndAccount(
+                                                context = context,
+                                                credentialManager = credentialManager,
+                                                onAccountDeleted = onSignOut
+                                            )
+                                        },
                                         onCreateHousehold = { name, limit ->
                                             viewModel.createFamilyHousehold(name, limit)
                                         },
@@ -810,6 +833,7 @@ fun OneFamilyMainShell(
                         )
                     }
                 }
+            }
             }
         }
     }
@@ -935,9 +959,10 @@ fun OneFamilyMainShell(
             defaultShared = activeHasHousehold && uiState.selectedScope != BudgetScope.PERSONAL_ONLY,
             currencySymbol = currency,
             onDismiss = { showAddCustomCategoryDialog = false },
-            onSave = { categoryName, optionalLimit, alertPct, isShared ->
+            onSave = { categoryName, emoji, optionalLimit, alertPct, isShared ->
                 viewModel.addCustomCategoryWithOptionalBudget(
                     categoryName = categoryName,
+                    emoji = emoji,
                     optionalMonthlyLimit = optionalLimit ?: 0.0,
                     alertThresholdPercent = alertPct,
                     isShared = isShared,

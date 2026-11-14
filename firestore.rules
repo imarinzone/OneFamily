@@ -217,10 +217,13 @@ service cloud.firestore {
                        isValidHouseholdCodeIndex(incoming()) &&
                        isValidId(joinCode) &&
                        existing().ownerUid == request.auth.uid &&
-                       incoming().ownerUid == existing().ownerUid &&
                        incoming().joinCode == existing().joinCode &&
                        incoming().householdId == existing().householdId &&
-                       incoming().diff(existing()).affectedKeys().hasOnly(['householdName', 'createdAt', 'updatedAt']);
+                       (
+                         (incoming().ownerUid == existing().ownerUid &&
+                          incoming().diff(existing()).affectedKeys().hasOnly(['householdName', 'createdAt', 'updatedAt'])) ||
+                         (incoming().diff(existing()).affectedKeys().hasOnly(['ownerUid', 'updatedAt']))
+                       );
 
       allow delete: if isSignedIn() && isValidId(joinCode) && existing().ownerUid == request.auth.uid;
     }
@@ -248,15 +251,22 @@ service cloud.firestore {
       allow update: if isSignedIn() &&
                        isValidHousehold(incoming()) &&
                        isValidId(householdId) &&
-                       incoming().ownerUid == existing().ownerUid &&
                        incoming().joinCode == existing().joinCode &&
                        (
-                         (request.auth.uid in existing().memberUids &&
+                         (incoming().ownerUid == existing().ownerUid &&
+                          request.auth.uid in existing().memberUids &&
                           request.auth.uid in incoming().memberUids &&
                           incoming().diff(existing()).affectedKeys().hasOnly(['name', 'memberUids', 'memberNames', 'memberEmails', 'invitedEmails', 'monthlyBudgetLimit', 'currencySymbol', 'createdAt', 'updatedAt'])) ||
-                         (!(request.auth.uid in existing().memberUids) &&
+                         (incoming().ownerUid == existing().ownerUid &&
+                          !(request.auth.uid in existing().memberUids) &&
                           request.auth.uid in incoming().memberUids &&
-                          incoming().diff(existing()).affectedKeys().hasOnly(['memberUids', 'memberNames', 'memberEmails', 'invitedEmails', 'createdAt', 'updatedAt']))
+                          incoming().diff(existing()).affectedKeys().hasOnly(['memberUids', 'memberNames', 'memberEmails', 'invitedEmails', 'createdAt', 'updatedAt'])) ||
+                         (request.auth.uid in existing().memberUids &&
+                          !(request.auth.uid in incoming().memberUids) &&
+                          incoming().memberUids.size() == existing().memberUids.size() - 1 &&
+                          (incoming().ownerUid == existing().ownerUid ||
+                           (existing().ownerUid == request.auth.uid && incoming().ownerUid in incoming().memberUids)) &&
+                          incoming().diff(existing()).affectedKeys().hasOnly(['ownerUid', 'memberUids', 'memberNames', 'memberEmails', 'invitedEmails', 'updatedAt']))
                        );
 
       allow delete: if isSignedIn() && isValidId(householdId) && existing().ownerUid == request.auth.uid;

@@ -85,8 +85,10 @@ import com.example.ui.components.ReceiptTicketCard
 import com.example.ui.components.ScopeSwitcherBar
 import com.example.ui.components.SquircleIconBadge
 import com.example.ui.components.categoryIcon
+import com.example.ui.components.categoryWheelLongPressGesture
 import com.example.ui.components.formatCurrency
 import com.example.ui.components.formatShortDate
+import com.example.ui.components.rememberCustomCategoryEmojis
 import com.example.ui.theme.BudgetDangerCoral
 import com.example.ui.theme.BudgetSafeGreen
 import com.example.ui.theme.BudgetWarnAmber
@@ -586,7 +588,8 @@ fun AccountsTabScreen(
                                 expandedTransactionsMap[summary.account.id] = !isTransactionsExpanded
                             },
                             onEditTransaction = onEditTransaction,
-                            onQuickChangeCategory = onQuickChangeCategory
+                            onQuickChangeCategory = onQuickChangeCategory,
+                            availableCategories = uiState.availableCategories
                         )
                     }
                 }
@@ -623,10 +626,12 @@ private fun AccountCardWithTransactions(
     onCancelInlineLimit: () -> Unit,
     onToggleTransactionsExpanded: () -> Unit,
     onEditTransaction: (ExpenseTransaction) -> Unit,
-    onQuickChangeCategory: (ExpenseTransaction) -> Unit
+    onQuickChangeCategory: (ExpenseTransaction) -> Unit,
+    availableCategories: List<String> = ExpenseCategories.ALL
 ) {
     val dimens = LocalAppDimens.current
     val performHaptic = rememberAppHapticPerformer()
+    val customEmojis = rememberCustomCategoryEmojis()
     val account = summary.account
     val barColor = when {
         summary.isOverLimit -> BudgetDangerCoral
@@ -960,18 +965,15 @@ private fun AccountCardWithTransactions(
                                     .padding(horizontal = 12.dp, vertical = 10.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
+                                val catEmoji = customEmojis[tx.category.trim().lowercase()]
                                 Box(
                                     modifier = Modifier
                                         .clip(RoundedCornerShape(12.dp))
-                                        .combinedClickable(
-                                            onClick = {
-                                                performHaptic()
-                                                onEditTransaction(tx)
-                                            },
-                                            onLongClick = {
-                                                performHaptic()
-                                                onQuickChangeCategory(tx)
-                                            }
+                                        .categoryWheelLongPressGesture(
+                                            transaction = tx,
+                                            availableCategories = availableCategories,
+                                            onTap = { onEditTransaction(tx) },
+                                            onFallbackQuickChange = { onQuickChangeCategory(tx) }
                                         )
                                         .testTag("account_tx_category_icon_${tx.id}")
                                 ) {
@@ -981,6 +983,7 @@ private fun AccountCardWithTransactions(
                                         containerColor = catColor.copy(alpha = 0.14f),
                                         size = 34.dp,
                                         iconSize = 18.dp,
+                                        emoji = catEmoji,
                                         contentDescription = tx.category
                                     )
                                 }

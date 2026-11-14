@@ -21,9 +21,12 @@ import com.google.firebase.firestore.snapshots
 import com.ritesh.parser.core.TransactionType
 import java.util.UUID
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.tasks.await
@@ -559,10 +562,28 @@ class OneFamilyRepository(
                 val rawList = snapshot.documents.mapNotNull { doc ->
                     val parsed = doc.toObject(ExpenseTransaction::class.java, DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
                     val explicitExcluded = doc.getBoolean("isExcludedFromExpense")
-                    if (parsed != null && explicitExcluded != null && parsed.isExcludedFromExpense != explicitExcluded) {
+                    val normalized = if (parsed != null && explicitExcluded != null && parsed.isExcludedFromExpense != explicitExcluded) {
                         parsed.copy(isExcludedFromExpense = explicitExcluded)
                     } else {
                         parsed
+                    }
+                    normalized?.let { tx ->
+                        val sanitized = LocalAccountDataStore.sanitizeUnbackedSmsTransaction(tx)
+                        if (sanitized != tx && scrubbedLegacyAutoParsedIds.add(doc.reference.path)) {
+                            CoroutineScope(Dispatchers.IO).launch {
+                                runCatching {
+                                    doc.reference.update(
+                                        mapOf(
+                                            "notes" to sanitized.notes,
+                                            "smsSignature" to sanitized.smsSignature,
+                                            "tags" to sanitized.tags,
+                                            "updatedAt" to FieldValue.serverTimestamp()
+                                        )
+                                    ).await()
+                                }
+                            }
+                        }
+                        sanitized
                     }
                 }.sortedByDescending { it.transactionDateMillis }
                 LocalAccountDataStore.deduplicateSmsExpenses(rawList)
@@ -584,10 +605,28 @@ class OneFamilyRepository(
                 val rawList = snapshot.documents.mapNotNull { doc ->
                     val parsed = doc.toObject(ExpenseTransaction::class.java, DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
                     val explicitExcluded = doc.getBoolean("isExcludedFromExpense")
-                    if (parsed != null && explicitExcluded != null && parsed.isExcludedFromExpense != explicitExcluded) {
+                    val normalized = if (parsed != null && explicitExcluded != null && parsed.isExcludedFromExpense != explicitExcluded) {
                         parsed.copy(isExcludedFromExpense = explicitExcluded)
                     } else {
                         parsed
+                    }
+                    normalized?.let { tx ->
+                        val sanitized = LocalAccountDataStore.sanitizeUnbackedSmsTransaction(tx)
+                        if (sanitized != tx && scrubbedLegacyAutoParsedIds.add(doc.reference.path)) {
+                            CoroutineScope(Dispatchers.IO).launch {
+                                runCatching {
+                                    doc.reference.update(
+                                        mapOf(
+                                            "notes" to sanitized.notes,
+                                            "smsSignature" to sanitized.smsSignature,
+                                            "tags" to sanitized.tags,
+                                            "updatedAt" to FieldValue.serverTimestamp()
+                                        )
+                                    ).await()
+                                }
+                            }
+                        }
+                        sanitized
                     }
                 }.sortedByDescending { it.transactionDateMillis }
                 LocalAccountDataStore.deduplicateSmsExpenses(rawList)
@@ -758,8 +797,10 @@ class OneFamilyRepository(
                     signatures.addAll(com.example.data.sms.SmsInboxReader.buildSmsAdjacentContentKeys(rec.body, rec.timestamp))
                 }
             }
-            signatures.add(doc.id)
-            signatures.add(doc.id.removePrefix("sms_"))
+            if (primarySig.isNotBlank() || doc.id.startsWith("sms_")) {
+                signatures.add(doc.id)
+                signatures.add(doc.id.removePrefix("sms_"))
+            }
             @Suppress("UNCHECKED_CAST")
             val linked = doc.get("linkedSmsSignatures") as? List<String>
             linked?.forEach { lSig ->
@@ -1384,7 +1425,9 @@ class OneFamilyRepository(
         val combinedSignatures = buildList {
             addAll(primaryTx.linkedSmsSignatures)
             if (duplicateTx.smsSignature.isNotBlank()) add(duplicateTx.smsSignature)
-            if (duplicateTx.id.isNotBlank()) add(duplicateTx.id)
+            if (duplicateTx.smsSignature.isNotBlank() || duplicateTx.id.startsWith("sms_")) {
+                add(duplicateTx.id)
+            }
             addAll(duplicateTx.linkedSmsSignatures)
         }.distinct().take(20)
 
@@ -1394,13 +1437,14 @@ class OneFamilyRepository(
             .distinct()
             .take(10)
 
+        val cleanedPrimaryNotes = com.example.data.sms.SmsInboxReader.stripSyntheticAutoParsedNote(primaryTx.notes)
         val linkNoteSuffix = "[Linked Duplicate: ${duplicateTx.title} • ${duplicateTx.accountName}]"
-        val combinedNotes = if (primaryTx.notes.contains(linkNoteSuffix)) {
-            primaryTx.notes
-        } else if (primaryTx.notes.isBlank()) {
+        val combinedNotes = if (cleanedPrimaryNotes.contains(linkNoteSuffix)) {
+            cleanedPrimaryNotes
+        } else if (cleanedPrimaryNotes.isBlank()) {
             linkNoteSuffix
         } else {
-            "${primaryTx.notes}\n$linkNoteSuffix"
+            "$cleanedPrimaryNotes\n$linkNoteSuffix"
         }.take(500)
 
         val primaryDocRef = if (primaryTx.visibility == "SHARED" && primaryTx.householdId.isNotBlank()) {
@@ -1743,6 +1787,224 @@ class OneFamilyRepository(
         }
     }
 
+    /**
+     * Permanently hard-deletes ALL user data from Firestore (`personal_expenses`, `personal_budgets`,
+     * `accounts`, `users/{uid}`, and sole-member `households` + `shared_expenses` + `category_budgets`
+     * + `household_codes`, or removes the user & their authored documents from multi-member households)
+     * as well as local storage. Never soft-deletes (`deleted = true`).
+     */
+    suspend fun deleteAllUserData(uidOverride: String? = null): Result<Unit> = runCatching {
+        val uid = uidOverride?.takeIf { it.isNotBlank() } ?: requireUserId()
+        if (isLocalMode(uid)) {
+            LocalAccountDataStore.deleteAllUserData(uid)
+            return@runCatching
+        }
+
+        suspend fun deleteDocsInBatches(docs: List<DocumentSnapshot>, pathForError: String) {
+            if (docs.isEmpty()) return
+            for (chunk in docs.chunked(350)) {
+                val batch = db.batch()
+                chunk.forEach { batch.delete(it.reference) }
+                try {
+                    batch.commit().await()
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    handleFirestoreError(e, OperationType.DELETE, pathForError)
+                    throw e
+                }
+            }
+        }
+
+        val userRef = db.collection("users").document(uid)
+
+        // 1. Hard-delete all personal subcollections
+        val personalExpensesPath = "users/$uid/personal_expenses"
+        val personalExpensesDocs = try {
+            userRef.collection("personal_expenses").get().await().documents
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.LIST, personalExpensesPath)
+            throw e
+        }
+        deleteDocsInBatches(personalExpensesDocs, personalExpensesPath)
+
+        val personalBudgetsPath = "users/$uid/personal_budgets"
+        val personalBudgetsDocs = try {
+            userRef.collection("personal_budgets").get().await().documents
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.LIST, personalBudgetsPath)
+            throw e
+        }
+        deleteDocsInBatches(personalBudgetsDocs, personalBudgetsPath)
+
+        val accountsPath = "users/$uid/accounts"
+        val accountsDocs = try {
+            userRef.collection("accounts").get().await().documents
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.LIST, accountsPath)
+            throw e
+        }
+        deleteDocsInBatches(accountsDocs, accountsPath)
+
+        // 2. Discover all households where user is a member (plus activeHouseholdId if set)
+        val userSnap = try {
+            userRef.get().await()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.GET, userRef.path)
+            throw e
+        }
+        val activeHid = userSnap.getString("activeHouseholdId").orEmpty()
+
+        val queriedHouseholds = try {
+            db.collection("households")
+                .whereArrayContains("memberUids", uid)
+                .get()
+                .await()
+                .documents
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.LIST, "households")
+            throw e
+        }
+
+        val householdDocsById = queriedHouseholds.associateBy { it.id }.toMutableMap()
+        if (activeHid.isNotBlank() && !householdDocsById.containsKey(activeHid)) {
+            runCatching {
+                val activeSnap = db.collection("households").document(activeHid).get().await()
+                if (activeSnap.exists()) {
+                    householdDocsById[activeHid] = activeSnap
+                }
+            }
+        }
+
+        for ((hid, hhSnap) in householdDocsById) {
+            val hh = hhSnap.toObject(Household::class.java, DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
+                ?: continue
+            if (uid !in hh.memberUids && hh.ownerUid != uid) continue
+
+            val sharedExpPath = "households/$hid/shared_expenses"
+            val sharedExpDocs = try {
+                db.collection("households").document(hid)
+                    .collection("shared_expenses")
+                    .whereArrayContains("memberUids", uid)
+                    .get()
+                    .await()
+                    .documents
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                handleFirestoreError(e, OperationType.LIST, sharedExpPath)
+                throw e
+            }
+
+            val sharedBudPath = "households/$hid/category_budgets"
+            val sharedBudDocs = try {
+                db.collection("households").document(hid)
+                    .collection("category_budgets")
+                    .whereArrayContains("memberUids", uid)
+                    .get()
+                    .await()
+                    .documents
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                handleFirestoreError(e, OperationType.LIST, sharedBudPath)
+                throw e
+            }
+
+            val remainingMembers = hh.memberUids.filter { it.isNotBlank() && it != uid }
+            if (remainingMembers.isEmpty()) {
+                deleteDocsInBatches(sharedExpDocs, sharedExpPath)
+                deleteDocsInBatches(sharedBudDocs, sharedBudPath)
+
+                if (hh.joinCode.isNotBlank() && hh.ownerUid == uid) {
+                    val codeRef = db.collection("household_codes").document(hh.joinCode)
+                    runCatching { codeRef.delete().await() }
+                }
+                if (hh.ownerUid == uid) {
+                    val hhRef = db.collection("households").document(hid)
+                    try {
+                        hhRef.delete().await()
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        handleFirestoreError(e, OperationType.DELETE, hhRef.path)
+                        throw e
+                    }
+                }
+            } else {
+                val userAuthoredSharedExpenses = sharedExpDocs.filter { it.getString("userId") == uid }
+                val userAuthoredSharedBudgets = sharedBudDocs.filter { it.getString("userId") == uid }
+                deleteDocsInBatches(userAuthoredSharedExpenses, sharedExpPath)
+                deleteDocsInBatches(userAuthoredSharedBudgets, sharedBudPath)
+
+                val newOwnerUid = if (hh.ownerUid == uid) remainingMembers.first() else hh.ownerUid
+                if (hh.ownerUid == uid && hh.joinCode.isNotBlank()) {
+                    val codeRef = db.collection("household_codes").document(hh.joinCode)
+                    runCatching {
+                        codeRef.update(
+                            mapOf(
+                                "ownerUid" to newOwnerUid,
+                                "updatedAt" to FieldValue.serverTimestamp()
+                            )
+                        ).await()
+                    }
+                }
+
+                val hhRef = db.collection("households").document(hid)
+                val updatedNames = hh.memberNames.filterKeys { it != uid }
+                val updatedEmails = hh.memberEmails.filterKeys { it != uid }
+                val currentEmail = hh.memberEmails[uid].orEmpty()
+                val updatedInvites = if (currentEmail.isNotBlank()) {
+                    hh.invitedEmails.filterNot { it.equals(currentEmail, ignoreCase = true) }
+                } else {
+                    hh.invitedEmails
+                }
+                try {
+                    hhRef.update(
+                        mapOf(
+                            "ownerUid" to newOwnerUid,
+                            "memberUids" to remainingMembers,
+                            "memberNames" to updatedNames,
+                            "memberEmails" to updatedEmails,
+                            "invitedEmails" to updatedInvites,
+                            "updatedAt" to FieldValue.serverTimestamp()
+                        )
+                    ).await()
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    handleFirestoreError(e, OperationType.UPDATE, hhRef.path)
+                    throw e
+                }
+            }
+        }
+
+        // 3. Hard-delete user profile document
+        if (userSnap.exists()) {
+            try {
+                userRef.delete().await()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                handleFirestoreError(e, OperationType.DELETE, userRef.path)
+                throw e
+            }
+        }
+
+        firestoreAccountTimestampMap.clear()
+        LocalAccountDataStore.deleteAllUserData(uid)
+    }
+
     private fun generateJoinCode(): String {
         val chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
         return (1..6).map { chars.random() }.joinToString("")
@@ -1761,6 +2023,7 @@ class OneFamilyRepository(
     companion object {
         private val batchImportMutex = Mutex()
         private val inFlightSignatures = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+        private val scrubbedLegacyAutoParsedIds = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
         private val firestoreAccountTimestampMap = java.util.concurrent.ConcurrentHashMap<String, Long>()
     }
 }

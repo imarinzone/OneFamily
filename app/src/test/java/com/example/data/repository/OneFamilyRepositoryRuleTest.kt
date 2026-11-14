@@ -374,6 +374,71 @@ class OneFamilyRepositoryRuleTest : FirestoreEmulatorTestBase() {
         assertTrue(observedExcluded.any { it.id == expenseId && it.isExcludedFromExpense })
     }
 
+    @Test
+    fun deleteAllUserData_hardDeletesUserDocumentsAndHandlesHouseholds() = runBlocking {
+        val aliceUid = signInTestUser("alice_hard_delete@test.com")
+        val repo = OneFamilyRepository(firestore)
+
+        val soleHousehold = withTimeout(DEFAULT_TIMEOUT_MS) {
+            repo.ensureUserProfile("Alice", "alice_hard_delete@test.com").getOrThrow()
+            repo.createHousehold(
+                name = "Alice Solo Home",
+                monthlyBudgetLimit = 45000.0,
+                currencySymbol = "₹",
+                userDisplayName = "Alice",
+                userEmail = "alice_hard_delete@test.com"
+            ).getOrThrow()
+        }
+
+        val personalExpId = withTimeout(DEFAULT_TIMEOUT_MS) {
+            repo.addExpense(
+                userName = "Alice",
+                household = null,
+                title = "Solo Lunch",
+                amount = 420.0,
+                type = "EXPENSE",
+                category = "Food & Dining",
+                accountName = "HDFC Bank",
+                paymentMode = "UPI",
+                tags = emptyList(),
+                notes = "",
+                isShared = false
+            ).getOrThrow()
+        }
+        val accountId = withTimeout(DEFAULT_TIMEOUT_MS) {
+            repo.upsertAccount(
+                name = "HDFC Savings",
+                bankName = "HDFC Bank",
+                accountType = "BANK",
+                lastFourDigits = "1122",
+                balance = 25000.0
+            ).getOrThrow()
+        }
+
+        withTimeout(DEFAULT_TIMEOUT_MS) {
+            repo.deleteAllUserData().getOrThrow()
+        }
+
+        val userSnap = withTimeout(DEFAULT_TIMEOUT_MS) {
+            firestore.collection("users").document(aliceUid).get().await()
+        }
+        val expSnap = withTimeout(DEFAULT_TIMEOUT_MS) {
+            firestore.collection("users").document(aliceUid)
+                .collection("personal_expenses").document(personalExpId).get().await()
+        }
+        val accSnap = withTimeout(DEFAULT_TIMEOUT_MS) {
+            firestore.collection("users").document(aliceUid)
+                .collection("accounts").document(accountId).get().await()
+        }
+        val codeSnap = withTimeout(DEFAULT_TIMEOUT_MS) {
+            firestore.collection("household_codes").document(soleHousehold.joinCode).get().await()
+        }
+        assertEquals(false, userSnap.exists())
+        assertEquals(false, expSnap.exists())
+        assertEquals(false, accSnap.exists())
+        assertEquals(false, codeSnap.exists())
+    }
+
     private companion object {
         const val DEFAULT_TIMEOUT_MS = 5000L
         const val FLOW_TIMEOUT_MS = 4000L
