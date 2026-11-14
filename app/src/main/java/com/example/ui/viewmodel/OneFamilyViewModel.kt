@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.data.local.LocalAccountSessionManager
+import com.example.data.model.AccountSectionType
 import com.example.data.model.BudgetScope
 import com.example.data.model.CategoryBudget
 import com.example.data.model.ExpenseCategories
@@ -299,6 +300,30 @@ data class CategorySpendProgress(
         get() = limit > 0 && percentage >= alertThresholdPercent && !isOverBudget
 }
 
+data class AccountSpendSummary(
+    val account: FinancialAccount,
+    val section: AccountSectionType,
+    val linkedBankDisplayName: String,
+    val spent: Double,
+    val income: Double,
+    val limit: Double,
+    val alertThresholdPercent: Int,
+    val transactions: List<ExpenseTransaction>,
+    val isVirtual: Boolean = false
+) {
+    val progressFraction: Float
+        get() = if (limit > 0.0) (spent / limit).toFloat().coerceAtLeast(0f) else 0f
+
+    val percentage: Int
+        get() = if (limit > 0.0) ((spent / limit) * 100.0).toInt() else 0
+
+    val isOverLimit: Boolean
+        get() = limit > 0.0 && spent >= limit
+
+    val isNearAlert: Boolean
+        get() = limit > 0.0 && percentage >= alertThresholdPercent && !isOverLimit
+}
+
 data class SmsReadPreviewItem(
     val id: String,
     val merchant: String,
@@ -375,10 +400,13 @@ data class OneFamilyDashboardUiState(
     val personalExpenses: List<ExpenseTransaction> = emptyList(),
     val sharedExpenses: List<ExpenseTransaction> = emptyList(),
     val accounts: List<FinancialAccount> = emptyList(),
+    val accountSummaries: List<AccountSpendSummary> = emptyList(),
     val categoryProgressList: List<CategorySpendProgress> = emptyList(),
     val monthlyTrendBars: List<MonthlySpendBar> = emptyList(),
     val totalMonthlySpent: Double = 0.0,
     val totalMonthlyIncome: Double = 0.0,
+    val totalMonthlyExcluded: Double = 0.0,
+    val excludedTransactionsCount: Int = 0,
     val activeMonthlyBudget: Double = 0.0,
     val dailySafeSpend: Double = 0.0,
     val remainingDaysInMonth: Int = 1,
@@ -592,6 +620,165 @@ class OneFamilyViewModel(
             ExpenseCategories.normalizeCategory(tx.category).equals("Salary & Income", ignoreCase = true)
     }
 
+    private fun buildAccountSpendSummaries(
+        savedAccounts: List<FinancialAccount>,
+        periodTransactions: List<ExpenseTransaction>
+    ): List<AccountSpendSummary> {
+        fun matchSavedAccount(tx: ExpenseTransaction): FinancialAccount? {
+            if (savedAccounts.isEmpty()) return null
+            val txAcc = tx.accountName.trim()
+            val txMode = tx.paymentMode.trim().uppercase()
+            val txNotesLower = tx.notes.lowercase()
+            val txAccLower = txAcc.lowercase()
+            val isCardTx = txMode == "CARD" ||
+                txAccLower.contains("card") ||
+                txNotesLower.contains("debit card") ||
+                txNotesLower.contains("credit card")
+            val isDebitCardHint = txAccLower.contains("debit") || txNotesLower.contains("debit card")
+            val isCreditCardHint = txAccLower.contains("credit") || txNotesLower.contains("credit card")
+
+            fun sectionPriority(acc: FinancialAccount): Int {
+                val sec = AccountSectionType.fromAccount(acc)
+                return when {
+                    isDebitCardHint && sec == AccountSectionType.DEBIT_CARD -> 4
+                    isCreditCardHint && sec == AccountSectionType.CREDIT_CARD -> 4
+                    isCardTx && (sec == AccountSectionType.DEBIT_CARD || sec == AccountSectionType.CREDIT_CARD) -> 3
+                    (txMode == "WALLET" || txMode == "CASH") && sec == AccountSectionType.WALLET -> 3
+                    (txMode == "BANK" || txMode == "UPI") && sec == AccountSectionType.BANK -> 3
+                    else -> 1
+                }
+            }
+
+            // 1. Exact account name match
+            savedAccounts.filter { it.name.trim().equals(txAcc, ignoreCase = true) }
+                .maxByOrNull { sectionPriority(it) }
+                ?.let { return it }
+
+            // 2. Last 4 digits match + optional bank overlap
+            val digitsMatches = savedAccounts.filter { acc ->
+                acc.lastFourDigits.isNotBlank() &&
+                    (txAcc.contains(acc.lastFourDigits) || tx.notes.contains(acc.lastFourDigits))
+            }
+            if (digitsMatches.isNotEmpty()) {
+                return digitsMatches.maxByOrNull { acc ->
+                    var score = sectionPriority(acc) * 10
+                    if (acc.bankName.length >= 2 &&
+                        (txAccLower.contains(acc.bankName.lowercase()) || txNotesLower.contains(acc.bankName.lowercase()))
+                    ) {
+                        score += 5
+                    }
+                    score
+                }
+            }
+
+            // 3. Bank / provider name match (avoid mismatched digits if transaction carries explicit digits)
+            val txDigits = Regex("(\\d{4})").findAll(txAcc).map { it.groupValues[1] }.toSet()
+            val bankMatches = savedAccounts.filter { acc ->
+                val bank = acc.bankName.trim()
+                val matchesName = bank.length >= 2 &&
+                    (txAccLower.contains(bank.lowercase()) || bank.lowercase().contains(txAccLower))
+                val digitCompatible = txDigits.isEmpty() || acc.lastFourDigits.isBlank() || acc.lastFourDigits in txDigits
+                matchesName && digitCompatible
+            }
+            if (bankMatches.isNotEmpty()) {
+                return bankMatches.maxByOrNull { sectionPriority(it) }
+            }
+
+            // 4. Cash / Wallet generic fallback
+            if (txMode == "CASH" || txAccLower in setOf("cash", "cash wallet", "cash pocket")) {
+                savedAccounts.firstOrNull { it.accountType.equals("CASH", ignoreCase = true) }?.let { return it }
+            }
+            if (txMode == "WALLET" || txAccLower.contains("wallet")) {
+                savedAccounts.firstOrNull { AccountSectionType.fromAccount(it) == AccountSectionType.WALLET }?.let { return it }
+            }
+            return null
+        }
+
+        val txMap = LinkedHashMap<String, MutableList<ExpenseTransaction>>()
+        savedAccounts.forEach { acc -> txMap[acc.id] = mutableListOf() }
+        val virtualAccounts = LinkedHashMap<String, FinancialAccount>()
+
+        periodTransactions.sortedByDescending { it.transactionDateMillis }.forEach { tx ->
+            val matched = matchSavedAccount(tx)
+            if (matched != null) {
+                txMap.getOrPut(matched.id) { mutableListOf() }.add(tx)
+            } else {
+                val rawLabel = tx.accountName.trim().ifBlank { tx.paymentMode.ifBlank { "Cash" } }
+                val virtualId = "virtual_${rawLabel.lowercase().replace(Regex("[^a-z0-9]+"), "_").trim('_')}"
+                val virtualAcc = virtualAccounts.getOrPut(virtualId) {
+                    val lower = rawLabel.lowercase()
+                    val mode = tx.paymentMode.trim().uppercase()
+                    val inferredType = when {
+                        lower.contains("debit") -> "DEBIT_CARD"
+                        lower.contains("credit") -> "CREDIT_CARD"
+                        mode == "WALLET" || lower.contains("wallet") || lower.contains("paytm") || lower.contains("amazon pay") -> "WALLET"
+                        mode == "CASH" || lower.contains("cash") -> "CASH"
+                        mode == "CARD" -> "CREDIT_CARD"
+                        else -> "BANK"
+                    }
+                    FinancialAccount(
+                        id = virtualId,
+                        userId = currentUserId,
+                        name = rawLabel,
+                        bankName = rawLabel,
+                        accountType = inferredType,
+                        lastFourDigits = Regex("(\\d{4})").find(rawLabel)?.groupValues?.getOrNull(1).orEmpty(),
+                        balance = 0.0,
+                        creditLimit = 0.0,
+                        isSharedVisible = true
+                    )
+                }
+                txMap.getOrPut(virtualAcc.id) { mutableListOf() }.add(tx)
+            }
+        }
+
+        val allAccounts = savedAccounts + virtualAccounts.values
+        val sectionOrder = listOf(
+            AccountSectionType.WALLET,
+            AccountSectionType.BANK,
+            AccountSectionType.DEBIT_CARD,
+            AccountSectionType.CREDIT_CARD
+        )
+
+        return allAccounts.map { acc ->
+            val sec = AccountSectionType.fromAccount(acc)
+            val txs = txMap[acc.id].orEmpty().sortedByDescending { it.transactionDateMillis }
+            val spent = txs.filter { !isIncomeTransaction(it) && !it.isExcludedFromExpense }.sumOf { it.amount }
+            val income = txs.filter { isIncomeTransaction(it) }.sumOf { it.amount }
+            val linkedBankLabel = if (sec == AccountSectionType.DEBIT_CARD) {
+                val linkedAcc = savedAccounts.firstOrNull {
+                    (acc.linkedBankAccountId.isNotBlank() && it.id == acc.linkedBankAccountId) ||
+                        (acc.linkedBankAccountName.isNotBlank() && it.name.equals(acc.linkedBankAccountName, ignoreCase = true))
+                }
+                when {
+                    linkedAcc != null && linkedAcc.lastFourDigits.isNotBlank() ->
+                        "${linkedAcc.name} ••${linkedAcc.lastFourDigits}"
+                    linkedAcc != null -> linkedAcc.name
+                    acc.linkedBankAccountName.isNotBlank() -> acc.linkedBankAccountName
+                    else -> acc.bankName
+                }
+            } else {
+                ""
+            }
+            AccountSpendSummary(
+                account = acc,
+                section = sec,
+                linkedBankDisplayName = linkedBankLabel,
+                spent = spent,
+                income = income,
+                limit = acc.monthlySpendLimit,
+                alertThresholdPercent = acc.alertThresholdPercent.toInt().coerceIn(1, 100),
+                transactions = txs,
+                isVirtual = acc.id in virtualAccounts
+            )
+        }.sortedWith(
+            compareBy<AccountSpendSummary> { sectionOrder.indexOf(it.section) }
+                .thenByDescending { it.spent > 0.0 || it.limit > 0.0 }
+                .thenByDescending { it.spent }
+                .thenBy { it.account.name.lowercase() }
+        )
+    }
+
     val uiState: StateFlow<OneFamilyDashboardUiState> = combine(coreDataFlow, filterStateFlow) { core, filter ->
         val householdEnabled = filter.householdFeatureEnabled
         val effectiveScope = if (!householdEnabled) BudgetScope.PERSONAL_ONLY else filter.scope
@@ -649,10 +836,12 @@ class OneFamilyViewModel(
         )
 
         val periodIncomeOnly = periodTransactions.filter { isIncomeTransaction(it) }
-        val periodExpensesOnly = periodTransactions.filter { !isIncomeTransaction(it) }
+        val periodExpensesOnly = periodTransactions.filter { !isIncomeTransaction(it) && !it.isExcludedFromExpense }
+        val periodExcludedOnly = periodTransactions.filter { it.isExcludedFromExpense }
 
         val totalSpent = periodExpensesOnly.sumOf { it.amount }
         val totalIncome = periodIncomeOnly.sumOf { it.amount }
+        val totalExcluded = periodExcludedOnly.sumOf { it.amount }
 
         val personalCap = core.profile?.personalMonthlyBudget ?: 0.0
         val householdCap = core.household?.monthlyBudgetLimit ?: 0.0
@@ -742,7 +931,7 @@ class OneFamilyViewModel(
             val monthTxs = allScopedTransactions.filter {
                 YearMonthPeriod.fromMillis(it.transactionDateMillis) == ym
             }
-            val expSum = monthTxs.filter { !isIncomeTransaction(it) }.sumOf { it.amount }
+            val expSum = monthTxs.filter { !isIncomeTransaction(it) && !it.isExcludedFromExpense }.sumOf { it.amount }
             val incSum = monthTxs.filter { isIncomeTransaction(it) }.sumOf { it.amount }
             MonthlySpendBar(
                 period = ym,
@@ -786,8 +975,9 @@ class OneFamilyViewModel(
 
             val matchesType = when {
                 filter.type == "All" -> true
+                filter.type.equals("EXCLUDED", ignoreCase = true) -> tx.isExcludedFromExpense
                 filter.type.equals("INCOME", ignoreCase = true) -> isIncomeTransaction(tx)
-                filter.type.equals("EXPENSE", ignoreCase = true) -> !isIncomeTransaction(tx)
+                filter.type.equals("EXPENSE", ignoreCase = true) -> !isIncomeTransaction(tx) && !tx.isExcludedFromExpense
                 else -> tx.type.equals(filter.type, ignoreCase = true)
             }
             val matchesCat = filter.category == "All" ||
@@ -809,6 +999,11 @@ class OneFamilyViewModel(
             "LOWEST" -> filteredUnsorted.sortedBy { it.amount }
             else -> filteredUnsorted.sortedByDescending { it.transactionDateMillis }
         }
+
+        val accountSummaries = buildAccountSpendSummaries(
+            savedAccounts = core.accounts,
+            periodTransactions = periodTransactions
+        )
 
         OneFamilyDashboardUiState(
             isLoading = false,
@@ -836,10 +1031,13 @@ class OneFamilyViewModel(
             personalExpenses = core.personalExpenses,
             sharedExpenses = core.sharedExpenses,
             accounts = core.accounts,
+            accountSummaries = accountSummaries,
             categoryProgressList = categoryProgressList,
             monthlyTrendBars = monthlyTrendBars,
             totalMonthlySpent = totalSpent,
             totalMonthlyIncome = totalIncome,
+            totalMonthlyExcluded = totalExcluded,
+            excludedTransactionsCount = periodExcludedOnly.size,
             activeMonthlyBudget = activeMonthlyBudget,
             dailySafeSpend = dailySafeSpend,
             remainingDaysInMonth = remainingDays,
@@ -1514,6 +1712,7 @@ class OneFamilyViewModel(
         notes: String,
         isShared: Boolean,
         transactionDateMillis: Long = System.currentTimeMillis(),
+        isExcludedFromExpense: Boolean = false,
         context: Context? = null
     ) {
         viewModelScope.launch {
@@ -1542,6 +1741,7 @@ class OneFamilyViewModel(
                 tags = tags,
                 notes = notes,
                 isShared = shareFlag,
+                isExcludedFromExpense = isExcludedFromExpense,
                 transactionDateMillis = transactionDateMillis
             )
             result.onSuccess {
@@ -1676,7 +1876,8 @@ class OneFamilyViewModel(
         tagsInput: String,
         notes: String,
         transactionDateMillis: Long,
-        targetShared: Boolean
+        targetShared: Boolean,
+        isExcludedFromExpense: Boolean = original.isExcludedFromExpense
     ) {
         viewModelScope.launch {
             val normalizedCategory = ExpenseCategories.normalizeCategory(category)
@@ -1702,12 +1903,30 @@ class OneFamilyViewModel(
                 tags = tags,
                 notes = notes,
                 transactionDateMillis = transactionDateMillis,
-                isShared = uiState.value.householdFeatureEnabled && targetShared
+                isShared = uiState.value.householdFeatureEnabled && targetShared,
+                isExcludedFromExpense = isExcludedFromExpense
             ).onSuccess {
                 _statusBanner.value = "Updated '${title.ifBlank { normalizedCategory }}'."
             }.onFailure { err ->
                 _errorMessage.value = err.localizedMessage ?: "Failed to update transaction."
             }
+        }
+    }
+
+    fun toggleTransactionExcluded(expense: ExpenseTransaction) {
+        viewModelScope.launch {
+            val targetExcluded = !expense.isExcludedFromExpense
+            repository.setExpenseExcluded(expense, targetExcluded)
+                .onSuccess {
+                    _statusBanner.value = if (targetExcluded) {
+                        "'${expense.title}' excluded from expenses."
+                    } else {
+                        "'${expense.title}' included in expenses."
+                    }
+                }
+                .onFailure { err ->
+                    _errorMessage.value = err.localizedMessage ?: "Could not update exclusion status."
+                }
         }
     }
 
@@ -1929,7 +2148,10 @@ class OneFamilyViewModel(
         lastFourDigits: String,
         balance: Double,
         creditLimit: Double,
-        isSharedVisible: Boolean
+        isSharedVisible: Boolean,
+        linkedBankAccountId: String = "",
+        linkedBankAccountName: String = "",
+        monthlySpendLimit: Double = 0.0
     ) {
         viewModelScope.launch {
             repository.upsertAccount(
@@ -1939,11 +2161,36 @@ class OneFamilyViewModel(
                 lastFourDigits = lastFourDigits,
                 balance = balance,
                 creditLimit = creditLimit,
-                isSharedVisible = isSharedVisible
+                isSharedVisible = isSharedVisible,
+                linkedBankAccountId = linkedBankAccountId,
+                linkedBankAccountName = linkedBankAccountName,
+                monthlySpendLimit = monthlySpendLimit
             ).onSuccess {
                 _statusBanner.value = "Saved $name."
             }.onFailure { err ->
                 _errorMessage.value = err.localizedMessage ?: "Failed to save account."
+            }
+        }
+    }
+
+    fun updateAccountSpendLimit(
+        account: FinancialAccount,
+        monthlySpendLimit: Double,
+        alertThresholdPercent: Int = 80
+    ) {
+        viewModelScope.launch {
+            repository.updateAccountSpendLimit(
+                account = account,
+                monthlySpendLimit = monthlySpendLimit.coerceAtLeast(0.0),
+                alertThresholdPercent = alertThresholdPercent.coerceIn(1, 100)
+            ).onSuccess {
+                _statusBanner.value = if (monthlySpendLimit <= 0.0) {
+                    "Cleared spend limit for ${account.name}."
+                } else {
+                    "Updated ${account.name} spend limit."
+                }
+            }.onFailure { err ->
+                _errorMessage.value = err.localizedMessage ?: "Failed to update account spend limit."
             }
         }
     }

@@ -4,9 +4,11 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.spring
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
@@ -29,11 +31,14 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.automirrored.filled.Logout
 import androidx.compose.material.icons.automirrored.filled.ReceiptLong
 import androidx.compose.material.icons.automirrored.filled.Undo
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Apps
+import androidx.compose.material.icons.filled.Block
 import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.BugReport
 import androidx.compose.material.icons.filled.Check
@@ -57,6 +62,7 @@ import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material.icons.filled.Verified
+import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material.icons.filled.Window
 import androidx.compose.material.icons.outlined.AccountBalance
 import androidx.compose.material.icons.outlined.DarkMode
@@ -159,7 +165,8 @@ import kotlin.math.roundToInt
  * - Oversized M3 Expressive Editorial Header with circular tonal Filter & CSV actions.
  * - Personal & Family section switcher (`ScopeSwitcherBar`) when Household mode is enabled.
  * - Serrated Thermal Paper Receipt Budget Pulse Card + M3 pill search & filter drawer.
- * - Connected 24dp/6dp M3 transaction card stack with perforated receipt header.
+ * - Prominent "All Transactions" navigation card to open the dedicated `AllTransactionsScreen` page,
+ *   plus a compact Recent Receipts preview stack.
  */
 @Composable
 fun HomeTabScreen(
@@ -184,9 +191,11 @@ fun HomeTabScreen(
     onEditTransaction: (ExpenseTransaction) -> Unit = {},
     onQuickChangeCategory: (ExpenseTransaction) -> Unit = {},
     onToggleTransactionPrivacy: (ExpenseTransaction) -> Unit = {},
+    onToggleExcludeTransaction: (ExpenseTransaction) -> Unit = {},
     onLinkDuplicateTransaction: (ExpenseTransaction) -> Unit = {},
     onDeleteTransaction: (ExpenseTransaction) -> Unit = {},
-    onUndoLastSwipeAction: () -> Unit = {}
+    onUndoLastSwipeAction: () -> Unit = {},
+    onOpenAllTransactionsPage: () -> Unit = {}
 ) {
     val dimens = LocalAppDimens.current
     val currency = uiState.activeCurrencySymbol
@@ -220,6 +229,15 @@ fun HomeTabScreen(
                 subtitle = uiState.periodLabel,
                 modifier = Modifier.padding(bottom = 6.dp),
                 actions = {
+                    CircularTonalIconButton(
+                        icon = Icons.AutoMirrored.Filled.ReceiptLong,
+                        contentDescription = "All Transactions Page",
+                        onClick = {
+                            performHaptic()
+                            onOpenAllTransactionsPage()
+                        },
+                        modifier = Modifier.testTag("home_open_transactions_page_button")
+                    )
                     CircularTonalIconButton(
                         icon = Icons.Default.Search,
                         contentDescription = "Search Receipts",
@@ -341,6 +359,126 @@ fun HomeTabScreen(
             }
         }
 
+        // 3B. Dedicated "All Transactions" Navigation Card + Quick Type Filter Strip (including Excluded)
+        item {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = dimens.horizontalPadding)
+                    .padding(bottom = 8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Surface(
+                    shape = RoundedCornerShape(22.dp),
+                    color = MaterialTheme.colorScheme.secondaryContainer,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(22.dp))
+                        .clickable {
+                            performHaptic()
+                            onOpenAllTransactionsPage()
+                        }
+                        .testTag("open_all_transactions_page_button")
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            SquircleIconBadge(
+                                icon = Icons.AutoMirrored.Filled.ReceiptLong,
+                                tint = MaterialTheme.colorScheme.onSecondaryContainer,
+                                containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.55f),
+                                size = 40.dp,
+                                iconSize = 20.dp
+                            )
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "All Transactions",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onSecondaryContainer
+                                )
+                                Text(
+                                    text = buildString {
+                                        append("${uiState.activeExpenses.size} in ${uiState.periodLabel}")
+                                        if (uiState.excludedTransactionsCount > 0) {
+                                            append(" • ${uiState.excludedTransactionsCount} excluded")
+                                        }
+                                    },
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.8f)
+                                )
+                            }
+                        }
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.ArrowForward,
+                            contentDescription = "Open All Transactions Page",
+                            tint = MaterialTheme.colorScheme.onSecondaryContainer
+                        )
+                    }
+                }
+
+                // Quick Type Filter Strip (All / Expenses / Income / Excluded)
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    listOf(
+                        "All" to "All",
+                        "EXPENSE" to "Expenses",
+                        "INCOME" to "Income",
+                        "EXCLUDED" to if (uiState.excludedTransactionsCount > 0) {
+                            "Excluded (${uiState.excludedTransactionsCount})"
+                        } else {
+                            "Excluded"
+                        }
+                    ).forEach { (typeVal, label) ->
+                        FilterChip(
+                            selected = uiState.selectedTypeFilter.equals(typeVal, ignoreCase = true),
+                            onClick = {
+                                performHaptic()
+                                if (typeVal == "EXCLUDED" && uiState.selectedTypeFilter.equals("EXCLUDED", ignoreCase = true)) {
+                                    onSelectType("All")
+                                } else {
+                                    onSelectType(typeVal)
+                                }
+                            },
+                            leadingIcon = if (typeVal == "EXCLUDED") {
+                                {
+                                    Icon(
+                                        imageVector = Icons.Default.VisibilityOff,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                }
+                            } else {
+                                null
+                            },
+                            label = { Text(label) },
+                            modifier = Modifier.testTag(
+                                if (typeVal == "EXCLUDED") {
+                                    "quick_excluded_filter_chip"
+                                } else {
+                                    "quick_type_filter_chip_${typeVal.lowercase()}"
+                                }
+                            )
+                        )
+                    }
+                }
+            }
+        }
+
         // 4. Expandable M3 Search & Filter Drawer
         if (uiState.selectedCategoryFilter != "All" || filtersExpanded || hasActiveFilter) {
             item {
@@ -423,139 +561,146 @@ fun HomeTabScreen(
                                         .fillMaxWidth()
                                         .testTag("transaction_search_input")
                                 )
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .horizontalScroll(rememberScrollState()),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                DateRangePreset.entries.forEach { preset ->
-                                    FilterChip(
-                                        selected = uiState.selectedDateRangePreset == preset,
-                                        onClick = {
-                                            performHaptic()
-                                            if (preset == DateRangePreset.CUSTOM) {
-                                                showDrawerCustomRangePicker = true
-                                            } else {
-                                                onSelectDateRangePreset(preset)
-                                            }
-                                        },
-                                        label = {
-                                            Text(
-                                                if (preset == DateRangePreset.CUSTOM &&
-                                                    uiState.selectedDateRangePreset == DateRangePreset.CUSTOM
-                                                ) {
-                                                    uiState.periodLabel
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .horizontalScroll(rememberScrollState()),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    DateRangePreset.entries.forEach { preset ->
+                                        FilterChip(
+                                            selected = uiState.selectedDateRangePreset == preset,
+                                            onClick = {
+                                                performHaptic()
+                                                if (preset == DateRangePreset.CUSTOM) {
+                                                    showDrawerCustomRangePicker = true
                                                 } else {
-                                                    preset.label
+                                                    onSelectDateRangePreset(preset)
+                                                }
+                                            },
+                                            label = {
+                                                Text(
+                                                    if (preset == DateRangePreset.CUSTOM &&
+                                                        uiState.selectedDateRangePreset == DateRangePreset.CUSTOM
+                                                    ) {
+                                                        uiState.periodLabel
+                                                    } else {
+                                                        preset.label
+                                                    }
+                                                )
+                                            },
+                                            modifier = Modifier.testTag(
+                                                if (preset == DateRangePreset.ALL_TIME) {
+                                                    "all_time_period_chip"
+                                                } else {
+                                                    "date_range_chip_${preset.name.lowercase()}"
                                                 }
                                             )
-                                        },
-                                        modifier = Modifier.testTag(
-                                            if (preset == DateRangePreset.ALL_TIME) {
-                                                "all_time_period_chip"
-                                            } else {
-                                                "date_range_chip_${preset.name.lowercase()}"
-                                            }
                                         )
-                                    )
-                                }
-                            }
-
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .horizontalScroll(rememberScrollState()),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                listOf("All" to "All", "EXPENSE" to "Expenses", "INCOME" to "Income").forEach { (typeVal, label) ->
-                                    FilterChip(
-                                        selected = uiState.selectedTypeFilter.equals(typeVal, ignoreCase = true),
-                                        onClick = {
-                                            performHaptic()
-                                            onSelectType(typeVal)
-                                        },
-                                        label = { Text(label) }
-                                    )
+                                    }
                                 }
 
-                                listOf(
-                                    "NEWEST" to "Newest",
-                                    "OLDEST" to "Oldest",
-                                    "HIGHEST" to "Highest $currency",
-                                    "LOWEST" to "Lowest $currency"
-                                ).forEach { (sortKey, sortLabel) ->
-                                    FilterChip(
-                                        selected = uiState.selectedSortOrder == sortKey,
-                                        onClick = {
-                                            performHaptic()
-                                            onSelectSortOrder(sortKey)
-                                        },
-                                        label = { Text(sortLabel) }
-                                    )
-                                }
-                            }
-
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .horizontalScroll(rememberScrollState()),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                (listOf("All") + uiState.availableCategories).forEach { cat ->
-                                    FilterChip(
-                                        selected = uiState.selectedCategoryFilter.equals(cat, ignoreCase = true),
-                                        onClick = {
-                                            performHaptic()
-                                            onSelectCategory(cat)
-                                        },
-                                        leadingIcon = if (cat != "All") {
-                                            {
-                                                Icon(
-                                                    imageVector = categoryIcon(cat),
-                                                    contentDescription = null,
-                                                    modifier = Modifier.size(16.dp)
-                                                )
-                                            }
-                                        } else {
-                                            null
-                                        },
-                                        label = { Text(cat) }
-                                    )
-                                }
-                            }
-
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .horizontalScroll(rememberScrollState()),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                listOf("All", "UPI", "BANK", "CARD", "WALLET", "CASH").forEach { mode ->
-                                    FilterChip(
-                                        selected = uiState.selectedPaymentModeFilter.equals(mode, ignoreCase = true),
-                                        onClick = {
-                                            performHaptic()
-                                            onSelectPaymentMode(mode)
-                                        },
-                                        label = { Text(if (mode == "All") "All Modes" else mode) }
-                                    )
-                                }
-                            }
-
-                            if (hasActiveFilter) {
                                 Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.End
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .horizontalScroll(rememberScrollState()),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                                 ) {
-                                    TextButton(
-                                        onClick = {
-                                            performHaptic()
-                                            onClearFilters()
-                                        },
-                                        modifier = Modifier.testTag("clear_filters_button")
+                                    listOf(
+                                        "All" to "All",
+                                        "EXPENSE" to "Expenses",
+                                        "INCOME" to "Income",
+                                        "EXCLUDED" to "Excluded"
+                                    ).forEach { (typeVal, label) ->
+                                        FilterChip(
+                                            selected = uiState.selectedTypeFilter.equals(typeVal, ignoreCase = true),
+                                            onClick = {
+                                                performHaptic()
+                                                onSelectType(typeVal)
+                                            },
+                                            label = { Text(label) },
+                                            modifier = Modifier.testTag("type_filter_chip_${typeVal.lowercase()}")
+                                        )
+                                    }
+
+                                    listOf(
+                                        "NEWEST" to "Newest",
+                                        "OLDEST" to "Oldest",
+                                        "HIGHEST" to "Highest $currency",
+                                        "LOWEST" to "Lowest $currency"
+                                    ).forEach { (sortKey, sortLabel) ->
+                                        FilterChip(
+                                            selected = uiState.selectedSortOrder == sortKey,
+                                            onClick = {
+                                                performHaptic()
+                                                onSelectSortOrder(sortKey)
+                                            },
+                                            label = { Text(sortLabel) }
+                                        )
+                                    }
+                                }
+
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .horizontalScroll(rememberScrollState()),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    (listOf("All") + uiState.availableCategories).forEach { cat ->
+                                        FilterChip(
+                                            selected = uiState.selectedCategoryFilter.equals(cat, ignoreCase = true),
+                                            onClick = {
+                                                performHaptic()
+                                                onSelectCategory(cat)
+                                            },
+                                            leadingIcon = if (cat != "All") {
+                                                {
+                                                    Icon(
+                                                        imageVector = categoryIcon(cat),
+                                                        contentDescription = null,
+                                                        modifier = Modifier.size(16.dp)
+                                                    )
+                                                }
+                                            } else {
+                                                null
+                                            },
+                                            label = { Text(cat) }
+                                        )
+                                    }
+                                }
+
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .horizontalScroll(rememberScrollState()),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    listOf("All", "UPI", "BANK", "CARD", "WALLET", "CASH").forEach { mode ->
+                                        FilterChip(
+                                            selected = uiState.selectedPaymentModeFilter.equals(mode, ignoreCase = true),
+                                            onClick = {
+                                                performHaptic()
+                                                onSelectPaymentMode(mode)
+                                            },
+                                            label = { Text(if (mode == "All") "All Modes" else mode) }
+                                        )
+                                    }
+                                }
+
+                                if (hasActiveFilter) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.End
                                     ) {
-                                        Text("Reset")
+                                        TextButton(
+                                            onClick = {
+                                                performHaptic()
+                                                onClearFilters()
+                                            },
+                                            modifier = Modifier.testTag("clear_filters_button")
+                                        ) {
+                                            Text("Reset")
+                                        }
                                     }
                                 }
                             }
@@ -563,7 +708,6 @@ fun HomeTabScreen(
                     }
                 }
             }
-        }
         }
 
         // 4B. Quick Undo Bar on Home Screen when a transaction was just swiped
@@ -627,13 +771,13 @@ fun HomeTabScreen(
         // 5. Perforated Receipt Section Header
         item {
             PerforatedSectionHeader(
-                title = "Receipts",
+                title = "Recent Receipts",
                 countBadge = "${uiState.filteredExpenses.size}",
                 modifier = Modifier.padding(bottom = 4.dp)
             )
         }
 
-        // 6. Connected 24dp/6dp Transaction Card Stack (or Tactile Empty Receipt State)
+        // 6. Connected 24dp/6dp Recent Transaction Preview Stack (or Tactile Empty Receipt State)
         if (uiState.filteredExpenses.isEmpty()) {
             item {
                 Surface(
@@ -702,8 +846,9 @@ fun HomeTabScreen(
                 }
             }
         } else {
+            val recentPreview = uiState.filteredExpenses.take(5)
             itemsIndexed(
-                items = uiState.filteredExpenses,
+                items = recentPreview,
                 key = { _, tx -> "${tx.visibility}_${tx.id}" }
             ) { idx, expense ->
                 Box(
@@ -717,14 +862,46 @@ fun HomeTabScreen(
                         currencySymbol = currency,
                         canTogglePrivacy = uiState.householdFeatureEnabled && uiState.household != null,
                         onTogglePrivacy = { onToggleTransactionPrivacy(expense) },
+                        onToggleExcludeTransaction = { onToggleExcludeTransaction(expense) },
                         onLinkDuplicate = { onLinkDuplicateTransaction(expense) },
                         onDelete = { onDeleteTransaction(expense) },
                         onEditTransaction = { onEditTransaction(expense) },
                         onQuickChangeCategory = { onQuickChangeCategory(expense) },
                         onTagClick = { clickedTag -> onSelectTag(clickedTag) },
-                        shape = groupedCardShape(index = idx, count = uiState.filteredExpenses.size),
+                        shape = groupedCardShape(index = idx, count = recentPreview.size),
                         containerColor = MaterialTheme.colorScheme.surfaceContainerLow
                     )
+                }
+            }
+
+            item {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = dimens.horizontalPadding, vertical = 8.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    FilledTonalButton(
+                        onClick = {
+                            performHaptic()
+                            onOpenAllTransactionsPage()
+                        },
+                        shape = RoundedCornerShape(50),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("view_all_transactions_footer_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.ReceiptLong,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "Open All Transactions (${uiState.filteredExpenses.size})",
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
                 }
             }
         }
@@ -743,10 +920,502 @@ fun HomeTabScreen(
 }
 
 /**
+ * Dedicated All Transactions Page (`AllTransactionsScreen`):
+ * - Houses the full list of receipts/transactions in its own dedicated screen.
+ * - Includes Back navigation, full Search & Filter controls, and an "Excluded" filter chip
+ *   to inspect transactions excluded from expenses.
+ * - Supports long-pressing any transaction's category icon to open the 360° Circular Scroll Wheel category editor.
+ */
+@Composable
+fun AllTransactionsScreen(
+    uiState: OneFamilyDashboardUiState,
+    onBackClick: () -> Unit = {},
+    onScopeSelected: (BudgetScope) -> Unit = {},
+    onSelectDateRangePreset: (DateRangePreset) -> Unit = {},
+    onSelectCustomDateRange: (Long, Long) -> Unit = { _, _ -> },
+    onSearchQueryChange: (String) -> Unit = {},
+    onSelectType: (String) -> Unit = {},
+    onSelectCategory: (String) -> Unit = {},
+    onSelectPaymentMode: (String) -> Unit = {},
+    onSelectTag: (String) -> Unit = {},
+    onSelectSortOrder: (String) -> Unit = {},
+    onClearFilters: () -> Unit = {},
+    onExportCsvClick: () -> Unit = {},
+    onAddTransactionClick: () -> Unit = {},
+    onEditTransaction: (ExpenseTransaction) -> Unit = {},
+    onQuickChangeCategory: (ExpenseTransaction) -> Unit = {},
+    onToggleTransactionPrivacy: (ExpenseTransaction) -> Unit = {},
+    onToggleExcludeTransaction: (ExpenseTransaction) -> Unit = {},
+    onLinkDuplicateTransaction: (ExpenseTransaction) -> Unit = {},
+    onDeleteTransaction: (ExpenseTransaction) -> Unit = {},
+    onUndoLastSwipeAction: () -> Unit = {}
+) {
+    val dimens = LocalAppDimens.current
+    val currency = uiState.activeCurrencySymbol
+    val performHaptic = rememberAppHapticPerformer()
+
+    var filtersExpanded by rememberSaveable { mutableStateOf(false) }
+    var showCustomRangePicker by rememberSaveable { mutableStateOf(false) }
+
+    val hasActiveFilter = uiState.searchQuery.isNotBlank() ||
+        uiState.selectedDateRangePreset != DateRangePreset.MONTH ||
+        uiState.selectedTypeFilter != "All" ||
+        uiState.selectedCategoryFilter != "All" ||
+        uiState.selectedPaymentModeFilter != "All" ||
+        uiState.selectedAccountFilter != "All" ||
+        uiState.selectedTagFilter != "All" ||
+        uiState.selectedMemberFilter != "All" ||
+        uiState.selectedSortOrder != "NEWEST"
+
+    LazyColumn(
+        modifier = Modifier
+            .fillMaxSize()
+            .testTag("all_transactions_screen_list"),
+        contentPadding = PaddingValues(top = 6.dp, bottom = 88.dp),
+        verticalArrangement = Arrangement.spacedBy(0.dp)
+    ) {
+        // 0. Editorial Header with Back Button + Actions
+        item {
+            Column(modifier = Modifier.fillMaxWidth()) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = dimens.horizontalPadding, vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    FilledTonalButton(
+                        onClick = {
+                            performHaptic()
+                            onBackClick()
+                        },
+                        shape = RoundedCornerShape(50),
+                        modifier = Modifier.testTag("all_transactions_back_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = "Back",
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("Back", fontWeight = FontWeight.Bold)
+                    }
+
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        CircularTonalIconButton(
+                            icon = Icons.Default.FilterList,
+                            contentDescription = "Toggle Filters",
+                            onClick = { filtersExpanded = !filtersExpanded },
+                            containerColor = if (filtersExpanded || hasActiveFilter) {
+                                MaterialTheme.colorScheme.primaryContainer
+                            } else {
+                                MaterialTheme.colorScheme.surfaceContainerHigh
+                            },
+                            contentColor = if (filtersExpanded || hasActiveFilter) {
+                                MaterialTheme.colorScheme.onPrimaryContainer
+                            } else {
+                                MaterialTheme.colorScheme.onSurface
+                            },
+                            modifier = Modifier.testTag("all_transactions_toggle_filters_button")
+                        )
+                        CircularTonalIconButton(
+                            icon = Icons.Default.Download,
+                            contentDescription = "Export CSV",
+                            onClick = onExportCsvClick,
+                            modifier = Modifier.testTag("all_transactions_export_csv_button")
+                        )
+                        CircularTonalIconButton(
+                            icon = Icons.Default.Add,
+                            contentDescription = "Add Transaction",
+                            onClick = onAddTransactionClick,
+                            modifier = Modifier.testTag("all_transactions_add_button")
+                        )
+                    }
+                }
+
+                EditorialScreenHeader(
+                    title = "All Transactions",
+                    countPillText = "${uiState.filteredExpenses.size} receipts",
+                    subtitle = uiState.periodLabel,
+                    modifier = Modifier.padding(bottom = 6.dp)
+                )
+            }
+        }
+
+        // 1. Optional Household Scope Switcher
+        if (uiState.householdFeatureEnabled) {
+            item {
+                Box(modifier = Modifier.padding(bottom = 8.dp)) {
+                    ScopeSwitcherBar(
+                        selectedScope = uiState.selectedScope,
+                        hasHousehold = uiState.household != null,
+                        householdName = uiState.household?.name,
+                        onScopeSelected = onScopeSelected
+                    )
+                }
+            }
+        }
+
+        // 2. Always-Visible Type Filter Strip (All, Expenses, Income, Excluded) + Search Bar
+        item {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = dimens.horizontalPadding)
+                    .padding(bottom = 8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                OutlinedTextField(
+                    value = uiState.searchQuery,
+                    onValueChange = onSearchQueryChange,
+                    placeholder = { Text("Search merchant, category, account, or tag...") },
+                    leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
+                    trailingIcon = {
+                        if (uiState.searchQuery.isNotBlank()) {
+                            IconButton(onClick = { onSearchQueryChange("") }) {
+                                Icon(Icons.Default.Clear, contentDescription = "Clear search")
+                            }
+                        }
+                    },
+                    singleLine = true,
+                    shape = RoundedCornerShape(50),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("all_transactions_search_input")
+                )
+
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    listOf(
+                        "All" to "All (${uiState.activeExpenses.size})",
+                        "EXPENSE" to "Expenses",
+                        "INCOME" to "Income",
+                        "EXCLUDED" to if (uiState.excludedTransactionsCount > 0) {
+                            "Excluded (${uiState.excludedTransactionsCount})"
+                        } else {
+                            "Excluded"
+                        }
+                    ).forEach { (typeVal, label) ->
+                        FilterChip(
+                            selected = uiState.selectedTypeFilter.equals(typeVal, ignoreCase = true),
+                            onClick = {
+                                performHaptic()
+                                onSelectType(typeVal)
+                            },
+                            leadingIcon = if (typeVal == "EXCLUDED") {
+                                {
+                                    Icon(
+                                        imageVector = Icons.Default.VisibilityOff,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                }
+                            } else {
+                                null
+                            },
+                            label = { Text(label) },
+                            modifier = Modifier.testTag("all_tx_type_chip_${typeVal.lowercase()}")
+                        )
+                    }
+                }
+
+                // Active Category Filter Pill
+                if (uiState.selectedCategoryFilter != "All") {
+                    val catAccent = categoryAccentColor(uiState.selectedCategoryFilter)
+                    Surface(
+                        shape = RoundedCornerShape(50),
+                        color = catAccent.copy(alpha = 0.16f),
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(50))
+                            .clickable {
+                                performHaptic()
+                                onSelectCategory("All")
+                            }
+                            .testTag("all_tx_active_category_pill")
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 7.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                imageVector = categoryIcon(uiState.selectedCategoryFilter),
+                                contentDescription = null,
+                                tint = catAccent,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = uiState.selectedCategoryFilter,
+                                style = MaterialTheme.typography.labelLarge,
+                                fontWeight = FontWeight.Bold,
+                                color = catAccent
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Icon(
+                                imageVector = Icons.Default.Close,
+                                contentDescription = "Clear Category Filter",
+                                tint = catAccent,
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
+                    }
+                }
+
+                AnimatedVisibility(visible = filtersExpanded) {
+                    Card(
+                        shape = RoundedCornerShape(24.dp),
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.surfaceContainerLow
+                        ),
+                        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(14.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .horizontalScroll(rememberScrollState()),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                DateRangePreset.entries.forEach { preset ->
+                                    FilterChip(
+                                        selected = uiState.selectedDateRangePreset == preset,
+                                        onClick = {
+                                            performHaptic()
+                                            if (preset == DateRangePreset.CUSTOM) {
+                                                showCustomRangePicker = true
+                                            } else {
+                                                onSelectDateRangePreset(preset)
+                                            }
+                                        },
+                                        label = {
+                                            Text(
+                                                if (preset == DateRangePreset.CUSTOM &&
+                                                    uiState.selectedDateRangePreset == DateRangePreset.CUSTOM
+                                                ) {
+                                                    uiState.periodLabel
+                                                } else {
+                                                    preset.label
+                                                }
+                                            )
+                                        },
+                                        modifier = Modifier.testTag("all_tx_date_chip_${preset.name.lowercase()}")
+                                    )
+                                }
+                            }
+
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .horizontalScroll(rememberScrollState()),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                (listOf("All") + uiState.availableCategories).forEach { cat ->
+                                    FilterChip(
+                                        selected = uiState.selectedCategoryFilter.equals(cat, ignoreCase = true),
+                                        onClick = {
+                                            performHaptic()
+                                            onSelectCategory(cat)
+                                        },
+                                        label = { Text(cat) }
+                                    )
+                                }
+                            }
+
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .horizontalScroll(rememberScrollState()),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                listOf("All", "UPI", "BANK", "CARD", "WALLET", "CASH").forEach { mode ->
+                                    FilterChip(
+                                        selected = uiState.selectedPaymentModeFilter.equals(mode, ignoreCase = true),
+                                        onClick = {
+                                            performHaptic()
+                                            onSelectPaymentMode(mode)
+                                        },
+                                        label = { Text(if (mode == "All") "All Modes" else mode) }
+                                    )
+                                }
+                                listOf(
+                                    "NEWEST" to "Newest",
+                                    "OLDEST" to "Oldest",
+                                    "HIGHEST" to "Highest $currency",
+                                    "LOWEST" to "Lowest $currency"
+                                ).forEach { (sortKey, sortLabel) ->
+                                    FilterChip(
+                                        selected = uiState.selectedSortOrder == sortKey,
+                                        onClick = {
+                                            performHaptic()
+                                            onSelectSortOrder(sortKey)
+                                        },
+                                        label = { Text(sortLabel) }
+                                    )
+                                }
+                            }
+
+                            if (hasActiveFilter) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.End
+                                ) {
+                                    TextButton(
+                                        onClick = {
+                                            performHaptic()
+                                            onClearFilters()
+                                        },
+                                        modifier = Modifier.testTag("all_tx_clear_filters_button")
+                                    ) {
+                                        Text("Reset")
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // 3. Undo Bar if applicable
+        if (uiState.canUndoLastAction) {
+            item {
+                Surface(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = dimens.horizontalPadding)
+                        .padding(bottom = 8.dp)
+                        .testTag("all_tx_undo_swipe_bar"),
+                    shape = RoundedCornerShape(18.dp),
+                    color = MaterialTheme.colorScheme.secondaryContainer
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 14.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text(
+                            text = uiState.statusBannerMessage ?: "Action applied.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSecondaryContainer,
+                            modifier = Modifier.weight(1f)
+                        )
+                        TextButton(onClick = onUndoLastSwipeAction) {
+                            Text("Undo", fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
+            }
+        }
+
+        // 4. Full Filtered Transactions Stack
+        item {
+            PerforatedSectionHeader(
+                title = if (uiState.selectedTypeFilter.equals("EXCLUDED", ignoreCase = true)) {
+                    "Excluded Transactions"
+                } else {
+                    "Receipts Ledger"
+                },
+                countBadge = "${uiState.filteredExpenses.size}",
+                modifier = Modifier.padding(bottom = 4.dp)
+            )
+        }
+
+        if (uiState.filteredExpenses.isEmpty()) {
+            item {
+                Surface(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = dimens.horizontalPadding, vertical = 6.dp),
+                    shape = RoundedCornerShape(24.dp),
+                    color = MaterialTheme.colorScheme.surfaceContainerLow
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(20.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Text(
+                            text = if (uiState.selectedTypeFilter.equals("EXCLUDED", ignoreCase = true)) {
+                                "No excluded transactions in ${uiState.periodLabel}"
+                            } else {
+                                "No matching transactions in ${uiState.periodLabel}"
+                            },
+                            style = MaterialTheme.typography.titleSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        if (hasActiveFilter) {
+                            FilledTonalButton(
+                                onClick = onClearFilters,
+                                shape = RoundedCornerShape(50)
+                            ) {
+                                Text("Reset Filters")
+                            }
+                        }
+                    }
+                }
+            }
+        } else {
+            itemsIndexed(
+                items = uiState.filteredExpenses,
+                key = { _, tx -> "all_page_${tx.visibility}_${tx.id}" }
+            ) { idx, expense ->
+                Box(
+                    modifier = Modifier.padding(
+                        horizontal = dimens.horizontalPadding,
+                        vertical = 1.5.dp
+                    )
+                ) {
+                    ExpenseTransactionItemCard(
+                        expense = expense,
+                        currencySymbol = currency,
+                        canTogglePrivacy = uiState.householdFeatureEnabled && uiState.household != null,
+                        onTogglePrivacy = { onToggleTransactionPrivacy(expense) },
+                        onToggleExcludeTransaction = { onToggleExcludeTransaction(expense) },
+                        onLinkDuplicate = { onLinkDuplicateTransaction(expense) },
+                        onDelete = { onDeleteTransaction(expense) },
+                        onEditTransaction = { onEditTransaction(expense) },
+                        onQuickChangeCategory = { onQuickChangeCategory(expense) },
+                        onTagClick = { clickedTag -> onSelectTag(clickedTag) },
+                        shape = groupedCardShape(index = idx, count = uiState.filteredExpenses.size),
+                        containerColor = MaterialTheme.colorScheme.surfaceContainerLow
+                    )
+                }
+            }
+        }
+    }
+
+    if (showCustomRangePicker) {
+        CustomDateRangePickerModal(
+            initialStartMillis = uiState.customStartDateMillis,
+            initialEndMillis = uiState.customEndDateMillis,
+            onDismiss = { showCustomRangePicker = false },
+            onApplyRange = { start, end ->
+                onSelectCustomDateRange(start, end)
+            }
+        )
+    }
+}
+
+/**
  * Analysis Tab (`AnalyticsTabScreen`):
  * - Editorial M3 Header + Serrated Receipt Ticket Card with Bezier-Node 12-Month Trend & Donut Chart.
- * - Selected Month Transactions Stack + Connected 24dp/6dp Category Breakdown Accordion Stack.
+ * - Clicking any category (either in the Donut Chart or in Category Breakdown) filters the Analysis page
+ *   so ONLY that category's transactions are shown.
+ * - Long-pressing any transaction's category icon opens the 360° Circular Scroll Wheel category editor.
  */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun AnalyticsTabScreen(
     uiState: OneFamilyDashboardUiState,
@@ -754,10 +1423,11 @@ fun AnalyticsTabScreen(
     onSelectPeriod: (YearMonthPeriod?) -> Unit,
     onSelectCategory: (String) -> Unit = {},
     onEditTransaction: (ExpenseTransaction) -> Unit = {},
-    @Suppress("UNUSED_PARAMETER") onQuickChangeCategory: (ExpenseTransaction) -> Unit = {},
+    onQuickChangeCategory: (ExpenseTransaction) -> Unit = {},
     @Suppress("UNUSED_PARAMETER") onToggleTransactionPrivacy: (ExpenseTransaction) -> Unit = {},
     onLinkDuplicateTransaction: (ExpenseTransaction) -> Unit = {},
-    @Suppress("UNUSED_PARAMETER") onDeleteTransaction: (ExpenseTransaction) -> Unit = {}
+    @Suppress("UNUSED_PARAMETER") onDeleteTransaction: (ExpenseTransaction) -> Unit = {},
+    onOpenAllTransactionsPage: () -> Unit = {}
 ) {
     val dimens = LocalAppDimens.current
     val currency = uiState.activeCurrencySymbol
@@ -775,9 +1445,7 @@ fun AnalyticsTabScreen(
     var moreBreakdownsExpanded by rememberSaveable { mutableStateOf(false) }
 
     LaunchedEffect(uiState.selectedCategoryFilter) {
-        if (uiState.selectedCategoryFilter != "All") {
-            selectedAnalysisCategory = uiState.selectedCategoryFilter
-        }
+        selectedAnalysisCategory = uiState.selectedCategoryFilter.takeIf { it != "All" }
     }
 
     val toggleCategorySelection: (String) -> Unit = { clickedCategory ->
@@ -792,6 +1460,28 @@ fun AnalyticsTabScreen(
     }
 
     val allPeriodTransactions = uiState.activeExpenses
+    val filteredAnalysisTransactions = remember(allPeriodTransactions, selectedAnalysisCategory) {
+        val base = if (selectedAnalysisCategory == null) {
+            allPeriodTransactions
+        } else {
+            allPeriodTransactions.filter { tx ->
+                tx.category.equals(selectedAnalysisCategory, ignoreCase = true) ||
+                    ExpenseCategories.normalizeCategory(tx.category).equals(selectedAnalysisCategory, ignoreCase = true)
+            }
+        }
+        base.sortedByDescending { it.transactionDateMillis }
+    }
+
+    val displayedCategoryItems = remember(activeCategoryItems, selectedAnalysisCategory) {
+        if (selectedAnalysisCategory == null) {
+            activeCategoryItems
+        } else {
+            activeCategoryItems.filter { item ->
+                item.category.equals(selectedAnalysisCategory, ignoreCase = true) ||
+                    ExpenseCategories.normalizeCategory(item.category).equals(selectedAnalysisCategory, ignoreCase = true)
+            }
+        }
+    }
 
     LazyColumn(
         modifier = Modifier
@@ -804,10 +1494,90 @@ fun AnalyticsTabScreen(
         item {
             EditorialScreenHeader(
                 title = "Analysis",
-                countPillText = "${allPeriodTransactions.size} items",
+                countPillText = "${filteredAnalysisTransactions.size} items",
                 subtitle = uiState.periodLabel,
-                modifier = Modifier.padding(bottom = 10.dp)
+                modifier = Modifier.padding(bottom = 10.dp),
+                actions = {
+                    CircularTonalIconButton(
+                        icon = Icons.AutoMirrored.Filled.ReceiptLong,
+                        contentDescription = "All Transactions",
+                        onClick = {
+                            performHaptic()
+                            onOpenAllTransactionsPage()
+                        },
+                        modifier = Modifier.testTag("analytics_open_all_transactions_button")
+                    )
+                }
             )
+        }
+
+        // 0B. Active Category Filter Banner (when a category is clicked on Analysis page)
+        if (selectedAnalysisCategory != null) {
+            item {
+                val activeCat = selectedAnalysisCategory!!
+                val catColor = categoryAccentColor(activeCat)
+                Surface(
+                    shape = RoundedCornerShape(20.dp),
+                    color = catColor.copy(alpha = 0.16f),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = dimens.horizontalPadding)
+                        .padding(bottom = 10.dp)
+                        .testTag("analytics_active_category_filter_banner")
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 14.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            SquircleIconBadge(
+                                icon = categoryIcon(activeCat),
+                                tint = catColor,
+                                containerColor = catColor.copy(alpha = 0.22f),
+                                size = 34.dp,
+                                iconSize = 18.dp
+                            )
+                            Spacer(modifier = Modifier.width(10.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "Showing only $activeCat",
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                                Text(
+                                    text = "${filteredAnalysisTransactions.size} transactions in ${uiState.periodLabel}",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                        FilledTonalButton(
+                            onClick = {
+                                performHaptic()
+                                selectedAnalysisCategory = null
+                                onSelectCategory("All")
+                            },
+                            shape = RoundedCornerShape(50),
+                            modifier = Modifier.testTag("analytics_clear_category_filter_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Close,
+                                contentDescription = "Clear Category Filter",
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Show All")
+                        }
+                    }
+                }
+            }
         }
 
         // 1. Serrated Receipt Ticket Card: Scrollable 12-Month Bezier Graph + Category Donut
@@ -882,11 +1652,8 @@ fun AnalyticsTabScreen(
             }
         }
 
-        // 1B. Selected Month Transactions Card (updates when user taps a month in the graph)
+        // 1B. Selected Month / Selected Category Transactions Card
         item {
-            val sortedMonthTransactions = remember(allPeriodTransactions) {
-                allPeriodTransactions.sortedByDescending { it.transactionDateMillis }
-            }
             Box(
                 modifier = Modifier
                     .padding(horizontal = dimens.horizontalPadding)
@@ -912,7 +1679,11 @@ fun AnalyticsTabScreen(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text(
-                                text = "Transactions • ${uiState.periodLabel}",
+                                text = if (selectedAnalysisCategory != null) {
+                                    "$selectedAnalysisCategory • ${uiState.periodLabel}"
+                                } else {
+                                    "Transactions • ${uiState.periodLabel}"
+                                },
                                 style = MaterialTheme.typography.titleMedium,
                                 fontWeight = FontWeight.Bold,
                                 modifier = Modifier.testTag("analytics_selected_month_transactions_header")
@@ -922,7 +1693,7 @@ fun AnalyticsTabScreen(
                                 color = MaterialTheme.colorScheme.surfaceContainerHighest
                             ) {
                                 Text(
-                                    text = "${sortedMonthTransactions.size} items",
+                                    text = "${filteredAnalysisTransactions.size} items",
                                     style = MaterialTheme.typography.labelSmall.copy(fontFamily = ReceiptMonoFontFamily),
                                     fontWeight = FontWeight.Bold,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -931,14 +1702,22 @@ fun AnalyticsTabScreen(
                             }
                         }
 
-                        if (sortedMonthTransactions.isEmpty()) {
+                        if (filteredAnalysisTransactions.isEmpty()) {
                             Text(
-                                text = "No transactions recorded in ${uiState.periodLabel}.",
+                                text = if (selectedAnalysisCategory != null) {
+                                    "No $selectedAnalysisCategory transactions recorded in ${uiState.periodLabel}."
+                                } else {
+                                    "No transactions recorded in ${uiState.periodLabel}."
+                                },
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         } else {
-                            val visibleSlice = sortedMonthTransactions.take(15)
+                            val visibleSlice = if (selectedAnalysisCategory != null) {
+                                filteredAnalysisTransactions
+                            } else {
+                                filteredAnalysisTransactions.take(15)
+                            }
                             Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
                                 visibleSlice.forEachIndexed { idx, tx ->
                                     val isInc = tx.type.equals("INCOME", ignoreCase = true) ||
@@ -974,23 +1753,51 @@ fun AnalyticsTabScreen(
                                                 verticalAlignment = Alignment.CenterVertically,
                                                 modifier = Modifier.weight(1f)
                                             ) {
-                                                SquircleIconBadge(
-                                                    icon = categoryIcon(tx.category),
-                                                    tint = catColor,
-                                                    containerColor = catColor.copy(alpha = 0.16f),
-                                                    size = 38.dp,
-                                                    iconSize = 18.dp,
-                                                    contentDescription = tx.category
-                                                )
+                                                Box(
+                                                    modifier = Modifier
+                                                        .clip(RoundedCornerShape(14.dp))
+                                                        .combinedClickable(
+                                                            onClick = {
+                                                                performHaptic()
+                                                                onEditTransaction(tx)
+                                                            },
+                                                            onLongClick = {
+                                                                performHaptic()
+                                                                onQuickChangeCategory(tx)
+                                                            }
+                                                        )
+                                                        .testTag("analytics_month_tx_category_icon_${tx.id}")
+                                                ) {
+                                                    SquircleIconBadge(
+                                                        icon = categoryIcon(tx.category),
+                                                        tint = catColor,
+                                                        containerColor = catColor.copy(alpha = 0.16f),
+                                                        size = 38.dp,
+                                                        iconSize = 18.dp,
+                                                        contentDescription = tx.category
+                                                    )
+                                                }
                                                 Spacer(modifier = Modifier.width(10.dp))
                                                 Column(modifier = Modifier.weight(1f)) {
-                                                    Text(
-                                                        text = tx.title,
-                                                        style = MaterialTheme.typography.titleSmall,
-                                                        fontWeight = FontWeight.SemiBold,
-                                                        maxLines = 1,
-                                                        overflow = TextOverflow.Ellipsis
-                                                    )
+                                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                                        Text(
+                                                            text = tx.title,
+                                                            style = MaterialTheme.typography.titleSmall,
+                                                            fontWeight = FontWeight.SemiBold,
+                                                            maxLines = 1,
+                                                            overflow = TextOverflow.Ellipsis,
+                                                            modifier = Modifier.weight(1f, fill = false)
+                                                        )
+                                                        if (tx.isExcludedFromExpense) {
+                                                            Spacer(modifier = Modifier.width(6.dp))
+                                                            Text(
+                                                                text = "Excluded",
+                                                                style = MaterialTheme.typography.labelSmall,
+                                                                color = MaterialTheme.colorScheme.error,
+                                                                fontWeight = FontWeight.Bold
+                                                            )
+                                                        }
+                                                    }
                                                     Text(
                                                         text = "${tx.category} • ${formatShortDate(tx.transactionDateMillis)}",
                                                         style = MaterialTheme.typography.labelSmall,
@@ -1017,18 +1824,22 @@ fun AnalyticsTabScreen(
             }
         }
 
-        // 2. Connected Category Breakdown Accordion Stack
-        if (activeCategoryItems.isNotEmpty()) {
+        // 2. Connected Category Breakdown Accordion Stack (filtered to selected category when clicked)
+        if (displayedCategoryItems.isNotEmpty()) {
             item {
                 PerforatedSectionHeader(
-                    title = "Category Breakdown",
-                    countBadge = "${activeCategoryItems.size}",
+                    title = if (selectedAnalysisCategory != null) {
+                        "Category Breakdown • $selectedAnalysisCategory"
+                    } else {
+                        "Category Breakdown"
+                    },
+                    countBadge = "${displayedCategoryItems.size}",
                     modifier = Modifier.padding(bottom = 4.dp)
                 )
             }
 
             itemsIndexed(
-                items = activeCategoryItems,
+                items = displayedCategoryItems,
                 key = { _, item -> "analysis_cat_${item.category}" }
             ) { idx, catItem ->
                 val isExpanded = selectedAnalysisCategory != null &&
@@ -1036,10 +1847,14 @@ fun AnalyticsTabScreen(
                 val catColor = categoryAccentColor(catItem.category)
                 val categoryTransactions = remember(allPeriodTransactions, catItem.category) {
                     allPeriodTransactions
-                        .filter { it.category.equals(catItem.category, ignoreCase = true) }
+                        .filter {
+                            it.category.equals(catItem.category, ignoreCase = true) ||
+                                ExpenseCategories.normalizeCategory(it.category).equals(catItem.category, ignoreCase = true)
+                        }
                         .sortedByDescending { it.transactionDateMillis }
                 }
-                val stackShape = groupedCardShape(index = idx, count = activeCategoryItems.size)
+                val stackShape = groupedCardShape(index = idx, count = displayedCategoryItems.size)
+                val safeCatTag = catItem.category.lowercase().replace(" ", "_")
 
                 Box(
                     modifier = Modifier.padding(
@@ -1054,7 +1869,7 @@ fun AnalyticsTabScreen(
                             .animateContentSize(
                                 spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessMediumLow)
                             )
-                            .testTag("analysis_category_card_${catItem.category.lowercase().replace(" ", "_")}"),
+                            .testTag("analysis_category_card_$safeCatTag"),
                         shape = stackShape,
                         colors = CardDefaults.cardColors(
                             containerColor = if (isExpanded) {
@@ -1070,7 +1885,8 @@ fun AnalyticsTabScreen(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .clickable { toggleCategorySelection(catItem.category) }
-                                    .padding(horizontal = 16.dp, vertical = 14.dp),
+                                    .padding(horizontal = 16.dp, vertical = 14.dp)
+                                    .testTag("category_breakdown_row_$safeCatTag"),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 SquircleIconBadge(
@@ -1133,6 +1949,31 @@ fun AnalyticsTabScreen(
                                                 verticalAlignment = Alignment.CenterVertically,
                                                 horizontalArrangement = Arrangement.SpaceBetween
                                             ) {
+                                                Box(
+                                                    modifier = Modifier
+                                                        .clip(RoundedCornerShape(12.dp))
+                                                        .combinedClickable(
+                                                            onClick = {
+                                                                performHaptic()
+                                                                onEditTransaction(tx)
+                                                            },
+                                                            onLongClick = {
+                                                                performHaptic()
+                                                                onQuickChangeCategory(tx)
+                                                            }
+                                                        )
+                                                        .testTag("analysis_tx_category_icon_${tx.id}")
+                                                ) {
+                                                    SquircleIconBadge(
+                                                        icon = categoryIcon(tx.category),
+                                                        tint = catColor,
+                                                        containerColor = catColor.copy(alpha = 0.14f),
+                                                        size = 34.dp,
+                                                        iconSize = 16.dp,
+                                                        contentDescription = tx.category
+                                                    )
+                                                }
+                                                Spacer(modifier = Modifier.width(10.dp))
                                                 Column(modifier = Modifier.weight(1f)) {
                                                     Text(
                                                         text = tx.title,
@@ -1199,6 +2040,7 @@ fun AnalyticsTabScreen(
                 }
             }
         }
+
 
         // 3. Expandable Top Places (& Member Split when Household Mode is enabled)
         val showMemberSplit = uiState.householdFeatureEnabled && uiState.memberSpendMap.isNotEmpty()
@@ -1329,13 +2171,18 @@ fun BudgetsTabScreen(
     onEditOverallBudgetClick: () -> Unit,
     onSaveCategoryBudgetInline: (category: String, monthlyLimit: Double) -> Unit = { _, _ -> },
     onAddCustomCategoryClick: () -> Unit = {},
-    @Suppress("UNUSED_PARAMETER") onAddOrEditCategoryBudgetClick: (CategorySpendProgress?) -> Unit = {}
+    @Suppress("UNUSED_PARAMETER") onAddOrEditCategoryBudgetClick: (CategorySpendProgress?) -> Unit = {},
+    onScopeSelected: (BudgetScope) -> Unit = {},
+    onSelectDateRangePreset: (DateRangePreset) -> Unit = {},
+    onSelectCustomDateRange: (Long, Long) -> Unit = { _, _ -> }
 ) {
     val dimens = LocalAppDimens.current
     val currency = uiState.activeCurrencySymbol
     val performHaptic = rememberAppHapticPerformer()
     var activeInlineCategory by rememberSaveable { mutableStateOf<String?>(null) }
     var inlineBudgetInput by rememberSaveable { mutableStateOf("") }
+    var filtersExpanded by rememberSaveable { mutableStateOf(false) }
+    var showBudgetCustomRangePicker by rememberSaveable { mutableStateOf(false) }
 
     val activateInlineEditor: (CategorySpendProgress) -> Unit = { item ->
         performHaptic()
@@ -1354,6 +2201,7 @@ fun BudgetsTabScreen(
     val activeBudgetCount = remember(uiState.categoryProgressList) {
         uiState.categoryProgressList.count { it.limit > 0.0 }
     }
+    val hasActiveFilter = uiState.selectedDateRangePreset != DateRangePreset.MONTH
 
     LazyColumn(
         modifier = Modifier
@@ -1371,6 +2219,22 @@ fun BudgetsTabScreen(
                 modifier = Modifier.padding(bottom = 10.dp),
                 actions = {
                     CircularTonalIconButton(
+                        icon = Icons.Default.FilterList,
+                        contentDescription = "Budget Filters",
+                        onClick = { filtersExpanded = !filtersExpanded },
+                        containerColor = if (filtersExpanded || hasActiveFilter) {
+                            MaterialTheme.colorScheme.primaryContainer
+                        } else {
+                            MaterialTheme.colorScheme.surfaceContainerHigh
+                        },
+                        contentColor = if (filtersExpanded || hasActiveFilter) {
+                            MaterialTheme.colorScheme.onPrimaryContainer
+                        } else {
+                            MaterialTheme.colorScheme.onSurface
+                        },
+                        modifier = Modifier.testTag("budgets_toggle_filters_button")
+                    )
+                    CircularTonalIconButton(
                         icon = Icons.Default.Edit,
                         contentDescription = "Edit Monthly Budget",
                         onClick = onEditOverallBudgetClick,
@@ -1378,6 +2242,76 @@ fun BudgetsTabScreen(
                     )
                 }
             )
+        }
+
+        // 0B. Scope & DateRange Filters (matching AccountsTabScreen & HomeTabScreen)
+        if (uiState.householdFeatureEnabled) {
+            item {
+                Box(modifier = Modifier.padding(bottom = 8.dp)) {
+                    ScopeSwitcherBar(
+                        selectedScope = uiState.selectedScope,
+                        hasHousehold = uiState.household != null,
+                        householdName = uiState.household?.name,
+                        onScopeSelected = onScopeSelected
+                    )
+                }
+            }
+        }
+
+        if (filtersExpanded || hasActiveFilter) {
+            item {
+                AnimatedVisibility(visible = filtersExpanded || hasActiveFilter) {
+                    Card(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = dimens.horizontalPadding)
+                            .padding(bottom = 10.dp),
+                        shape = RoundedCornerShape(22.dp),
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.surfaceContainerLow
+                        ),
+                        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(12.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .horizontalScroll(rememberScrollState()),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                DateRangePreset.entries.forEach { preset ->
+                                    FilterChip(
+                                        selected = uiState.selectedDateRangePreset == preset,
+                                        onClick = {
+                                            performHaptic()
+                                            if (preset == DateRangePreset.CUSTOM) {
+                                                showBudgetCustomRangePicker = true
+                                            } else {
+                                                onSelectDateRangePreset(preset)
+                                            }
+                                        },
+                                        label = {
+                                            Text(
+                                                if (preset == DateRangePreset.CUSTOM &&
+                                                    uiState.selectedDateRangePreset == DateRangePreset.CUSTOM
+                                                ) {
+                                                    uiState.periodLabel
+                                                } else {
+                                                    preset.label
+                                                }
+                                            )
+                                        },
+                                        modifier = Modifier.testTag("budgets_date_range_chip_${preset.name.lowercase()}")
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
 
         // 1. Serrated Receipt Ticket Summary for Monthly Budgets (No duplicate trend graph)
@@ -1752,6 +2686,17 @@ fun BudgetsTabScreen(
                 }
             }
         }
+    }
+
+    if (showBudgetCustomRangePicker) {
+        CustomDateRangePickerModal(
+            initialStartMillis = uiState.customStartDateMillis,
+            initialEndMillis = uiState.customEndDateMillis,
+            onDismiss = { showBudgetCustomRangePicker = false },
+            onApplyRange = { start, end ->
+                onSelectCustomDateRange(start, end)
+            }
+        )
     }
 }
 

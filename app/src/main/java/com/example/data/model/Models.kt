@@ -3,6 +3,7 @@ package com.example.data.model
 import com.google.firebase.Timestamp
 import com.google.firebase.firestore.DocumentId
 import com.google.firebase.firestore.IgnoreExtraProperties
+import com.google.firebase.firestore.PropertyName
 import com.google.firebase.firestore.ServerTimestamp
 
 @IgnoreExtraProperties
@@ -37,6 +38,8 @@ data class ExpenseTransaction(
     val smsSignature: String = "",
     val linkedSmsSignatures: List<String> = emptyList(),
     val referenceNumber: String = "",
+    @get:PropertyName("isExcludedFromExpense")
+    val isExcludedFromExpense: Boolean = false,
     val transactionDateMillis: Long = System.currentTimeMillis(),
     val memberUids: List<String> = emptyList(),
     @ServerTimestamp val createdAt: Timestamp? = null,
@@ -62,14 +65,40 @@ data class FinancialAccount(
     val userId: String = "",
     val name: String = "",
     val bankName: String = "",
-    val accountType: String = "BANK", // BANK | CREDIT_CARD | WALLET | CASH | UPI
+    val accountType: String = "BANK", // BANK | DEBIT_CARD | CREDIT_CARD | WALLET | CASH | UPI
     val lastFourDigits: String = "",
     val balance: Double = 0.0,
     val creditLimit: Double = 0.0,
+    val linkedBankAccountId: String = "",
+    val linkedBankAccountName: String = "",
+    val monthlySpendLimit: Double = 0.0,
+    val alertThresholdPercent: Long = 80L,
     val isSharedVisible: Boolean = true,
     @ServerTimestamp val createdAt: Timestamp? = null,
     @ServerTimestamp val updatedAt: Timestamp? = null
 )
+
+enum class AccountSectionType(val title: String) {
+    WALLET("Wallets & Cash"),
+    BANK("Bank Accounts"),
+    DEBIT_CARD("Debit Cards (Linked to Bank)"),
+    CREDIT_CARD("Credit Cards");
+
+    companion object {
+        fun fromAccount(account: FinancialAccount): AccountSectionType {
+            val normalizedType = account.accountType.trim().uppercase()
+            return when {
+                normalizedType == "DEBIT_CARD" -> DEBIT_CARD
+                normalizedType == "CREDIT_CARD" -> CREDIT_CARD
+                normalizedType == "WALLET" || normalizedType == "CASH" -> WALLET
+                normalizedType == "BANK" || normalizedType == "UPI" -> BANK
+                account.creditLimit > 0.0 -> CREDIT_CARD
+                account.linkedBankAccountId.isNotBlank() || account.linkedBankAccountName.isNotBlank() -> DEBIT_CARD
+                else -> BANK
+            }
+        }
+    }
+}
 
 @IgnoreExtraProperties
 data class Household(

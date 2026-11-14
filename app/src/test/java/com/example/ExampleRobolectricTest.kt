@@ -2,6 +2,7 @@ package com.example
 
 import android.content.Context
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableDoubleStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.test.assertIsDisplayed
@@ -29,6 +30,7 @@ import com.example.data.model.ExpenseTransaction
 import com.example.data.model.ExpertFeatureFlagsSettings
 import com.example.data.model.FamilyCurrencyOption
 import com.example.data.model.FcmPushSettings
+import com.example.data.model.FinancialAccount
 import com.example.data.model.Household
 import com.example.data.model.UserProfile
 import com.example.data.model.WallpaperColorAccent
@@ -43,11 +45,15 @@ import com.example.ui.components.MonthlyBarGraph
 import com.example.ui.components.categoryIcon
 import com.example.ui.components.formatCompactCurrency
 import com.example.ui.components.formatCurrency
+import androidx.compose.ui.test.longClick
 import androidx.compose.ui.test.performTextReplacement
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.swipeRight
+import com.example.ui.screens.AccountsTabScreen
+import com.example.ui.screens.AddAccountDialog
 import com.example.ui.screens.AddCustomCategoryDialog
 import com.example.ui.screens.AddTransactionDialog
+import com.example.ui.screens.AllTransactionsScreen
 import com.example.ui.screens.AnalyticsTabScreen
 import com.example.ui.screens.BudgetsTabScreen
 import com.example.ui.screens.ExportTransactionsCsvDialog
@@ -55,6 +61,7 @@ import com.example.ui.screens.FirstTimeSmsSyncScreen
 import com.example.ui.screens.HomeTabScreen
 import com.example.ui.screens.HouseholdTabScreen
 import com.example.ui.screens.LinkDuplicateTransactionDialog
+import com.example.ui.screens.QuickCategoryPickerDialog
 import com.example.ui.screens.mergeSelectedDatePreservingTime
 import com.example.ui.viewmodel.CategorySpendProgress
 import com.ritesh.parser.core.bank.BankParserFactory
@@ -2431,7 +2438,557 @@ class ExampleRobolectricTest {
 
         LocalAccountSessionManager.signOut(context)
     }
+
+    @Test
+    fun `test AccountsTabScreen renders 4 sections, per-account transactions, Budget-parity filters, inline spend limits, and linked Debit Card dialog`() {
+        val now = System.currentTimeMillis()
+        val bankAcc = FinancialAccount(
+            id = "acc_hdfc_bank",
+            userId = "u1",
+            name = "HDFC Salary A/c",
+            bankName = "HDFC Bank",
+            accountType = "BANK",
+            lastFourDigits = "4321",
+            balance = 84000.0
+        )
+        val walletAcc = FinancialAccount(
+            id = "acc_paytm_wallet",
+            userId = "u1",
+            name = "Paytm Wallet",
+            bankName = "Paytm",
+            accountType = "WALLET",
+            balance = 2400.0
+        )
+        val debitCardAcc = FinancialAccount(
+            id = "acc_hdfc_debit",
+            userId = "u1",
+            name = "HDFC Millennia Debit Card",
+            bankName = "HDFC Bank",
+            accountType = "DEBIT_CARD",
+            lastFourDigits = "5512",
+            balance = 84000.0,
+            linkedBankAccountId = "acc_hdfc_bank",
+            linkedBankAccountName = "HDFC Salary A/c"
+        )
+        val creditCardAcc = FinancialAccount(
+            id = "acc_axis_credit",
+            userId = "u1",
+            name = "Axis Neo Credit Card",
+            bankName = "Axis Bank",
+            accountType = "CREDIT_CARD",
+            lastFourDigits = "7788",
+            balance = 12000.0,
+            creditLimit = 150000.0
+        )
+
+        val walletTx = ExpenseTransaction(
+            id = "tx_wallet_1",
+            userId = "u1",
+            userName = "Alex",
+            title = "Metro Card Recharge",
+            amount = 500.0,
+            type = "EXPENSE",
+            category = "Fuel & Travel",
+            accountName = "Paytm Wallet",
+            paymentMode = "WALLET",
+            transactionDateMillis = now
+        )
+        val bankTx = ExpenseTransaction(
+            id = "tx_bank_1",
+            userId = "u1",
+            userName = "Alex",
+            title = "Apartment Rent Transfer",
+            amount = 24000.0,
+            type = "EXPENSE",
+            category = "Rent & Housing",
+            accountName = "HDFC Salary A/c",
+            paymentMode = "BANK",
+            transactionDateMillis = now - 3_600_000L
+        )
+        val debitTx = ExpenseTransaction(
+            id = "tx_debit_1",
+            userId = "u1",
+            userName = "Alex",
+            title = "Supermarket Swipe",
+            amount = 3200.0,
+            type = "EXPENSE",
+            category = "Groceries",
+            accountName = "HDFC Millennia Debit Card",
+            paymentMode = "CARD",
+            transactionDateMillis = now - 7_200_000L
+        )
+        val creditTx = ExpenseTransaction(
+            id = "tx_credit_1",
+            userId = "u1",
+            userName = "Alex",
+            title = "Airline Ticket Booking",
+            amount = 6500.0,
+            type = "EXPENSE",
+            category = "Fuel & Travel",
+            accountName = "Axis Neo Credit Card",
+            paymentMode = "CARD",
+            transactionDateMillis = now - 10_800_000L
+        )
+
+        var selectedPreset by mutableStateOf(DateRangePreset.MONTH)
+        var walletLimit by mutableDoubleStateOf(0.0)
+        var savedNewDebitCard: Triple<String, String, Double>? = null
+        var showAddDialog by mutableStateOf(false)
+
+        composeTestRule.setContent {
+            val summaries = listOf(
+                com.example.ui.viewmodel.AccountSpendSummary(
+                    account = walletAcc.copy(monthlySpendLimit = walletLimit),
+                    section = com.example.data.model.AccountSectionType.WALLET,
+                    linkedBankDisplayName = "",
+                    spent = walletTx.amount,
+                    income = 0.0,
+                    limit = walletLimit,
+                    alertThresholdPercent = 80,
+                    transactions = listOf(walletTx)
+                ),
+                com.example.ui.viewmodel.AccountSpendSummary(
+                    account = bankAcc,
+                    section = com.example.data.model.AccountSectionType.BANK,
+                    linkedBankDisplayName = "",
+                    spent = bankTx.amount,
+                    income = 0.0,
+                    limit = 0.0,
+                    alertThresholdPercent = 80,
+                    transactions = listOf(bankTx)
+                ),
+                com.example.ui.viewmodel.AccountSpendSummary(
+                    account = debitCardAcc,
+                    section = com.example.data.model.AccountSectionType.DEBIT_CARD,
+                    linkedBankDisplayName = "HDFC Salary A/c ••4321",
+                    spent = debitTx.amount,
+                    income = 0.0,
+                    limit = 0.0,
+                    alertThresholdPercent = 80,
+                    transactions = listOf(debitTx)
+                ),
+                com.example.ui.viewmodel.AccountSpendSummary(
+                    account = creditCardAcc,
+                    section = com.example.data.model.AccountSectionType.CREDIT_CARD,
+                    linkedBankDisplayName = "",
+                    spent = creditTx.amount,
+                    income = 0.0,
+                    limit = 0.0,
+                    alertThresholdPercent = 80,
+                    transactions = listOf(creditTx)
+                )
+            )
+            val uiState = OneFamilyDashboardUiState(
+                isLoading = false,
+                selectedDateRangePreset = selectedPreset,
+                periodLabel = selectedPreset.label,
+                householdFeatureEnabled = true,
+                household = Household(id = "hh1", name = "Family Home", memberUids = listOf("u1")),
+                accounts = listOf(walletAcc, bankAcc, debitCardAcc, creditCardAcc),
+                accountSummaries = summaries
+            )
+            OneFamilyTheme {
+                AccountsTabScreen(
+                    uiState = uiState,
+                    onSelectDateRangePreset = { selectedPreset = it },
+                    onSaveAccountSpendLimitInline = { acc, limit ->
+                        if (acc.id == walletAcc.id) walletLimit = limit
+                    },
+                    onAddAccountClick = { showAddDialog = true }
+                )
+                if (showAddDialog) {
+                    AddAccountDialog(
+                        currencySymbol = "₹",
+                        accounts = listOf(walletAcc, bankAcc),
+                        initialAccountType = "DEBIT_CARD",
+                        onDismiss = { showAddDialog = false },
+                        onSave = { name, _, type, _, _, _, linkedId, _, spendLimit ->
+                            savedNewDebitCard = Triple("$name|$type", linkedId, spendLimit)
+                            showAddDialog = false
+                        }
+                    )
+                }
+            }
+        }
+        composeTestRule.waitForIdle()
+
+        // 1. Scope & DateRange filter parity controls exist and switch cleanly
+        composeTestRule.onNodeWithTag("scope_chip_household_shared").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("accounts_date_range_chip_all_time").performScrollTo().performClick()
+        composeTestRule.waitForIdle()
+        assertEquals(DateRangePreset.ALL_TIME, selectedPreset)
+
+        // 2. Verify all 4 sections and their respective accounts + per-account transactions render
+        composeTestRule.onNodeWithTag("accounts_tab_list")
+            .performScrollToNode(hasTestTag("section_header_wallet"))
+        composeTestRule.onNodeWithTag("accounts_tab_list")
+            .performScrollToNode(hasTestTag("account_tx_row_tx_wallet_1"))
+        composeTestRule.onNodeWithText("Metro Card Recharge").assertIsDisplayed()
+
+        // 3. Inline spend limit editing for Paytm Wallet
+        composeTestRule.onNodeWithTag("accounts_tab_list")
+            .performScrollToNode(hasTestTag("set_account_limit_paytm_wallet"))
+        composeTestRule.onNodeWithTag("set_account_limit_paytm_wallet").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("accounts_tab_list")
+            .performScrollToNode(hasTestTag("inline_account_limit_input_paytm_wallet"))
+        composeTestRule.onNodeWithTag("inline_account_limit_input_paytm_wallet").performTextReplacement("400")
+        composeTestRule.onNodeWithTag("inline_save_account_limit_paytm_wallet").performClick()
+        composeTestRule.waitForIdle()
+        assertEquals(400.0, walletLimit, 0.01)
+        composeTestRule.onNodeWithTag("accounts_tab_list")
+            .performScrollToNode(hasTestTag("account_limit_status_paytm_wallet"))
+        composeTestRule.onNodeWithTag("account_limit_status_paytm_wallet").assertIsDisplayed()
+
+        // 4. Verify Bank Account, Debit Card (Linked to Bank), and Credit Card sections + transactions
+        composeTestRule.onNodeWithTag("accounts_tab_list")
+            .performScrollToNode(hasTestTag("section_header_bank"))
+        composeTestRule.onNodeWithTag("accounts_tab_list")
+            .performScrollToNode(hasTestTag("account_tx_row_tx_bank_1"))
+        composeTestRule.onNodeWithText("Apartment Rent Transfer").assertIsDisplayed()
+
+        composeTestRule.onNodeWithTag("accounts_tab_list")
+            .performScrollToNode(hasTestTag("debit_linked_bank_hdfc_millennia_debit_card"))
+        composeTestRule.onNodeWithText("Linked to HDFC Salary A/c ••4321").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("accounts_tab_list")
+            .performScrollToNode(hasTestTag("account_tx_row_tx_debit_1"))
+        composeTestRule.onNodeWithText("Supermarket Swipe").assertIsDisplayed()
+
+        composeTestRule.onNodeWithTag("accounts_tab_list")
+            .performScrollToNode(hasTestTag("section_header_credit_card"))
+        composeTestRule.onNodeWithTag("accounts_tab_list")
+            .performScrollToNode(hasTestTag("account_tx_row_tx_credit_1"))
+        composeTestRule.onNodeWithText("Airline Ticket Booking").assertIsDisplayed()
+
+        // 5. Verify AddAccountDialog creates a Debit Card linked to HDFC Salary A/c with spend limit
+        composeTestRule.onNodeWithTag("accounts_tab_list")
+            .performScrollToNode(hasTestTag("accounts_add_account_button"))
+        composeTestRule.onNodeWithTag("accounts_add_account_button").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("link_bank_chip_acc_hdfc_bank").performScrollTo().performClick()
+        composeTestRule.onNodeWithTag("add_account_name_input").performScrollTo().performTextReplacement("HDFC Platinum Debit")
+        composeTestRule.onNodeWithTag("add_account_last_four_input").performScrollTo().performTextReplacement("6677")
+        composeTestRule.onNodeWithTag("add_account_balance_input").performScrollTo().performTextReplacement("45000")
+        composeTestRule.onNodeWithTag("add_account_spend_limit_input").performScrollTo().performTextReplacement("15000")
+        composeTestRule.onNodeWithTag("save_account_button").performScrollTo().performClick()
+        composeTestRule.waitForIdle()
+
+        assertNotNull(savedNewDebitCard)
+        assertTrue(savedNewDebitCard!!.first.endsWith("|DEBIT_CARD"))
+        assertEquals("acc_hdfc_bank", savedNewDebitCard!!.second)
+        assertEquals(15000.0, savedNewDebitCard!!.third, 0.01)
+    }
+
+    @Test
+    fun `test OneFamilyMainShell Accounts navigation tab loads all 4 account sections for test user`() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        LocalAccountSessionManager.ensureInitialized(context)
+        LocalAccountSessionManager.signInWithUsernamePassword(context, "test", "pass")
+        val user = LocalAccountSessionManager.getCurrentUser(context)!!
+        runBlocking {
+            OneFamilyRepository(context).ensureUserProfile(user.displayName, user.email)
+        }
+        LocalAccountSessionManager.setInitialSmsSyncCompleted(context, user.uid, true)
+
+        composeTestRule.setContent {
+            OneFamilyTheme {
+                OneFamilyMainShell(
+                    currentUserId = user.uid,
+                    currentUserName = user.displayName,
+                    currentUserEmail = user.email
+                )
+            }
+        }
+        composeTestRule.waitUntil(timeoutMillis = 5_000) {
+            composeTestRule.onAllNodesWithTag("nav_tab_accounts").fetchSemanticsNodes().isNotEmpty()
+        }
+        composeTestRule.onNodeWithTag("nav_tab_accounts").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.waitUntil(timeoutMillis = 5_000) {
+            composeTestRule.onAllNodesWithTag("accounts_tab_list").fetchSemanticsNodes().isNotEmpty()
+        }
+        composeTestRule.onNodeWithTag("accounts_tab_list").assertIsDisplayed()
+
+        composeTestRule.onNodeWithTag("accounts_tab_list")
+            .performScrollToNode(hasTestTag("section_header_wallet"))
+        composeTestRule.onNodeWithTag("section_header_wallet").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("accounts_tab_list")
+            .performScrollToNode(hasTestTag("section_header_bank"))
+        composeTestRule.onNodeWithTag("section_header_bank").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("accounts_tab_list")
+            .performScrollToNode(hasTestTag("section_header_debit_card"))
+        composeTestRule.onNodeWithTag("section_header_debit_card").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("accounts_tab_list")
+            .performScrollToNode(hasTestTag("section_header_credit_card"))
+        composeTestRule.onNodeWithTag("section_header_credit_card").assertIsDisplayed()
+
+        LocalAccountSessionManager.signOut(context)
+    }
+
+    @Test
+    fun `test AnalyticsTabScreen clicking category filters to only that categorys transactions`() {
+        val now = System.currentTimeMillis()
+        val groceryTx = ExpenseTransaction(
+            id = "tx_cat_groc",
+            userId = "u1",
+            userName = "Alex",
+            title = "Nature's Basket Groceries",
+            amount = 2400.0,
+            type = "EXPENSE",
+            category = "Groceries",
+            accountName = "HDFC Bank",
+            paymentMode = "UPI",
+            transactionDateMillis = now
+        )
+        val diningTx = ExpenseTransaction(
+            id = "tx_cat_dine",
+            userId = "u1",
+            userName = "Alex",
+            title = "Blue Tokai Coffee",
+            amount = 650.0,
+            type = "EXPENSE",
+            category = "Food & Dining",
+            accountName = "HDFC Bank",
+            paymentMode = "UPI",
+            transactionDateMillis = now - 60_000L
+        )
+        val allTxs = listOf(groceryTx, diningTx)
+        val categoryProgress = listOf(
+            CategorySpendProgress(
+                category = "Groceries",
+                spent = 2400.0,
+                limit = 8000.0,
+                alertThresholdPercent = 80,
+                budgetDoc = null,
+                memberBreakdown = emptyMap()
+            ),
+            CategorySpendProgress(
+                category = "Food & Dining",
+                spent = 650.0,
+                limit = 5000.0,
+                alertThresholdPercent = 80,
+                budgetDoc = null,
+                memberBreakdown = emptyMap()
+            )
+        )
+        var selectedCatFilter by mutableStateOf("All")
+
+        composeTestRule.setContent {
+            val state = OneFamilyDashboardUiState(
+                isLoading = false,
+                activeExpenses = allTxs,
+                allScopedExpenses = allTxs,
+                filteredExpenses = allTxs,
+                categoryProgressList = categoryProgress,
+                selectedCategoryFilter = selectedCatFilter,
+                totalMonthlySpent = 3050.0
+            )
+            OneFamilyTheme {
+                AnalyticsTabScreen(
+                    uiState = state,
+                    onStepMonth = {},
+                    onSelectPeriod = {},
+                    onSelectCategory = { selectedCatFilter = it }
+                )
+            }
+        }
+        composeTestRule.waitForIdle()
+
+        // Initially both transactions are visible in analytics_selected_month_transactions_card
+        composeTestRule.onNodeWithTag("analytics_tab_list")
+            .performScrollToNode(hasTestTag("analytics_selected_month_transactions_card"))
+        composeTestRule.onNodeWithText("Nature's Basket Groceries").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Blue Tokai Coffee").assertIsDisplayed()
+
+        // Click "Groceries" category row in Category Breakdown
+        composeTestRule.onNodeWithTag("analytics_tab_list")
+            .performScrollToNode(hasTestTag("category_breakdown_row_groceries"))
+        composeTestRule.onNodeWithTag("category_breakdown_row_groceries").performClick()
+        composeTestRule.waitForIdle()
+
+        assertEquals("Groceries", selectedCatFilter)
+        composeTestRule.onNodeWithTag("analytics_tab_list")
+            .performScrollToNode(hasTestTag("analytics_active_category_filter_banner"))
+        composeTestRule.onNodeWithTag("analytics_active_category_filter_banner").assertIsDisplayed()
+
+        // Verify ONLY Groceries transaction is shown and Food & Dining transaction is hidden
+        composeTestRule.onNodeWithTag("analytics_tab_list")
+            .performScrollToNode(hasTestTag("analytics_selected_month_transactions_card"))
+        composeTestRule.onNodeWithTag("analytics_month_tx_row_tx_cat_groc").assertIsDisplayed()
+        assertTrue(
+            "Non-matching category transaction must not be shown when a category is selected on Analysis page",
+            composeTestRule.onAllNodesWithTag("analytics_month_tx_row_tx_cat_dine").fetchSemanticsNodes().isEmpty()
+        )
+        assertTrue(
+            "Non-matching category breakdown card must be hidden when a category is selected",
+            composeTestRule.onAllNodesWithTag("analysis_category_card_food_&_dining").fetchSemanticsNodes().isEmpty()
+        )
+
+        // Tap "Show All" on the active category filter banner -> restores all transactions
+        composeTestRule.onNodeWithTag("analytics_tab_list")
+            .performScrollToNode(hasTestTag("analytics_clear_category_filter_button"))
+        composeTestRule.onNodeWithTag("analytics_clear_category_filter_button").performClick()
+        composeTestRule.waitForIdle()
+        assertEquals("All", selectedCatFilter)
+        composeTestRule.onNodeWithTag("analytics_tab_list")
+            .performScrollToNode(hasTestTag("analytics_selected_month_transactions_card"))
+        composeTestRule.onNodeWithTag("analytics_month_tx_row_tx_cat_dine").assertIsDisplayed()
+    }
+
+    @Test
+    fun `test AllTransactionsScreen page navigation, Exclude from Expenses toggle and filter, and long-press Category Icon Circular Scroll Wheel`() {
+        val now = System.currentTimeMillis()
+        var txList by mutableStateOf(
+            listOf(
+                ExpenseTransaction(
+                    id = "tx_wheel_1",
+                    userId = "u1",
+                    userName = "Alex",
+                    title = "Client Dinner Reimbursement",
+                    amount = 3500.0,
+                    type = "EXPENSE",
+                    category = "Food & Dining",
+                    accountName = "HDFC Card",
+                    paymentMode = "CARD",
+                    transactionDateMillis = now,
+                    isExcludedFromExpense = false
+                ),
+                ExpenseTransaction(
+                    id = "tx_normal_2",
+                    userId = "u1",
+                    userName = "Alex",
+                    title = "Daily Milk & Bread",
+                    amount = 450.0,
+                    type = "EXPENSE",
+                    category = "Groceries",
+                    accountName = "UPI Wallet",
+                    paymentMode = "UPI",
+                    transactionDateMillis = now - 30_000L,
+                    isExcludedFromExpense = false
+                )
+            )
+        )
+        var showAllTxPage by mutableStateOf(false)
+        var selectedTypeFilter by mutableStateOf("All")
+        var wheelTargetTx by mutableStateOf<ExpenseTransaction?>(null)
+
+        composeTestRule.setContent {
+            val nonExcludedSpent = txList.filter { !it.isExcludedFromExpense }.sumOf { it.amount }
+            val excludedSum = txList.filter { it.isExcludedFromExpense }.sumOf { it.amount }
+            val excludedCount = txList.count { it.isExcludedFromExpense }
+            val filtered = txList.filter { tx ->
+                when (selectedTypeFilter) {
+                    "EXPENSE" -> !tx.isExcludedFromExpense
+                    "EXCLUDED" -> tx.isExcludedFromExpense
+                    else -> true
+                }
+            }
+            val uiState = OneFamilyDashboardUiState(
+                isLoading = false,
+                activeExpenses = txList,
+                allScopedExpenses = txList,
+                filteredExpenses = filtered,
+                selectedTypeFilter = selectedTypeFilter,
+                totalMonthlySpent = nonExcludedSpent,
+                totalMonthlyExcluded = excludedSum,
+                excludedTransactionsCount = excludedCount
+            )
+            OneFamilyTheme {
+                if (showAllTxPage) {
+                    AllTransactionsScreen(
+                        uiState = uiState,
+                        onBackClick = { showAllTxPage = false },
+                        onSelectType = { selectedTypeFilter = it },
+                        onToggleExcludeTransaction = { target ->
+                            txList = txList.map {
+                                if (it.id == target.id) it.copy(isExcludedFromExpense = !it.isExcludedFromExpense) else it
+                            }
+                        },
+                        onQuickChangeCategory = { wheelTargetTx = it }
+                    )
+                } else {
+                    HomeTabScreen(
+                        uiState = uiState,
+                        onScopeSelected = {},
+                        onSelectType = { selectedTypeFilter = it },
+                        onToggleExcludeTransaction = { target ->
+                            txList = txList.map {
+                                if (it.id == target.id) it.copy(isExcludedFromExpense = !it.isExcludedFromExpense) else it
+                            }
+                        },
+                        onQuickChangeCategory = { wheelTargetTx = it },
+                        onOpenAllTransactionsPage = { showAllTxPage = true }
+                    )
+                }
+
+                if (wheelTargetTx != null) {
+                    val activeTx = wheelTargetTx!!
+                    QuickCategoryPickerDialog(
+                        transaction = activeTx,
+                        availableCategories = ExpenseCategories.ALL,
+                        onDismiss = { wheelTargetTx = null },
+                        onSelectCategory = { newCategory ->
+                            txList = txList.map {
+                                if (it.id == activeTx.id) it.copy(category = newCategory) else it
+                            }
+                            wheelTargetTx = null
+                        },
+                        onOpenFullEditor = { wheelTargetTx = null }
+                    )
+                }
+            }
+        }
+        composeTestRule.waitForIdle()
+
+        // 1. Click "All Transactions" navigation card on Home -> opens dedicated AllTransactionsScreen page
+        composeTestRule.onNodeWithTag("home_tab_list")
+            .performScrollToNode(hasTestTag("open_all_transactions_page_button"))
+        composeTestRule.onNodeWithTag("open_all_transactions_page_button").performClick()
+        composeTestRule.waitForIdle()
+        assertTrue(showAllTxPage)
+        composeTestRule.onNodeWithTag("all_transactions_screen_list").assertIsDisplayed()
+
+        // 2. Long-press the transaction's category icon -> opens 360° Circular Scroll Wheel category editor
+        composeTestRule.onNodeWithTag("all_transactions_screen_list")
+            .performScrollToNode(hasTestTag("category_pill_tx_wheel_1"))
+        composeTestRule.onNodeWithTag("category_pill_tx_wheel_1")
+            .performTouchInput { longClick() }
+        composeTestRule.waitForIdle()
+
+        composeTestRule.onNodeWithTag("circular_category_wheel_dialog").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("circular_category_wheel").assertIsDisplayed()
+
+        // Step the circular wheel to the next category using the wheel step button and apply
+        composeTestRule.onNodeWithTag("wheel_step_next_button").performScrollTo().performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("circular_wheel_apply_button").performScrollTo().performClick()
+        composeTestRule.waitForIdle()
+
+        val updatedCategory = txList.first { it.id == "tx_wheel_1" }.category
+        assertTrue("Category should update after rotating circular wheel", updatedCategory != "Food & Dining")
+
+        // 3. Exclude "Client Dinner Reimbursement" from expenses via the card's exclude toggle button
+        composeTestRule.onNodeWithTag("exclude_tx_button_tx_wheel_1").performClick()
+        composeTestRule.waitForIdle()
+
+        assertTrue(txList.first { it.id == "tx_wheel_1" }.isExcludedFromExpense)
+        composeTestRule.onNodeWithTag("excluded_tx_badge_tx_wheel_1", useUnmergedTree = true).assertExists()
+
+        // 4. Filter by "Expenses" -> excluded transaction is hidden, only non-excluded expense remains
+        composeTestRule.onNodeWithTag("all_tx_type_chip_expense").performScrollTo().performClick()
+        composeTestRule.waitForIdle()
+        assertTrue(composeTestRule.onAllNodesWithText("Client Dinner Reimbursement").fetchSemanticsNodes().isEmpty())
+        composeTestRule.onNodeWithText("Daily Milk & Bread").assertIsDisplayed()
+
+        // 5. Filter by "Excluded" -> shows ONLY the excluded transaction!
+        composeTestRule.onNodeWithTag("all_tx_type_chip_excluded").performScrollTo().performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithText("Client Dinner Reimbursement").assertIsDisplayed()
+        assertTrue(composeTestRule.onAllNodesWithText("Daily Milk & Bread").fetchSemanticsNodes().isEmpty())
+    }
 }
+
+
 
 
 

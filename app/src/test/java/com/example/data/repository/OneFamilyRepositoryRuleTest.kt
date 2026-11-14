@@ -261,9 +261,123 @@ class OneFamilyRepositoryRuleTest : FirestoreEmulatorTestBase() {
         assertEquals(0, reimportAfterMove)
     }
 
+    @Test
+    fun accounts_debitCardLinkingAndSpendLimit_validatesSecurityRules() = runBlocking {
+        val aliceUid = signInTestUser("alice_accounts@test.com")
+        val repo = OneFamilyRepository(firestore)
+
+        withTimeout(DEFAULT_TIMEOUT_MS) {
+            repo.ensureUserProfile("Alice", "alice_accounts@test.com").getOrThrow()
+        }
+
+        val bankAccId = withTimeout(DEFAULT_TIMEOUT_MS) {
+            repo.upsertAccount(
+                name = "HDFC Salary A/c",
+                bankName = "HDFC Bank",
+                accountType = "BANK",
+                lastFourDigits = "4321",
+                balance = 95000.0
+            ).getOrThrow()
+        }
+
+        val debitCardId = withTimeout(DEFAULT_TIMEOUT_MS) {
+            repo.upsertAccount(
+                name = "HDFC Debit Card ••5512",
+                bankName = "HDFC Bank",
+                accountType = "DEBIT_CARD",
+                lastFourDigits = "5512",
+                balance = 95000.0,
+                linkedBankAccountId = bankAccId,
+                linkedBankAccountName = "HDFC Salary A/c",
+                monthlySpendLimit = 12000.0
+            ).getOrThrow()
+        }
+
+        val aliceAccounts = withTimeout(FLOW_TIMEOUT_MS) {
+            repo.observeAccounts(aliceUid).first { list -> list.any { it.id == debitCardId } }
+        }
+        val debitCard = aliceAccounts.first { it.id == debitCardId }
+        assertEquals("DEBIT_CARD", debitCard.accountType)
+        assertEquals(bankAccId, debitCard.linkedBankAccountId)
+        assertEquals("HDFC Salary A/c", debitCard.linkedBankAccountName)
+        assertEquals(12000.0, debitCard.monthlySpendLimit, 0.01)
+
+        withTimeout(DEFAULT_TIMEOUT_MS) {
+            repo.updateAccountSpendLimit(debitCard, 18500.0).getOrThrow()
+        }
+        val updatedAccounts = withTimeout(FLOW_TIMEOUT_MS) {
+            repo.observeAccounts(aliceUid).first { list ->
+                list.any { it.id == debitCardId && it.monthlySpendLimit == 18500.0 }
+            }
+        }
+        assertTrue(updatedAccounts.any { it.id == debitCardId && it.monthlySpendLimit == 18500.0 })
+
+        // Cross-user access must fail with PERMISSION_DENIED
+        signInTestUser("bob_accounts@test.com")
+        var caught: FirebaseFirestoreException? = null
+        try {
+            withTimeout(FLOW_TIMEOUT_MS) {
+                firestore.collection("users").document(aliceUid)
+                    .collection("accounts")
+                    .get()
+                    .await()
+            }
+        } catch (e: Exception) {
+            caught = e.unwrapFirestoreException()
+        }
+        assertNotNull("Expected PERMISSION_DENIED for cross-user account access", caught)
+        assertEquals(FirebaseFirestoreException.Code.PERMISSION_DENIED, caught?.code)
+    }
+
+    @Test
+    fun excludedExpense_createAndToggle_validatesSecurityRules() = runBlocking {
+        val aliceUid = signInTestUser("alice_excluded@test.com")
+        val repo = OneFamilyRepository(firestore)
+
+        withTimeout(DEFAULT_TIMEOUT_MS) {
+            repo.ensureUserProfile("Alice", "alice_excluded@test.com").getOrThrow()
+        }
+
+        val expenseId = withTimeout(DEFAULT_TIMEOUT_MS) {
+            repo.addExpense(
+                userName = "Alice",
+                household = null,
+                title = "Reimbursable Flight",
+                amount = 14500.0,
+                type = "EXPENSE",
+                category = "Fuel & Travel",
+                accountName = "Axis Credit Card",
+                paymentMode = "CARD",
+                tags = listOf("work"),
+                notes = "Company trip",
+                isShared = false,
+                isExcludedFromExpense = false
+            ).getOrThrow()
+        }
+
+        val initialList = withTimeout(FLOW_TIMEOUT_MS) {
+            repo.observePersonalExpenses(aliceUid).first { list -> list.any { it.id == expenseId } }
+        }
+        val createdTx = initialList.first { it.id == expenseId }
+        assertEquals(false, createdTx.isExcludedFromExpense)
+
+        val updatedTx = withTimeout(DEFAULT_TIMEOUT_MS) {
+            repo.setExpenseExcluded(createdTx, true).getOrThrow()
+        }
+        assertEquals(true, updatedTx.isExcludedFromExpense)
+
+        val observedExcluded = withTimeout(FLOW_TIMEOUT_MS) {
+            repo.observePersonalExpenses(aliceUid).first { list ->
+                list.any { it.id == expenseId && it.isExcludedFromExpense }
+            }
+        }
+        assertTrue(observedExcluded.any { it.id == expenseId && it.isExcludedFromExpense })
+    }
+
     private companion object {
         const val DEFAULT_TIMEOUT_MS = 5000L
         const val FLOW_TIMEOUT_MS = 4000L
     }
 }
+
 

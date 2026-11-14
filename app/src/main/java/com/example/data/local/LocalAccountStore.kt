@@ -1045,6 +1045,30 @@ object LocalAccountDataStore {
                     balance = 5400.0,
                     creditLimit = 0.0,
                     isSharedVisible = true
+                ),
+                FinancialAccount(
+                    id = "${user.uid}_paytm_wallet",
+                    userId = user.uid,
+                    name = "Paytm Wallet",
+                    bankName = "Paytm",
+                    accountType = "WALLET",
+                    lastFourDigits = "",
+                    balance = 2450.0,
+                    creditLimit = 0.0,
+                    isSharedVisible = true
+                ),
+                FinancialAccount(
+                    id = "${user.uid}_hdfc_debit_5512",
+                    userId = user.uid,
+                    name = "HDFC Millennia Debit Card",
+                    bankName = "HDFC Bank",
+                    accountType = "DEBIT_CARD",
+                    lastFourDigits = "5512",
+                    balance = 84250.0,
+                    creditLimit = 0.0,
+                    linkedBankAccountId = "${user.uid}_hdfc_salary_4321",
+                    linkedBankAccountName = "HDFC Salary A/c",
+                    isSharedVisible = true
                 )
             )
             accountsFlow.value = defaultAccounts
@@ -1382,6 +1406,7 @@ object LocalAccountDataStore {
         isShared: Boolean,
         smsSignature: String = "",
         referenceNumber: String = "",
+        isExcludedFromExpense: Boolean = false,
         transactionDateMillis: Long = System.currentTimeMillis(),
         customDocId: String? = null
     ): String {
@@ -1411,6 +1436,7 @@ object LocalAccountDataStore {
             visibility = if (effectiveShared) "SHARED" else "PERSONAL",
             smsSignature = smsSignature.take(200),
             referenceNumber = referenceNumber.take(100),
+            isExcludedFromExpense = isExcludedFromExpense,
             transactionDateMillis = transactionDateMillis,
             memberUids = memberUids,
             createdAt = Timestamp.now(),
@@ -1595,7 +1621,8 @@ object LocalAccountDataStore {
         tags: List<String>,
         notes: String,
         transactionDateMillis: Long,
-        isShared: Boolean
+        isShared: Boolean,
+        isExcludedFromExpense: Boolean = existing.isExcludedFromExpense
     ) = synchronized(storeLock) {
         val wantShared = isShared && household != null
         val targetHouseholdId = if (wantShared) household!!.id else ""
@@ -1615,6 +1642,7 @@ object LocalAccountDataStore {
             tags = cleanTags,
             notes = notes.trim().take(500),
             visibility = if (wantShared) "SHARED" else "PERSONAL",
+            isExcludedFromExpense = isExcludedFromExpense,
             transactionDateMillis = transactionDateMillis.coerceAtLeast(1L),
             memberUids = memberUids,
             updatedAt = Timestamp.now()
@@ -1623,6 +1651,25 @@ object LocalAccountDataStore {
         val updatedList = expensesFlow.value.map { if (it.id == existing.id) updatedTx else it }
         expensesFlow.value = updatedList
         saveExpenses(updatedList)
+    }
+
+    fun setExpenseExcluded(expenseId: String, excluded: Boolean): ExpenseTransaction? = synchronized(storeLock) {
+        var result: ExpenseTransaction? = null
+        val updatedList = expensesFlow.value.map { tx ->
+            if (tx.id == expenseId) {
+                val updated = tx.copy(
+                    isExcludedFromExpense = excluded,
+                    updatedAt = Timestamp.now()
+                )
+                result = updated
+                updated
+            } else {
+                tx
+            }
+        }
+        expensesFlow.value = updatedList
+        saveExpenses(updatedList)
+        result
     }
 
     fun updateExpenseCategoryById(expenseId: String, newCategory: String) = synchronized(storeLock) {
@@ -1782,9 +1829,14 @@ object LocalAccountDataStore {
         balance: Double,
         creditLimit: Double = 0.0,
         isSharedVisible: Boolean = true,
-        asOfTimestampMillis: Long = Long.MAX_VALUE
+        asOfTimestampMillis: Long = Long.MAX_VALUE,
+        linkedBankAccountId: String? = null,
+        linkedBankAccountName: String? = null,
+        monthlySpendLimit: Double? = null,
+        alertThresholdPercent: Int? = null,
+        explicitId: String? = null
     ): String = synchronized(storeLock) {
-        val docKey = "${uid}_${bankName}_${accountType}_${lastFourDigits}"
+        val docKey = explicitId?.takeIf { it.isNotBlank() } ?: "${uid}_${bankName}_${accountType}_${lastFourDigits}"
             .lowercase()
             .replace(Regex("[^a-z0-9]+"), "_")
             .trim('_')
@@ -1797,17 +1849,29 @@ object LocalAccountDataStore {
         }
         accountTimestampMap[docKey] = asOfTimestampMillis
 
+        val existing = accountsFlow.value.firstOrNull { it.id == docKey }
+        val normalizedType = accountType.trim().uppercase()
+        val validType = if (normalizedType in setOf("BANK", "DEBIT_CARD", "CREDIT_CARD", "WALLET", "CASH", "UPI")) {
+            normalizedType
+        } else {
+            "BANK"
+        }
+
         val acc = FinancialAccount(
             id = docKey,
             userId = uid,
             name = name.trim().ifBlank { bankName }.take(100),
             bankName = bankName.trim().ifBlank { "Bank" }.take(100),
-            accountType = if (accountType in setOf("BANK", "CREDIT_CARD", "WALLET", "CASH", "UPI")) accountType else "BANK",
+            accountType = validType,
             lastFourDigits = lastFourDigits.trim().take(10),
             balance = balance,
             creditLimit = creditLimit.coerceAtLeast(0.0),
+            linkedBankAccountId = (linkedBankAccountId ?: existing?.linkedBankAccountId ?: "").trim().take(128),
+            linkedBankAccountName = (linkedBankAccountName ?: existing?.linkedBankAccountName ?: "").trim().take(100),
+            monthlySpendLimit = (monthlySpendLimit ?: existing?.monthlySpendLimit ?: 0.0).coerceAtLeast(0.0),
+            alertThresholdPercent = (alertThresholdPercent?.toLong() ?: existing?.alertThresholdPercent ?: 80L).coerceIn(1L, 100L),
             isSharedVisible = isSharedVisible,
-            createdAt = Timestamp.now(),
+            createdAt = existing?.createdAt ?: Timestamp.now(),
             updatedAt = Timestamp.now()
         )
 
@@ -1815,6 +1879,43 @@ object LocalAccountDataStore {
         accountsFlow.value = updated
         saveAccounts(updated)
         return docKey
+    }
+
+    fun updateAccountSpendLimit(
+        uid: String,
+        account: FinancialAccount,
+        monthlySpendLimit: Double,
+        alertThresholdPercent: Int = 80
+    ) = synchronized(storeLock) {
+        val existing = accountsFlow.value.firstOrNull { it.id == account.id }
+        val sanitizedLimit = monthlySpendLimit.coerceAtLeast(0.0)
+        val sanitizedThreshold = alertThresholdPercent.toLong().coerceIn(1L, 100L)
+        if (existing != null) {
+            val updatedAccount = existing.copy(
+                monthlySpendLimit = sanitizedLimit,
+                alertThresholdPercent = sanitizedThreshold,
+                updatedAt = Timestamp.now()
+            )
+            val updated = accountsFlow.value.map { if (it.id == existing.id) updatedAccount else it }
+            accountsFlow.value = updated
+            saveAccounts(updated)
+        } else {
+            upsertAccount(
+                uid = uid,
+                name = account.name,
+                bankName = account.bankName.ifBlank { account.name },
+                accountType = account.accountType,
+                lastFourDigits = account.lastFourDigits,
+                balance = account.balance,
+                creditLimit = account.creditLimit,
+                isSharedVisible = account.isSharedVisible,
+                linkedBankAccountId = account.linkedBankAccountId,
+                linkedBankAccountName = account.linkedBankAccountName,
+                monthlySpendLimit = sanitizedLimit,
+                alertThresholdPercent = sanitizedThreshold.toInt(),
+                explicitId = account.id.takeIf { it.isNotBlank() }
+            )
+        }
     }
 
     fun deleteAccount(accountId: String) = synchronized(storeLock) {
@@ -1964,6 +2065,7 @@ object LocalAccountDataStore {
                     put("smsSignature", tx.smsSignature)
                     put("linkedSmsSignatures", JSONArray(tx.linkedSmsSignatures))
                     put("referenceNumber", tx.referenceNumber)
+                    put("isExcludedFromExpense", tx.isExcludedFromExpense)
                     put("transactionDateMillis", tx.transactionDateMillis)
                     put("memberUids", JSONArray(tx.memberUids))
                 }
@@ -2010,6 +2112,7 @@ object LocalAccountDataStore {
                         smsSignature = o.optString("smsSignature", ""),
                         linkedSmsSignatures = linkedSmsSignatures,
                         referenceNumber = o.optString("referenceNumber", ""),
+                        isExcludedFromExpense = o.optBoolean("isExcludedFromExpense", false),
                         transactionDateMillis = dateMillis,
                         memberUids = memberUids,
                         createdAt = Timestamp(Date(dateMillis)),
@@ -2081,6 +2184,10 @@ object LocalAccountDataStore {
                     put("lastFourDigits", a.lastFourDigits)
                     put("balance", a.balance)
                     put("creditLimit", a.creditLimit)
+                    put("linkedBankAccountId", a.linkedBankAccountId)
+                    put("linkedBankAccountName", a.linkedBankAccountName)
+                    put("monthlySpendLimit", a.monthlySpendLimit)
+                    put("alertThresholdPercent", a.alertThresholdPercent)
                     put("isSharedVisible", a.isSharedVisible)
                 }
             )
@@ -2105,6 +2212,10 @@ object LocalAccountDataStore {
                         lastFourDigits = o.optString("lastFourDigits", ""),
                         balance = o.optDouble("balance", 0.0),
                         creditLimit = o.optDouble("creditLimit", 0.0),
+                        linkedBankAccountId = o.optString("linkedBankAccountId", ""),
+                        linkedBankAccountName = o.optString("linkedBankAccountName", ""),
+                        monthlySpendLimit = o.optDouble("monthlySpendLimit", 0.0),
+                        alertThresholdPercent = o.optLong("alertThresholdPercent", 80L),
                         isSharedVisible = o.optBoolean("isSharedVisible", true),
                         createdAt = Timestamp.now(),
                         updatedAt = Timestamp.now()

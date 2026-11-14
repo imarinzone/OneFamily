@@ -49,6 +49,7 @@ service cloud.firestore {
              (!('smsSignature' in data) || (data.smsSignature is string && data.smsSignature.size() <= 200)) &&
              (!('linkedSmsSignatures' in data) || (data.linkedSmsSignatures is list && data.linkedSmsSignatures.size() <= 20 && (data.linkedSmsSignatures.size() == 0 || (data.linkedSmsSignatures[0] is string && data.linkedSmsSignatures[0].size() <= 200)))) &&
              (!('referenceNumber' in data) || (data.referenceNumber is string && data.referenceNumber.size() <= 100)) &&
+             (!('isExcludedFromExpense' in data) || data.isExcludedFromExpense is bool) &&
              data.transactionDateMillis is number && data.transactionDateMillis > 0 &&
              (!('memberUids' in data) || (data.memberUids is list && data.memberUids.size() <= 20 && (data.memberUids.size() == 0 || (data.memberUids[0] is string && data.memberUids[0].size() <= 128)))) &&
              data.createdAt is timestamp && data.createdAt <= request.time &&
@@ -70,10 +71,14 @@ service cloud.firestore {
       return data.userId is string && data.userId.size() >= 1 && data.userId.size() <= 128 &&
              data.name is string && data.name.size() >= 1 && data.name.size() <= 100 &&
              data.bankName is string && data.bankName.size() >= 1 && data.bankName.size() <= 100 &&
-             data.accountType is string && data.accountType in ['BANK', 'CREDIT_CARD', 'WALLET', 'CASH', 'UPI'] &&
+             data.accountType is string && data.accountType in ['BANK', 'DEBIT_CARD', 'CREDIT_CARD', 'WALLET', 'CASH', 'UPI'] &&
              (!('lastFourDigits' in data) || (data.lastFourDigits is string && data.lastFourDigits.size() <= 10)) &&
              data.balance is number &&
              (!('creditLimit' in data) || (data.creditLimit is number && data.creditLimit >= 0)) &&
+             (!('linkedBankAccountId' in data) || (data.linkedBankAccountId is string && data.linkedBankAccountId.size() <= 128)) &&
+             (!('linkedBankAccountName' in data) || (data.linkedBankAccountName is string && data.linkedBankAccountName.size() <= 100)) &&
+             (!('monthlySpendLimit' in data) || (data.monthlySpendLimit is number && data.monthlySpendLimit >= 0)) &&
+             (!('alertThresholdPercent' in data) || (data.alertThresholdPercent is number && data.alertThresholdPercent >= 1 && data.alertThresholdPercent <= 100)) &&
              data.isSharedVisible is bool &&
              data.createdAt is timestamp && data.createdAt <= request.time &&
              data.updatedAt is timestamp && data.updatedAt <= request.time;
@@ -133,7 +138,7 @@ service cloud.firestore {
                          request.auth.uid == userId &&
                          incoming().userId == request.auth.uid &&
                          incoming().keys().hasAll(['userId', 'userName', 'title', 'amount', 'type', 'category', 'accountName', 'paymentMode', 'visibility', 'transactionDateMillis', 'createdAt', 'updatedAt']) &&
-                         incoming().keys().hasOnly(['userId', 'userName', 'householdId', 'title', 'amount', 'type', 'category', 'accountName', 'paymentMode', 'tags', 'notes', 'visibility', 'smsSignature', 'linkedSmsSignatures', 'referenceNumber', 'transactionDateMillis', 'memberUids', 'createdAt', 'updatedAt']) &&
+                         incoming().keys().hasOnly(['userId', 'userName', 'householdId', 'title', 'amount', 'type', 'category', 'accountName', 'paymentMode', 'tags', 'notes', 'visibility', 'smsSignature', 'linkedSmsSignatures', 'referenceNumber', 'isExcludedFromExpense', 'transactionDateMillis', 'memberUids', 'createdAt', 'updatedAt']) &&
                          isValidExpenseTransaction(incoming());
 
         allow update: if isSignedIn() &&
@@ -142,7 +147,7 @@ service cloud.firestore {
                          isValidId(expenseId) &&
                          request.auth.uid == userId &&
                          incoming().userId == existing().userId &&
-                         incoming().diff(existing()).affectedKeys().hasOnly(['userName', 'householdId', 'title', 'amount', 'type', 'category', 'accountName', 'paymentMode', 'tags', 'notes', 'visibility', 'smsSignature', 'linkedSmsSignatures', 'referenceNumber', 'transactionDateMillis', 'memberUids', 'createdAt', 'updatedAt']);
+                         incoming().diff(existing()).affectedKeys().hasOnly(['userName', 'householdId', 'title', 'amount', 'type', 'category', 'accountName', 'paymentMode', 'tags', 'notes', 'visibility', 'smsSignature', 'linkedSmsSignatures', 'referenceNumber', 'isExcludedFromExpense', 'transactionDateMillis', 'memberUids', 'createdAt', 'updatedAt']);
 
         allow delete: if isSignedIn() && isValidId(userId) && isValidId(expenseId) && request.auth.uid == userId;
       }
@@ -181,7 +186,7 @@ service cloud.firestore {
                          request.auth.uid == userId &&
                          incoming().userId == request.auth.uid &&
                          incoming().keys().hasAll(['userId', 'name', 'bankName', 'accountType', 'balance', 'isSharedVisible', 'createdAt', 'updatedAt']) &&
-                         incoming().keys().hasOnly(['userId', 'name', 'bankName', 'accountType', 'lastFourDigits', 'balance', 'creditLimit', 'isSharedVisible', 'createdAt', 'updatedAt']) &&
+                         incoming().keys().hasOnly(['userId', 'name', 'bankName', 'accountType', 'lastFourDigits', 'balance', 'creditLimit', 'linkedBankAccountId', 'linkedBankAccountName', 'monthlySpendLimit', 'alertThresholdPercent', 'isSharedVisible', 'createdAt', 'updatedAt']) &&
                          isValidFinancialAccount(incoming());
 
         allow update: if isSignedIn() &&
@@ -190,7 +195,7 @@ service cloud.firestore {
                          isValidId(accountId) &&
                          request.auth.uid == userId &&
                          incoming().userId == existing().userId &&
-                         incoming().diff(existing()).affectedKeys().hasOnly(['name', 'bankName', 'accountType', 'lastFourDigits', 'balance', 'creditLimit', 'isSharedVisible', 'createdAt', 'updatedAt']);
+                         incoming().diff(existing()).affectedKeys().hasOnly(['name', 'bankName', 'accountType', 'lastFourDigits', 'balance', 'creditLimit', 'linkedBankAccountId', 'linkedBankAccountName', 'monthlySpendLimit', 'alertThresholdPercent', 'isSharedVisible', 'createdAt', 'updatedAt']);
 
         allow delete: if isSignedIn() && isValidId(userId) && isValidId(accountId) && request.auth.uid == userId;
       }
@@ -275,7 +280,7 @@ service cloud.firestore {
                          'memberUids' in incoming() &&
                          request.auth.uid in incoming().memberUids &&
                          incoming().keys().hasAll(['userId', 'userName', 'householdId', 'title', 'amount', 'type', 'category', 'accountName', 'paymentMode', 'visibility', 'transactionDateMillis', 'memberUids', 'createdAt', 'updatedAt']) &&
-                         incoming().keys().hasOnly(['userId', 'userName', 'householdId', 'title', 'amount', 'type', 'category', 'accountName', 'paymentMode', 'tags', 'notes', 'visibility', 'smsSignature', 'linkedSmsSignatures', 'referenceNumber', 'transactionDateMillis', 'memberUids', 'createdAt', 'updatedAt']) &&
+                         incoming().keys().hasOnly(['userId', 'userName', 'householdId', 'title', 'amount', 'type', 'category', 'accountName', 'paymentMode', 'tags', 'notes', 'visibility', 'smsSignature', 'linkedSmsSignatures', 'referenceNumber', 'isExcludedFromExpense', 'transactionDateMillis', 'memberUids', 'createdAt', 'updatedAt']) &&
                          isValidExpenseTransaction(incoming());
 
         allow update: if isSignedIn() &&
@@ -288,7 +293,7 @@ service cloud.firestore {
                           request.auth.uid in get(/databases/$(database)/documents/households/$(householdId)).data.memberUids) &&
                          incoming().userId == existing().userId &&
                          incoming().householdId == existing().householdId &&
-                         incoming().diff(existing()).affectedKeys().hasOnly(['userName', 'title', 'amount', 'type', 'category', 'accountName', 'paymentMode', 'tags', 'notes', 'visibility', 'smsSignature', 'linkedSmsSignatures', 'referenceNumber', 'transactionDateMillis', 'memberUids', 'createdAt', 'updatedAt']);
+                         incoming().diff(existing()).affectedKeys().hasOnly(['userName', 'title', 'amount', 'type', 'category', 'accountName', 'paymentMode', 'tags', 'notes', 'visibility', 'smsSignature', 'linkedSmsSignatures', 'referenceNumber', 'isExcludedFromExpense', 'transactionDateMillis', 'memberUids', 'createdAt', 'updatedAt']);
 
         allow delete: if isSignedIn() &&
                          isValidId(householdId) &&

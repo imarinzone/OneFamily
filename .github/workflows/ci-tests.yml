@@ -1,0 +1,141 @@
+name: Run One Family Tests (CI)
+
+on:
+  pull_request:
+    branches:
+      - main
+      - master
+  workflow_dispatch:
+
+env:
+  GRADLE_VERSION: '9.3.1'
+  JAVA_VERSION: '21'
+
+jobs:
+  test:
+    name: Firestore Rules & Android Unit / Robolectric Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK ${{ env.JAVA_VERSION }}
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: ${{ env.JAVA_VERSION }}
+
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Configure Android SDK Licenses
+        shell: bash
+        run: |
+          SDK_DIR="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          mkdir -p "${SDK_DIR}/licenses"
+
+          printf "\n8933bad161af4178b1185d1a37fbf41ea5269c55\nd56f5187479451eabf01fb78af6dfcb131a6481e\n24333f8a63b6825ea9c5514f83c2829b004d1fee" > "${SDK_DIR}/licenses/android-sdk-license"
+          printf "\n84831b9409646a918e30573bab4c9c91346d8abd\n504667f4c0de7af1a06de9f4b1727b84351f2910" > "${SDK_DIR}/licenses/android-sdk-preview-license"
+
+          echo "ANDROID_HOME=${SDK_DIR}" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=${SDK_DIR}" >> "$GITHUB_ENV"
+
+      - name: Set up Gradle ${{ env.GRADLE_VERSION }}
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: ${{ env.GRADLE_VERSION }}
+          cache-read-only: false
+
+      - name: Prepare Environment & Firebase Config
+        shell: bash
+        env:
+          GOOGLE_SERVICES_JSON_SECRET: ${{ secrets.GOOGLE_SERVICES_JSON }}
+        run: |
+          if [[ ! -f ".env" && -f ".env.example" ]]; then
+            cp .env.example .env
+          fi
+
+          if [[ -n "${GOOGLE_SERVICES_JSON_SECRET}" ]]; then
+            echo "${GOOGLE_SERVICES_JSON_SECRET}" > app/google-services.json
+          elif [[ ! -f "app/google-services.json" ]]; then
+            cat << 'EOF' > app/google-services.json
+          {
+            "project_info": {
+              "project_number": "489230672539",
+              "project_id": "gen-lang-client-0859071543",
+              "storage_bucket": "gen-lang-client-0859071543.firebasestorage.app"
+            },
+            "client": [
+              {
+                "client_info": {
+                  "mobilesdk_app_id": "1:489230672539:android:2fd65443b4845eb1c49c3e",
+                  "android_client_info": {
+                    "package_name": "com.aistudio.onefamily.xpqrmk"
+                  }
+                },
+                "oauth_client": [
+                  {
+                    "client_id": "489230672539-o5qb0cvnpd8gl19dv9mvah3486o6d8kl.apps.googleusercontent.com",
+                    "client_type": 1,
+                    "android_info": {
+                      "package_name": "com.aistudio.onefamily.xpqrmk",
+                      "certificate_hash": "5ba394c06242f07b310191efefaa66e1059cb3fe"
+                    }
+                  },
+                  {
+                    "client_id": "489230672539-8r2e4haal7l4tbhmpffl6r3j30bmg7ms.apps.googleusercontent.com",
+                    "client_type": 3
+                  }
+                ],
+                "api_key": [
+                  {
+                    "current_key": "AIzaSyADecF2-Y5GRJ4amQ5tCZ_JH8ln-9-SLgU"
+                  }
+                ],
+                "services": {
+                  "appinvite_service": {
+                    "other_platform_oauth_client": [
+                      {
+                        "client_id": "489230672539-8r2e4haal7l4tbhmpffl6r3j30bmg7ms.apps.googleusercontent.com",
+                        "client_type": 3
+                      }
+                    ]
+                  }
+                }
+              }
+            ],
+            "configuration_version": "1"
+          }
+          EOF
+          fi
+
+          if [[ ! -f "app/src/main/res/values/firebase_applet_config.xml" ]]; then
+            mkdir -p app/src/main/res/values
+            printf '<?xml version="1.0" encoding="utf-8" standalone="no"?>\n<resources>\n    <string name="firestore_database_id" translatable="false">ai-studio-android-18b947f5-a54c-4756-8c11-b9c56ee3687f</string>\n</resources>\n' > app/src/main/res/values/firebase_applet_config.xml
+          fi
+
+      - name: Install Firebase CLI & Rules Test Dependencies
+        shell: bash
+        run: |
+          npm install --no-save firebase-tools @firebase/rules-unit-testing
+
+      - name: Run Firestore Security Rules & Android Unit/Robolectric Tests
+        shell: bash
+        run: |
+          npx firebase emulators:exec --project demo-no-project --only auth,firestore "
+            FIRESTORE_EMULATOR_HOST=127.0.0.1:8085 node --test firestore.test.js && \
+            gradle :app:testDebugUnitTest --no-daemon --no-configuration-cache
+          "
+
+      - name: Upload Test Reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-reports
+          path: |
+            app/build/reports/tests/testDebugUnitTest/
+            app/build/test-results/testDebugUnitTest/
+          retention-days: 14

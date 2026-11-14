@@ -12,9 +12,11 @@ import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
@@ -66,6 +68,7 @@ import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.LocalGroceryStore
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.MedicalServices
+import androidx.compose.material.icons.filled.MoneyOff
 import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material.icons.filled.Payments
 import androidx.compose.material.icons.filled.QrCode2
@@ -2179,12 +2182,14 @@ private fun AccountSummaryCard(
  * Supports `shape` (for 24dp outer / 6dp inner connected M3 card stacks) and two-way
  * progressive swipe physics with threshold icon bounce and haptic ticks.
  */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun ExpenseTransactionItemCard(
     expense: ExpenseTransaction,
     currencySymbol: String,
     @Suppress("UNUSED_PARAMETER") canTogglePrivacy: Boolean = false,
     @Suppress("UNUSED_PARAMETER") onTogglePrivacy: () -> Unit = {},
+    onToggleExcludeTransaction: () -> Unit = {},
     onLinkDuplicate: () -> Unit = {},
     onDelete: () -> Unit = {},
     onEditTransaction: () -> Unit = {},
@@ -2345,12 +2350,18 @@ fun ExpenseTransactionItemCard(
                     containerColor = catColor.copy(alpha = 0.16f),
                     size = dimens.rowIconBoxSize,
                     iconSize = dimens.rowIconSize,
-                    contentDescription = expense.category,
+                    contentDescription = "${expense.category} (Long press to open category wheel)",
                     modifier = Modifier
-                        .clickable {
-                            performHaptic()
-                            onEditTransaction()
-                        }
+                        .combinedClickable(
+                            onClick = {
+                                performHaptic()
+                                onEditTransaction()
+                            },
+                            onLongClick = {
+                                performHaptic()
+                                onQuickChangeCategory()
+                            }
+                        )
                         .testTag("category_pill_${expense.id}")
                 )
 
@@ -2376,30 +2387,63 @@ fun ExpenseTransactionItemCard(
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
-                    if (expense.linkedSmsSignatures.isNotEmpty()) {
+                    if (expense.isExcludedFromExpense || expense.linkedSmsSignatures.isNotEmpty()) {
                         Spacer(modifier = Modifier.height(3.dp))
-                        Surface(
-                            shape = RoundedCornerShape(50),
-                            color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.8f),
-                            modifier = Modifier.testTag("linked_sms_badge_${expense.id}")
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Row(
-                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Link,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.size(12.dp)
-                                )
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text(
-                                    text = "Linked (${expense.linkedSmsSignatures.size + 1} SMS)",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    fontWeight = FontWeight.Bold,
-                                    color = MaterialTheme.colorScheme.primary
-                                )
+                            if (expense.isExcludedFromExpense) {
+                                Surface(
+                                    shape = RoundedCornerShape(50),
+                                    color = MaterialTheme.colorScheme.secondaryContainer,
+                                    modifier = Modifier.testTag("excluded_tx_badge_${expense.id}")
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.MoneyOff,
+                                            contentDescription = null,
+                                            tint = MaterialTheme.colorScheme.onSecondaryContainer,
+                                            modifier = Modifier.size(12.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Text(
+                                            text = "Excluded",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            fontWeight = FontWeight.Bold,
+                                            color = MaterialTheme.colorScheme.onSecondaryContainer
+                                        )
+                                    }
+                                }
+                            }
+                            if (expense.linkedSmsSignatures.isNotEmpty()) {
+                                Surface(
+                                    shape = RoundedCornerShape(50),
+                                    color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.8f),
+                                    modifier = Modifier.testTag("linked_sms_badge_${expense.id}")
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Link,
+                                            contentDescription = null,
+                                            tint = MaterialTheme.colorScheme.primary,
+                                            modifier = Modifier.size(12.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Text(
+                                            text = "Linked (${expense.linkedSmsSignatures.size + 1} SMS)",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            fontWeight = FontWeight.Bold,
+                                            color = MaterialTheme.colorScheme.primary
+                                        )
+                                    }
+                                }
                             }
                         }
                     }
@@ -2411,10 +2455,41 @@ fun ExpenseTransactionItemCard(
                     text = "${if (isIncome) "+" else "-"}${formatCurrency(expense.amount, currencySymbol)}",
                     style = MaterialTheme.typography.titleMedium.copy(fontFamily = ReceiptMonoFontFamily),
                     fontWeight = FontWeight.Bold,
-                    color = if (isIncome) BudgetSafeGreen else MaterialTheme.colorScheme.onSurface
+                    color = when {
+                        expense.isExcludedFromExpense -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.65f)
+                        isIncome -> BudgetSafeGreen
+                        else -> MaterialTheme.colorScheme.onSurface
+                    }
                 )
 
                 Spacer(modifier = Modifier.width(2.dp))
+
+                if (!isIncome) {
+                    IconButton(
+                        onClick = {
+                            performHaptic()
+                            onToggleExcludeTransaction()
+                        },
+                        modifier = Modifier
+                            .size(34.dp)
+                            .testTag("exclude_tx_button_${expense.id}")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.MoneyOff,
+                            contentDescription = if (expense.isExcludedFromExpense) {
+                                "Include in Expenses"
+                            } else {
+                                "Exclude from Expenses"
+                            },
+                            tint = if (expense.isExcludedFromExpense) {
+                                BudgetWarnAmber
+                            } else {
+                                MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f)
+                            },
+                            modifier = Modifier.size(17.dp)
+                        )
+                    }
+                }
 
                 IconButton(
                     onClick = {
@@ -2422,7 +2497,7 @@ fun ExpenseTransactionItemCard(
                         onLinkDuplicate()
                     },
                     modifier = Modifier
-                        .size(38.dp)
+                        .size(34.dp)
                         .testTag("link_duplicate_button_${expense.id}")
                 ) {
                     Icon(
@@ -2433,7 +2508,7 @@ fun ExpenseTransactionItemCard(
                         } else {
                             MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.65f)
                         },
-                        modifier = Modifier.size(18.dp)
+                        modifier = Modifier.size(17.dp)
                     )
                 }
             }

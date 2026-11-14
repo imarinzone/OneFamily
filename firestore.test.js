@@ -31,7 +31,7 @@ before(async () => {
 
 after(async () => {
   if (testEnv) {
-    await testEnv.cleanup();
+    await testEnv.clearFirestore();
   }
 });
 
@@ -244,4 +244,117 @@ test("SMS deduplication signatures: linkedSmsSignatures allowed on create/update
       })
   );
 });
+
+test("FinancialAccounts: DEBIT_CARD linked to bank and monthlySpendLimit allowed for owner, negative spend limit and cross-user denied", async () => {
+  const aliceDb = testEnv.authenticatedContext(ALICE_UID).firestore();
+  const bobDb = testEnv.authenticatedContext(BOB_UID).firestore();
+  const now = new Date(Date.now() - 1000);
+
+  await assertSucceeds(
+    aliceDb
+      .collection("users")
+      .doc(ALICE_UID)
+      .collection("accounts")
+      .doc("hdfc_debit_5512")
+      .set({
+        userId: ALICE_UID,
+        name: "HDFC Millennia Debit Card ••5512",
+        bankName: "HDFC Bank",
+        accountType: "DEBIT_CARD",
+        lastFourDigits: "5512",
+        balance: 84250,
+        creditLimit: 0,
+        linkedBankAccountId: "hdfc_salary_4321",
+        linkedBankAccountName: "HDFC Salary A/c",
+        monthlySpendLimit: 15000,
+        alertThresholdPercent: 80,
+        isSharedVisible: true,
+        createdAt: now,
+        updatedAt: now,
+      })
+  );
+
+  await assertSucceeds(
+    aliceDb
+      .collection("users")
+      .doc(ALICE_UID)
+      .collection("accounts")
+      .doc("hdfc_debit_5512")
+      .update({
+        monthlySpendLimit: 20000,
+        alertThresholdPercent: 85,
+        updatedAt: new Date(Date.now() - 500),
+      })
+  );
+
+  await assertFails(
+    aliceDb
+      .collection("users")
+      .doc(ALICE_UID)
+      .collection("accounts")
+      .doc("hdfc_debit_5512")
+      .update({
+        monthlySpendLimit: -500,
+        updatedAt: new Date(Date.now() - 250),
+      })
+  );
+
+  await assertFails(
+    bobDb.collection("users").doc(ALICE_UID).collection("accounts").get()
+  );
+});
+
+test("Excluded expenses: isExcludedFromExpense boolean allowed on create/update, non-boolean rejected", async () => {
+  const aliceDb = testEnv.authenticatedContext(ALICE_UID).firestore();
+  const now = new Date(Date.now() - 1000);
+
+  await assertSucceeds(
+    aliceDb
+      .collection("users")
+      .doc(ALICE_UID)
+      .collection("personal_expenses")
+      .doc("excluded_exp_1")
+      .set({
+        userId: ALICE_UID,
+        userName: "Alice",
+        title: "Self Transfer to Savings",
+        amount: 15000,
+        type: "EXPENSE",
+        category: "Investments",
+        accountName: "HDFC Bank ••4821",
+        paymentMode: "BANK",
+        visibility: "PERSONAL",
+        isExcludedFromExpense: true,
+        transactionDateMillis: 1730000000000,
+        createdAt: now,
+        updatedAt: now,
+      })
+  );
+
+  await assertSucceeds(
+    aliceDb
+      .collection("users")
+      .doc(ALICE_UID)
+      .collection("personal_expenses")
+      .doc("excluded_exp_1")
+      .update({
+        isExcludedFromExpense: false,
+        updatedAt: new Date(Date.now() - 500),
+      })
+  );
+
+  await assertFails(
+    aliceDb
+      .collection("users")
+      .doc(ALICE_UID)
+      .collection("personal_expenses")
+      .doc("excluded_exp_1")
+      .update({
+        isExcludedFromExpense: "yes",
+        updatedAt: new Date(Date.now() - 250),
+      })
+  );
+});
+
+
 

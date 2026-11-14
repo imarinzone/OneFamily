@@ -111,8 +111,18 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.layout.offset
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.filled.MoneyOff
+import androidx.compose.material.icons.filled.RotateRight
+import androidx.compose.material3.Switch
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -384,6 +394,7 @@ private fun InteractiveReceiptSheet(
     initialTagsInput: String,
     initialNotes: String,
     initialIsShared: Boolean,
+    initialIsExcludedFromExpense: Boolean = false,
     initialDateMillis: Long,
     rawSmsRecord: SmsRawRecord? = null,
     linkedSmsRecords: List<SmsRawRecord> = emptyList(),
@@ -397,6 +408,7 @@ private fun InteractiveReceiptSheet(
     onDelete: (() -> Unit)? = null,
     onLinkDuplicate: (() -> Unit)? = null,
     onDismiss: () -> Unit,
+    onSaveExcluded: (Boolean) -> Unit = {},
     onSave: (
         title: String,
         amount: Double,
@@ -423,6 +435,7 @@ private fun InteractiveReceiptSheet(
     var tagsInput by remember { mutableStateOf(initialTagsInput) }
     var notes by remember { mutableStateOf(initialNotes) }
     var isShared by remember { mutableStateOf(initialIsShared && hasHousehold) }
+    var isExcludedFromExpense by remember { mutableStateOf(initialIsExcludedFromExpense) }
     var txDateMillis by remember { mutableLongStateOf(initialDateMillis) }
     var showExtraDetails by remember { mutableStateOf(initialNotes.isNotBlank() || initialTagsInput.isNotBlank()) }
     var showDatePickerModal by remember { mutableStateOf(false) }
@@ -932,6 +945,81 @@ private fun InteractiveReceiptSheet(
                             }
                         }
 
+                        // Exclude from Expenses Toggle Card (when transaction is an Expense)
+                        AnimatedVisibility(visible = type == "EXPENSE") {
+                            Surface(
+                                shape = RoundedCornerShape(18.dp),
+                                color = if (isExcludedFromExpense) {
+                                    MaterialTheme.colorScheme.secondaryContainer
+                                } else {
+                                    MaterialTheme.colorScheme.surfaceContainerHigh
+                                },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(top = 8.dp)
+                                    .clip(RoundedCornerShape(18.dp))
+                                    .clickable {
+                                        performHaptic()
+                                        isExcludedFromExpense = !isExcludedFromExpense
+                                    }
+                                    .testTag("transaction_exclude_expense_row")
+                            ) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 14.dp, vertical = 10.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        modifier = Modifier.weight(1f)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.MoneyOff,
+                                            contentDescription = null,
+                                            tint = if (isExcludedFromExpense) {
+                                                MaterialTheme.colorScheme.onSecondaryContainer
+                                            } else {
+                                                MaterialTheme.colorScheme.onSurfaceVariant
+                                            },
+                                            modifier = Modifier.size(20.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(10.dp))
+                                        Column {
+                                            Text(
+                                                text = "Exclude from Expenses",
+                                                style = MaterialTheme.typography.titleSmall,
+                                                fontWeight = FontWeight.Bold,
+                                                color = if (isExcludedFromExpense) {
+                                                    MaterialTheme.colorScheme.onSecondaryContainer
+                                                } else {
+                                                    MaterialTheme.colorScheme.onSurface
+                                                }
+                                            )
+                                            Text(
+                                                text = "Ignore in monthly spend, budgets & trends",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = if (isExcludedFromExpense) {
+                                                    MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.8f)
+                                                } else {
+                                                    MaterialTheme.colorScheme.onSurfaceVariant
+                                                }
+                                            )
+                                        }
+                                    }
+                                    Switch(
+                                        checked = isExcludedFromExpense,
+                                        onCheckedChange = {
+                                            performHaptic()
+                                            isExcludedFromExpense = it
+                                        },
+                                        modifier = Modifier.testTag("transaction_exclude_expense_switch")
+                                    )
+                                }
+                            }
+                        }
+
                         // Progressive Disclosure: Expandable More Details
                         TextButton(
                             onClick = { showExtraDetails = !showExtraDetails },
@@ -1005,6 +1093,8 @@ private fun InteractiveReceiptSheet(
                                     } else {
                                         category
                                     }
+                                    val effectiveExcluded = type == "EXPENSE" && isExcludedFromExpense
+                                    onSaveExcluded(effectiveExcluded)
                                     onSave(
                                         title.trim().ifBlank { finalCat },
                                         amt,
@@ -1131,6 +1221,7 @@ fun AddTransactionDialog(
     availableCategories: List<String>,
     currencySymbol: String,
     onDismiss: () -> Unit,
+    onSaveExcluded: (Boolean) -> Unit = {},
     onSave: (
         title: String,
         amount: Double,
@@ -1154,6 +1245,7 @@ fun AddTransactionDialog(
         initialTagsInput = "",
         initialNotes = "",
         initialIsShared = hasHousehold && defaultShared,
+        initialIsExcludedFromExpense = false,
         initialDateMillis = System.currentTimeMillis(),
         rawSmsRecord = null,
         hasHousehold = hasHousehold,
@@ -1164,6 +1256,7 @@ fun AddTransactionDialog(
         titleTestTag = "add_tx_title_input",
         saveTestTag = "save_transaction_button",
         onDismiss = onDismiss,
+        onSaveExcluded = onSaveExcluded,
         onSave = onSave
     )
 }
@@ -1177,6 +1270,7 @@ fun EditTransactionDialog(
     onDismiss: () -> Unit,
     onDelete: () -> Unit,
     onLinkDuplicate: (() -> Unit)? = null,
+    onSaveExcluded: (Boolean) -> Unit = {},
     onSave: (
         title: String,
         amount: Double,
@@ -1212,6 +1306,7 @@ fun EditTransactionDialog(
         initialTagsInput = transaction.tags.joinToString(", "),
         initialNotes = transaction.notes,
         initialIsShared = transaction.visibility == "SHARED" && hasHousehold,
+        initialIsExcludedFromExpense = transaction.isExcludedFromExpense,
         initialDateMillis = transaction.transactionDateMillis,
         rawSmsRecord = rawSmsRecord,
         linkedSmsRecords = linkedSmsRecords,
@@ -1225,6 +1320,7 @@ fun EditTransactionDialog(
         onDelete = onDelete,
         onLinkDuplicate = onLinkDuplicate,
         onDismiss = onDismiss,
+        onSaveExcluded = onSaveExcluded,
         onSave = { title, amount, type, category, accountName, paymentMode, tagsInput, notes, isShared, txDateMillis ->
             onSave(
                 title,
@@ -1242,6 +1338,12 @@ fun EditTransactionDialog(
     )
 }
 
+/**
+ * Interactive 360° Circular Scroll Wheel Category Editor (`QuickCategoryPickerDialog`):
+ * Triggered when the user long-presses a transaction's category icon.
+ * Allows spinning/dragging around the circular dial (or tapping any radial node / step button)
+ * to edit the transaction's category with tactile haptics.
+ */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun QuickCategoryPickerDialog(
@@ -1253,91 +1355,398 @@ fun QuickCategoryPickerDialog(
 ) {
     val dimens = LocalAppDimens.current
     val performHaptic = rememberAppHapticPerformer()
-    var selectedCat by remember(transaction.id) { mutableStateOf(transaction.category) }
-    var customCategory by remember { mutableStateOf("") }
+    val density = LocalDensity.current
 
     val categories = remember(availableCategories, transaction.category) {
         (availableCategories + listOf(transaction.category))
             .filter { it.isNotBlank() }
             .distinctBy { it.lowercase() }
+            .ifEmpty { ExpenseCategories.ALL }
     }
 
-    Dialog(onDismissRequest = onDismiss) {
-        AnimatedModalSheetContainer {
+    val initialIdx = remember(categories, transaction.category) {
+        categories.indexOfFirst { it.equals(transaction.category, ignoreCase = true) }.coerceAtLeast(0)
+    }
+
+    val count = categories.size.coerceAtLeast(1)
+    val stepAngleDeg = 360f / count.toFloat()
+
+    // Wheel rotation angle in degrees; when rotationAngleDeg == -idx * stepAngleDeg, category[idx] sits at 12 o'clock (-90 deg)
+    var wheelRotationDeg by remember(transaction.id, count) {
+        mutableFloatStateOf(-initialIdx * stepAngleDeg)
+    }
+    var selectedIdx by remember(transaction.id, count) {
+        mutableIntStateOf(initialIdx)
+    }
+    var customCategory by remember { mutableStateOf("") }
+
+    val selectedCat = categories.getOrElse(selectedIdx.coerceIn(0, categories.lastIndex)) {
+        transaction.category
+    }
+
+    val animatedWheelRotationDeg by animateFloatAsState(
+        targetValue = wheelRotationDeg,
+        animationSpec = spring(
+            dampingRatio = Spring.DampingRatioNoBouncy,
+            stiffness = Spring.StiffnessMediumLow
+        ),
+        label = "circular_category_wheel_rotation"
+    )
+
+    fun normalizePositiveMod(value: Int, mod: Int): Int {
+        val r = value % mod
+        return if (r < 0) r + mod else r
+    }
+
+    fun updateSelectionFromAngle(newAngleDeg: Float) {
+        val rawSlot = kotlin.math.round(-newAngleDeg / stepAngleDeg).toInt()
+        val idx = normalizePositiveMod(rawSlot, count)
+        if (idx != selectedIdx) {
+            selectedIdx = idx
+            performHaptic()
+        }
+    }
+
+    fun stepWheelBy(deltaSlots: Int) {
+        val nextIdx = normalizePositiveMod(selectedIdx + deltaSlots, count)
+        selectedIdx = nextIdx
+        wheelRotationDeg -= deltaSlots * stepAngleDeg
+        customCategory = ""
+        performHaptic()
+    }
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        AnimatedModalSheetContainer(
+            modifier = Modifier.fillMaxWidth(0.94f)
+        ) {
             Surface(
-                shape = RoundedCornerShape(28.dp),
+                shape = RoundedCornerShape(32.dp),
                 color = MaterialTheme.colorScheme.surfaceContainerHigh,
-                tonalElevation = 6.dp
+                tonalElevation = 6.dp,
+                modifier = Modifier.testTag("circular_category_wheel_dialog")
             ) {
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(dimens.cardPadding)
                         .verticalScroll(rememberScrollState()),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     M3ModalHeroHeader(
                         icon = categoryIcon(selectedCat),
                         title = transaction.title,
-                        subtitle = "Quickly assign a receipt category",
+                        subtitle = "Spin the circular wheel or tap an icon to change category",
                         iconTint = categoryAccentColor(selectedCat)
                     )
 
                     ReceiptDashedDividerLine()
 
-                    FlowRow(
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    // Step Counter-Clockwise / Active Slot Pill / Step Clockwise Controls
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        categories.forEach { cat ->
-                            val accent = categoryAccentColor(cat)
-                            val isSel = selectedCat.equals(cat, ignoreCase = true) && customCategory.isBlank()
+                        CircularTonalIconButton(
+                            icon = Icons.AutoMirrored.Filled.KeyboardArrowLeft,
+                            contentDescription = "Previous Category on Wheel",
+                            onClick = { stepWheelBy(-1) },
+                            modifier = Modifier.testTag("wheel_step_prev_button")
+                        )
+
+                        Surface(
+                            shape = RoundedCornerShape(50),
+                            color = categoryAccentColor(selectedCat).copy(alpha = 0.16f)
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.RotateRight,
+                                    contentDescription = null,
+                                    tint = categoryAccentColor(selectedCat),
+                                    modifier = Modifier.size(15.dp)
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = "${selectedIdx + 1} / $count • $selectedCat",
+                                    style = MaterialTheme.typography.labelMedium.copy(fontFamily = ReceiptMonoFontFamily),
+                                    fontWeight = FontWeight.Bold,
+                                    color = categoryAccentColor(selectedCat)
+                                )
+                            }
+                        }
+
+                        CircularTonalIconButton(
+                            icon = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                            contentDescription = "Next Category on Wheel",
+                            onClick = { stepWheelBy(1) },
+                            modifier = Modifier.testTag("wheel_step_next_button")
+                        )
+                    }
+
+                    // 360° Interactive Circular Scroll Wheel
+                    val wheelSizeDp = 284.dp
+                    val orbitRadiusDp = 104.dp
+                    val nodeSizeDp = 46.dp
+                    var wheelSizePx by remember { mutableFloatStateOf(1f) }
+
+                    Box(
+                        modifier = Modifier
+                            .size(wheelSizeDp)
+                            .onSizeChanged { wheelSizePx = it.width.toFloat().coerceAtLeast(1f) }
+                            .pointerInput(count) {
+                                detectDragGestures(
+                                    onDrag = { change, dragAmount ->
+                                        change.consume()
+                                        val center = wheelSizePx / 2f
+                                        val prevPos = change.previousPosition
+                                        val currPos = change.position
+                                        val prevDx = prevPos.x - center
+                                        val prevDy = prevPos.y - center
+                                        val currDx = currPos.x - center
+                                        val currDy = currPos.y - center
+                                        val distSq = currDx * currDx + currDy * currDy
+                                        val deltaDeg = if (distSq > 400f) {
+                                            val prevAngle = Math.toDegrees(kotlin.math.atan2(prevDy.toDouble(), prevDx.toDouble())).toFloat()
+                                            val currAngle = Math.toDegrees(kotlin.math.atan2(currDy.toDouble(), currDx.toDouble())).toFloat()
+                                            var diff = currAngle - prevAngle
+                                            while (diff > 180f) diff -= 360f
+                                            while (diff < -180f) diff += 360f
+                                            diff
+                                        } else {
+                                            // Fallback tangential conversion near center
+                                            (dragAmount.x - dragAmount.y) * 0.45f
+                                        }
+                                        val nextRot = wheelRotationDeg + deltaDeg
+                                        wheelRotationDeg = nextRot
+                                        customCategory = ""
+                                        updateSelectionFromAngle(nextRot)
+                                    },
+                                    onDragEnd = {
+                                        // Snap cleanly to the nearest category slot
+                                        val snappedSlot = kotlin.math.round(-wheelRotationDeg / stepAngleDeg).toInt()
+                                        wheelRotationDeg = -snappedSlot * stepAngleDeg
+                                        selectedIdx = normalizePositiveMod(snappedSlot, count)
+                                    }
+                                )
+                            }
+                            .testTag("circular_category_wheel"),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        val activeAccent = categoryAccentColor(selectedCat)
+                        val trackColor = MaterialTheme.colorScheme.outlineVariant
+                        val surfaceLowest = MaterialTheme.colorScheme.surfaceContainerLowest
+
+                        // Wheel Dial Track, Tick Marks & 12-o'clock Active Selector Pointer
+                        Canvas(modifier = Modifier.fillMaxSize()) {
+                            val cx = size.width / 2f
+                            val cy = size.height / 2f
+                            val orbitRadiusPx = with(density) { orbitRadiusDp.toPx() }
+                            val outerRingRadiusPx = orbitRadiusPx + with(density) { 24.dp.toPx() }
+
+                            drawCircle(
+                                color = surfaceLowest,
+                                radius = outerRingRadiusPx,
+                                center = Offset(cx, cy)
+                            )
+
+                            drawCircle(
+                                color = trackColor.copy(alpha = 0.45f),
+                                radius = orbitRadiusPx,
+                                center = Offset(cx, cy),
+                                style = Stroke(width = 2.dp.toPx())
+                            )
+
+                            // Radial tick marks around the dial
+                            val tickCount = count * 2
+                            for (t in 0 until tickCount) {
+                                val tickAngleRad = Math.toRadians((animatedWheelRotationDeg + t * (360f / tickCount) - 90f).toDouble())
+                                val isMajor = t % 2 == 0
+                                val innerR = outerRingRadiusPx - (if (isMajor) 10.dp.toPx() else 5.dp.toPx())
+                                val start = Offset(
+                                    x = cx + (innerR * kotlin.math.cos(tickAngleRad)).toFloat(),
+                                    y = cy + (innerR * kotlin.math.sin(tickAngleRad)).toFloat()
+                                )
+                                val end = Offset(
+                                    x = cx + (outerRingRadiusPx * kotlin.math.cos(tickAngleRad)).toFloat(),
+                                    y = cy + (outerRingRadiusPx * kotlin.math.sin(tickAngleRad)).toFloat()
+                                )
+                                drawLine(
+                                    color = if (isMajor) activeAccent.copy(alpha = 0.55f) else trackColor.copy(alpha = 0.35f),
+                                    start = start,
+                                    end = end,
+                                    strokeWidth = if (isMajor) 2.dp.toPx() else 1.dp.toPx(),
+                                    cap = StrokeCap.Round
+                                )
+                            }
+
+                            // 12 o'clock highlight halo for the active category slot
+                            val topSlotCenter = Offset(cx, cy - orbitRadiusPx)
+                            drawCircle(
+                                color = activeAccent.copy(alpha = 0.20f),
+                                radius = 29.dp.toPx(),
+                                center = topSlotCenter
+                            )
+                        }
+
+                        // Radial Category Nodes positioned around the 360° wheel
+                        val orbitRadiusPx = with(density) { orbitRadiusDp.toPx() }
+                        categories.forEachIndexed { index, cat ->
+                            val angleDeg = animatedWheelRotationDeg + (index * stepAngleDeg) - 90f
+                            val angleRad = Math.toRadians(angleDeg.toDouble())
+                            val offsetX = (orbitRadiusPx * kotlin.math.cos(angleRad)).toInt()
+                            val offsetY = (orbitRadiusPx * kotlin.math.sin(angleRad)).toInt()
+                            val isNodeSelected = index == selectedIdx && customCategory.isBlank()
+                            val nodeAccent = categoryAccentColor(cat)
+                            val catTag = cat.lowercase().replace(Regex("[^a-z0-9]+"), "_").trim('_')
+                            val nodeScale by animateFloatAsState(
+                                targetValue = if (isNodeSelected) 1.18f else 0.92f,
+                                animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy),
+                                label = "wheel_node_scale_$index"
+                            )
+
                             Surface(
-                                shape = RoundedCornerShape(50),
-                                color = if (isSel) accent else accent.copy(alpha = 0.14f),
+                                shape = CircleShape,
+                                color = if (isNodeSelected) nodeAccent else MaterialTheme.colorScheme.surfaceContainerHighest,
+                                shadowElevation = if (isNodeSelected) 6.dp else 1.dp,
                                 modifier = Modifier
-                                    .clip(RoundedCornerShape(50))
+                                    .offset { IntOffset(offsetX, offsetY) }
+                                    .size(nodeSizeDp)
+                                    .graphicsLayer {
+                                        scaleX = nodeScale
+                                        scaleY = nodeScale
+                                    }
+                                    .clip(CircleShape)
+                                    .border(
+                                        width = if (isNodeSelected) 2.5.dp else 1.dp,
+                                        color = if (isNodeSelected) Color.White else nodeAccent.copy(alpha = 0.4f),
+                                        shape = CircleShape
+                                    )
                                     .clickable {
                                         performHaptic()
-                                        selectedCat = cat
-                                        onSelectCategory(cat)
+                                        customCategory = ""
+                                        if (selectedIdx == index) {
+                                            onSelectCategory(cat)
+                                        } else {
+                                            selectedIdx = index
+                                            wheelRotationDeg = -index * stepAngleDeg
+                                        }
                                     }
+                                    .testTag("wheel_category_node_$catTag")
                             ) {
-                                Row(
-                                    modifier = Modifier.padding(
-                                        horizontal = 12.dp,
-                                        vertical = 8.dp
-                                    ),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
+                                Box(contentAlignment = Alignment.Center) {
                                     Icon(
                                         imageVector = categoryIcon(cat),
-                                        contentDescription = null,
-                                        tint = if (isSel) Color.White else accent,
-                                        modifier = Modifier.size(16.dp)
-                                    )
-                                    Spacer(modifier = Modifier.width(6.dp))
-                                    Text(
-                                        text = cat,
-                                        style = MaterialTheme.typography.labelLarge,
-                                        color = if (isSel) Color.White else accent,
-                                        fontWeight = FontWeight.Bold
+                                        contentDescription = cat,
+                                        tint = if (isNodeSelected) Color.White else nodeAccent,
+                                        modifier = Modifier.size(21.dp)
                                     )
                                 }
                             }
                         }
+
+                        // Center Hub of the Circular Wheel: Displays Active Category & Apply Action
+                        Surface(
+                            shape = CircleShape,
+                            color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                            tonalElevation = 8.dp,
+                            shadowElevation = 4.dp,
+                            modifier = Modifier
+                                .size(118.dp)
+                                .clip(CircleShape)
+                                .border(2.dp, activeAccent.copy(alpha = 0.55f), CircleShape)
+                                .clickable {
+                                    performHaptic()
+                                    val target = customCategory.trim().takeIf {
+                                        it.isNotBlank() && validateCategoryName(it) == null
+                                    } ?: selectedCat
+                                    onSelectCategory(target)
+                                }
+                                .testTag("circular_wheel_center_hub")
+                        ) {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .padding(8.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.Center
+                            ) {
+                                SquircleIconBadge(
+                                    icon = categoryIcon(selectedCat),
+                                    tint = activeAccent,
+                                    containerColor = activeAccent.copy(alpha = 0.16f),
+                                    size = 36.dp,
+                                    iconSize = 19.dp,
+                                    contentDescription = selectedCat
+                                )
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(
+                                    text = selectedCat,
+                                    style = MaterialTheme.typography.labelMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    textAlign = TextAlign.Center,
+                                    modifier = Modifier.testTag("circular_wheel_active_category_label")
+                                )
+                                Text(
+                                    text = "Tap to Apply",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = activeAccent
+                                )
+                            }
+                        }
+                    }
+
+                    // Primary Apply Selected Wheel Category CTA Button
+                    Button(
+                        onClick = {
+                            performHaptic()
+                            val target = customCategory.trim().takeIf {
+                                it.isNotBlank() && validateCategoryName(it) == null
+                            } ?: selectedCat
+                            onSelectCategory(target)
+                        },
+                        shape = RoundedCornerShape(50),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = categoryAccentColor(selectedCat)
+                        ),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("circular_wheel_apply_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Check,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = "Set Category to ${customCategory.trim().ifBlank { selectedCat }}",
+                            fontWeight = FontWeight.Bold
+                        )
                     }
 
                     val customCatErr = if (customCategory.isNotEmpty()) validateCategoryName(customCategory) else null
                     OutlinedTextField(
                         value = customCategory,
                         onValueChange = { customCategory = it.take(40) },
-                        label = { Text("New Category") },
+                        label = { Text("Or Type Custom Category") },
                         isError = customCatErr != null,
                         supportingText = customCatErr?.let { err -> { Text(err) } },
                         singleLine = true,
                         shape = RoundedCornerShape(16.dp),
-                        modifier = Modifier.fillMaxWidth()
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("wheel_custom_category_input")
                     )
 
                     Row(
@@ -1943,6 +2352,8 @@ fun EditOverallBudgetDialog(
 @Composable
 fun AddAccountDialog(
     currencySymbol: String,
+    accounts: List<com.example.data.model.FinancialAccount> = emptyList(),
+    initialAccountType: String = "BANK",
     onDismiss: () -> Unit,
     onSave: (
         name: String,
@@ -1950,24 +2361,36 @@ fun AddAccountDialog(
         accountType: String,
         lastFour: String,
         balance: Double,
-        creditLimit: Double
+        creditLimit: Double,
+        linkedBankAccountId: String,
+        linkedBankAccountName: String,
+        monthlySpendLimit: Double
     ) -> Unit
 ) {
     val dimens = LocalAppDimens.current
     val performHaptic = rememberAppHapticPerformer()
+    val bankAccounts = remember(accounts) {
+        accounts.filter {
+            it.accountType.equals("BANK", ignoreCase = true) ||
+                it.accountType.equals("UPI", ignoreCase = true)
+        }
+    }
+    var accountType by remember { mutableStateOf(initialAccountType) }
     var bankName by remember { mutableStateOf("") }
-    var accountType by remember { mutableStateOf("BANK") }
+    var selectedLinkedBankId by remember { mutableStateOf(bankAccounts.firstOrNull()?.id.orEmpty()) }
+    var linkedBankNameInput by remember { mutableStateOf(bankAccounts.firstOrNull()?.name.orEmpty()) }
     var lastFour by remember { mutableStateOf("") }
     var balanceText by remember { mutableStateOf("") }
     var creditLimitText by remember { mutableStateOf("") }
+    var spendLimitText by remember { mutableStateOf("") }
     var attemptedSave by remember { mutableStateOf(false) }
 
     val bankNameError = if (attemptedSave || bankName.isNotEmpty()) {
-        if (bankName.trim().length < 2) "Enter a valid bank or account name (min 2 chars)." else null
+        if (bankName.trim().length < 2) "Enter a valid bank, card, or wallet name (min 2 chars)." else null
     } else {
         null
     }
-    val requiresDigits = accountType == "BANK" || accountType == "CREDIT_CARD"
+    val requiresDigits = accountType == "BANK" || accountType == "CREDIT_CARD" || accountType == "DEBIT_CARD"
     val lastFourError = if (attemptedSave || lastFour.isNotEmpty()) {
         if (requiresDigits && lastFour.length != 4) {
             "Enter the last 4 digits of your account/card."
@@ -1989,6 +2412,18 @@ fun AddAccountDialog(
     } else {
         null
     }
+    val spendLimitError = if (spendLimitText.isNotEmpty()) {
+        validateNonNegativeAmount(spendLimitText, maxAllowed = 100_000_000.0)
+    } else {
+        null
+    }
+    val linkedBankError = if (accountType == "DEBIT_CARD" && attemptedSave &&
+        selectedLinkedBankId.isBlank() && linkedBankNameInput.trim().length < 2
+    ) {
+        "Select or enter the linked bank account."
+    } else {
+        null
+    }
 
     Dialog(onDismissRequest = onDismiss) {
         AnimatedModalSheetContainer {
@@ -2007,7 +2442,7 @@ fun AddAccountDialog(
                     M3ModalHeroHeader(
                         icon = Icons.Default.AccountBalance,
                         title = "Add Account",
-                        subtitle = "Link a bank account, credit card, UPI, or wallet"
+                        subtitle = "Track wallet, bank account, linked debit card, or credit card"
                     )
 
                     ReceiptDashedDividerLine()
@@ -2016,13 +2451,26 @@ fun AddAccountDialog(
                         modifier = Modifier.horizontalScroll(rememberScrollState()),
                         horizontalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
-                        listOf("BANK", "CREDIT_CARD", "UPI", "CASH").forEach { type ->
+                        listOf(
+                            "WALLET" to "Wallet",
+                            "BANK" to "Bank",
+                            "DEBIT_CARD" to "Debit Card",
+                            "CREDIT_CARD" to "Credit Card",
+                            "UPI" to "UPI",
+                            "CASH" to "Cash"
+                        ).forEach { (type, label) ->
                             val selected = accountType == type
                             FilterChip(
                                 selected = selected,
                                 onClick = {
                                     performHaptic()
                                     accountType = type
+                                    if (type == "DEBIT_CARD" && selectedLinkedBankId.isBlank() && bankAccounts.isNotEmpty()) {
+                                        val firstBank = bankAccounts.first()
+                                        selectedLinkedBankId = firstBank.id
+                                        linkedBankNameInput = firstBank.name
+                                        if (bankName.isBlank()) bankName = firstBank.bankName
+                                    }
                                 },
                                 leadingIcon = if (selected) {
                                     {
@@ -2035,8 +2483,78 @@ fun AddAccountDialog(
                                 } else {
                                     null
                                 },
-                                label = { Text(type) },
-                                shape = RoundedCornerShape(50)
+                                label = { Text(label) },
+                                shape = RoundedCornerShape(50),
+                                modifier = Modifier.testTag("account_type_chip_${type.lowercase()}")
+                            )
+                        }
+                    }
+
+                    if (accountType == "DEBIT_CARD") {
+                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Text(
+                                text = "Link to Bank Account",
+                                style = MaterialTheme.typography.labelLarge,
+                                fontWeight = FontWeight.SemiBold,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                            if (bankAccounts.isNotEmpty()) {
+                                Row(
+                                    modifier = Modifier.horizontalScroll(rememberScrollState()),
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    bankAccounts.forEach { bankAcc ->
+                                        val isLinked = selectedLinkedBankId == bankAcc.id
+                                        val chipLabel = if (bankAcc.lastFourDigits.isNotBlank()) {
+                                            "${bankAcc.name} ••${bankAcc.lastFourDigits}"
+                                        } else {
+                                            bankAcc.name
+                                        }
+                                        FilterChip(
+                                            selected = isLinked,
+                                            onClick = {
+                                                performHaptic()
+                                                selectedLinkedBankId = bankAcc.id
+                                                linkedBankNameInput = bankAcc.name
+                                                if (bankName.isBlank() || bankAccounts.any { it.bankName.equals(bankName, ignoreCase = true) }) {
+                                                    bankName = bankAcc.bankName
+                                                }
+                                            },
+                                            leadingIcon = if (isLinked) {
+                                                {
+                                                    Icon(
+                                                        imageVector = Icons.Default.Check,
+                                                        contentDescription = null,
+                                                        modifier = Modifier.size(14.dp)
+                                                    )
+                                                }
+                                            } else {
+                                                null
+                                            },
+                                            label = { Text(chipLabel) },
+                                            shape = RoundedCornerShape(50),
+                                            modifier = Modifier.testTag("link_bank_chip_${bankAcc.id}")
+                                        )
+                                    }
+                                }
+                            }
+                            OutlinedTextField(
+                                value = linkedBankNameInput,
+                                onValueChange = {
+                                    linkedBankNameInput = it.take(80)
+                                    if (bankAccounts.none { b -> b.name.equals(it.trim(), ignoreCase = true) }) {
+                                        selectedLinkedBankId = ""
+                                    }
+                                },
+                                label = { Text("Linked Bank Account Name") },
+                                placeholder = { Text("e.g. HDFC Salary A/c") },
+                                isError = linkedBankError != null,
+                                supportingText = linkedBankError?.let { err -> { Text(err) } },
+                                singleLine = true,
+                                shape = RoundedCornerShape(16.dp),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .testTag("add_account_linked_bank_input")
                             )
                         }
                     }
@@ -2044,8 +2562,26 @@ fun AddAccountDialog(
                     OutlinedTextField(
                         value = bankName,
                         onValueChange = { bankName = it.take(60) },
-                        label = { Text("Bank / Account Name") },
-                        placeholder = { Text("e.g. HDFC Bank") },
+                        label = {
+                            Text(
+                                when (accountType) {
+                                    "WALLET" -> "Wallet Provider Name"
+                                    "DEBIT_CARD" -> "Card Issuer / Bank Name"
+                                    "CREDIT_CARD" -> "Card Bank / Issuer Name"
+                                    else -> "Bank / Account Name"
+                                }
+                            )
+                        },
+                        placeholder = {
+                            Text(
+                                when (accountType) {
+                                    "WALLET" -> "e.g. Paytm Wallet"
+                                    "DEBIT_CARD" -> "e.g. HDFC Millennia Debit"
+                                    "CREDIT_CARD" -> "e.g. Axis Neo"
+                                    else -> "e.g. HDFC Bank"
+                                }
+                            )
+                        },
                         isError = bankNameError != null,
                         supportingText = bankNameError?.let { err -> { Text(err) } },
                         singleLine = true,
@@ -2104,6 +2640,24 @@ fun AddAccountDialog(
                                 .testTag("add_account_credit_limit_input")
                         )
                     }
+                    OutlinedTextField(
+                        value = spendLimitText,
+                        onValueChange = { spendLimitText = sanitizeDecimalInput(it, maxIntegerDigits = 9) },
+                        label = { Text("Monthly Spend Limit ($currencySymbol, Optional)") },
+                        placeholder = { Text("Leave blank for no spend limit") },
+                        textStyle = MaterialTheme.typography.bodyLarge.copy(
+                            fontFamily = ReceiptMonoFontFamily,
+                            fontWeight = FontWeight.SemiBold
+                        ),
+                        isError = spendLimitError != null,
+                        supportingText = spendLimitError?.let { err -> { Text(err) } },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                        singleLine = true,
+                        shape = RoundedCornerShape(16.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("add_account_spend_limit_input")
+                    )
 
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -2131,19 +2685,44 @@ fun AddAccountDialog(
                                 } else {
                                     null
                                 }
+                                val spLimErr = if (spendLimitText.isNotEmpty()) {
+                                    validateNonNegativeAmount(spendLimitText, maxAllowed = 100_000_000.0)
+                                } else {
+                                    null
+                                }
+                                val lnkErr = if (accountType == "DEBIT_CARD" &&
+                                    selectedLinkedBankId.isBlank() && linkedBankNameInput.trim().length < 2
+                                ) {
+                                    "Invalid"
+                                } else {
+                                    null
+                                }
 
-                                if (nameErr == null && digitsErr == null && balErr == null && limErr == null) {
+                                if (nameErr == null && digitsErr == null && balErr == null &&
+                                    limErr == null && spLimErr == null && lnkErr == null
+                                ) {
                                     performHaptic()
                                     val cleanBank = bankName.trim()
                                     val suffix = if (lastFour.isNotBlank()) " ••$lastFour" else ""
-                                    val displayName = if (accountType == "CREDIT_CARD") "$cleanBank Card$suffix" else "$cleanBank$suffix"
+                                    val displayName = when (accountType) {
+                                        "CREDIT_CARD" -> "$cleanBank Credit Card$suffix"
+                                        "DEBIT_CARD" -> if (cleanBank.contains("debit", ignoreCase = true)) {
+                                            "$cleanBank$suffix"
+                                        } else {
+                                            "$cleanBank Debit Card$suffix"
+                                        }
+                                        else -> "$cleanBank$suffix"
+                                    }
                                     onSave(
                                         displayName,
                                         cleanBank,
                                         accountType,
                                         lastFour,
                                         balanceText.trim().toDoubleOrNull() ?: 0.0,
-                                        if (accountType == "CREDIT_CARD") creditLimitText.trim().toDoubleOrNull() ?: 0.0 else 0.0
+                                        if (accountType == "CREDIT_CARD") creditLimitText.trim().toDoubleOrNull() ?: 0.0 else 0.0,
+                                        if (accountType == "DEBIT_CARD") selectedLinkedBankId else "",
+                                        if (accountType == "DEBIT_CARD") linkedBankNameInput.trim() else "",
+                                        spendLimitText.trim().toDoubleOrNull() ?: 0.0
                                     )
                                 }
                             },

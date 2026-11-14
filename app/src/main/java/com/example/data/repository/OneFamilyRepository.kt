@@ -556,8 +556,15 @@ class OneFamilyRepository(
         return db.collection("users").document(userId).collection("personal_expenses")
             .snapshots()
             .map { snapshot ->
-                val rawList = snapshot.toObjects(ExpenseTransaction::class.java, DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
-                    .sortedByDescending { it.transactionDateMillis }
+                val rawList = snapshot.documents.mapNotNull { doc ->
+                    val parsed = doc.toObject(ExpenseTransaction::class.java, DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
+                    val explicitExcluded = doc.getBoolean("isExcludedFromExpense")
+                    if (parsed != null && explicitExcluded != null && parsed.isExcludedFromExpense != explicitExcluded) {
+                        parsed.copy(isExcludedFromExpense = explicitExcluded)
+                    } else {
+                        parsed
+                    }
+                }.sortedByDescending { it.transactionDateMillis }
                 LocalAccountDataStore.deduplicateSmsExpenses(rawList)
             }
             .catch { error ->
@@ -574,8 +581,15 @@ class OneFamilyRepository(
             .whereArrayContains("memberUids", userId)
             .snapshots()
             .map { snapshot ->
-                val rawList = snapshot.toObjects(ExpenseTransaction::class.java, DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
-                    .sortedByDescending { it.transactionDateMillis }
+                val rawList = snapshot.documents.mapNotNull { doc ->
+                    val parsed = doc.toObject(ExpenseTransaction::class.java, DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
+                    val explicitExcluded = doc.getBoolean("isExcludedFromExpense")
+                    if (parsed != null && explicitExcluded != null && parsed.isExcludedFromExpense != explicitExcluded) {
+                        parsed.copy(isExcludedFromExpense = explicitExcluded)
+                    } else {
+                        parsed
+                    }
+                }.sortedByDescending { it.transactionDateMillis }
                 LocalAccountDataStore.deduplicateSmsExpenses(rawList)
             }
             .catch { error ->
@@ -598,6 +612,7 @@ class OneFamilyRepository(
         smsSignature: String = "",
         linkedSmsSignatures: List<String> = emptyList(),
         referenceNumber: String = "",
+        isExcludedFromExpense: Boolean = false,
         transactionDateMillis: Long = System.currentTimeMillis(),
         customDocId: String? = null
     ): Result<String> = runCatching {
@@ -618,6 +633,7 @@ class OneFamilyRepository(
                 isShared = isShared,
                 smsSignature = smsSignature,
                 referenceNumber = referenceNumber,
+                isExcludedFromExpense = isExcludedFromExpense,
                 transactionDateMillis = transactionDateMillis,
                 customDocId = customDocId
             )
@@ -695,6 +711,7 @@ class OneFamilyRepository(
                 "smsSignature" to smsSignature.take(200),
                 "linkedSmsSignatures" to cleanLinkedSigs,
                 "referenceNumber" to referenceNumber.take(100),
+                "isExcludedFromExpense" to isExcludedFromExpense,
                 "transactionDateMillis" to transactionDateMillis,
                 "memberUids" to memberUids,
                 "createdAt" to FieldValue.serverTimestamp(),
@@ -989,7 +1006,8 @@ class OneFamilyRepository(
         tags: List<String>,
         notes: String,
         transactionDateMillis: Long,
-        isShared: Boolean
+        isShared: Boolean,
+        isExcludedFromExpense: Boolean = existing.isExcludedFromExpense
     ): Result<Unit> = runCatching {
         if (isLocalMode(existing.userId)) {
             val uid = requireLocalUserId()
@@ -1006,7 +1024,8 @@ class OneFamilyRepository(
                 tags = tags,
                 notes = notes,
                 transactionDateMillis = transactionDateMillis,
-                isShared = isShared
+                isShared = isShared,
+                isExcludedFromExpense = isExcludedFromExpense
             )
             return@runCatching
         }
@@ -1063,6 +1082,7 @@ class OneFamilyRepository(
                 "smsSignature" to existing.smsSignature.take(200),
                 "linkedSmsSignatures" to cleanLinkedSigs,
                 "referenceNumber" to existing.referenceNumber.take(100),
+                "isExcludedFromExpense" to isExcludedFromExpense,
                 "transactionDateMillis" to transactionDateMillis.coerceAtLeast(1L),
                 "memberUids" to memberUids,
                 "createdAt" to (existing.createdAt ?: FieldValue.serverTimestamp()),
@@ -1099,12 +1119,46 @@ class OneFamilyRepository(
             "paymentMode" to validMode,
             "tags" to cleanTags,
             "notes" to notes.trim().take(500),
+            "isExcludedFromExpense" to isExcludedFromExpense,
             "transactionDateMillis" to transactionDateMillis.coerceAtLeast(1L),
             "updatedAt" to FieldValue.serverTimestamp()
         )
 
         try {
             docRef.update(updateMap).await()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.UPDATE, docRef.path)
+            throw e
+        }
+    }
+
+    suspend fun setExpenseExcluded(
+        expense: ExpenseTransaction,
+        excluded: Boolean
+    ): Result<ExpenseTransaction> = runCatching {
+        if (isLocalMode(expense.userId)) {
+            return@runCatching LocalAccountDataStore.setExpenseExcluded(expense.id, excluded)
+                ?: expense.copy(isExcludedFromExpense = excluded)
+        }
+        val uid = requireUserId()
+        require(expense.id.isNotBlank()) { "Expense ID must not be blank" }
+        val docRef = if (expense.visibility == "SHARED" && expense.householdId.isNotBlank()) {
+            db.collection("households").document(expense.householdId)
+                .collection("shared_expenses").document(expense.id)
+        } else {
+            db.collection("users").document(uid)
+                .collection("personal_expenses").document(expense.id)
+        }
+        try {
+            docRef.update(
+                mapOf(
+                    "isExcludedFromExpense" to excluded,
+                    "updatedAt" to FieldValue.serverTimestamp()
+                )
+            ).await()
+            expense.copy(isExcludedFromExpense = excluded)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -1205,6 +1259,7 @@ class OneFamilyRepository(
             "smsSignature" to expense.smsSignature.take(200),
             "linkedSmsSignatures" to cleanLinkedSigs,
             "referenceNumber" to expense.referenceNumber.take(100),
+            "isExcludedFromExpense" to expense.isExcludedFromExpense,
             "transactionDateMillis" to expense.transactionDateMillis.coerceAtLeast(1L),
             "memberUids" to memberUids,
             "createdAt" to (expense.createdAt ?: FieldValue.serverTimestamp()),
@@ -1292,6 +1347,7 @@ class OneFamilyRepository(
             "smsSignature" to expense.smsSignature.take(200),
             "linkedSmsSignatures" to cleanLinkedSigs,
             "referenceNumber" to expense.referenceNumber.take(100),
+            "isExcludedFromExpense" to expense.isExcludedFromExpense,
             "transactionDateMillis" to expense.transactionDateMillis.coerceAtLeast(1L),
             "memberUids" to expense.memberUids.ifEmpty { listOf(uid) }.distinct().take(20),
             "createdAt" to (expense.createdAt ?: FieldValue.serverTimestamp()),
@@ -1513,7 +1569,12 @@ class OneFamilyRepository(
         balance: Double,
         creditLimit: Double = 0.0,
         isSharedVisible: Boolean = true,
-        asOfTimestampMillis: Long = Long.MAX_VALUE
+        asOfTimestampMillis: Long = Long.MAX_VALUE,
+        linkedBankAccountId: String? = null,
+        linkedBankAccountName: String? = null,
+        monthlySpendLimit: Double? = null,
+        alertThresholdPercent: Int? = null,
+        explicitId: String? = null
     ): Result<String> = runCatching {
         if (isLocalMode()) {
             val uid = requireLocalUserId()
@@ -1526,11 +1587,16 @@ class OneFamilyRepository(
                 balance = balance,
                 creditLimit = creditLimit,
                 isSharedVisible = isSharedVisible,
-                asOfTimestampMillis = asOfTimestampMillis
+                asOfTimestampMillis = asOfTimestampMillis,
+                linkedBankAccountId = linkedBankAccountId,
+                linkedBankAccountName = linkedBankAccountName,
+                monthlySpendLimit = monthlySpendLimit,
+                alertThresholdPercent = alertThresholdPercent,
+                explicitId = explicitId
             )
         }
         val uid = requireUserId()
-        val docKey = "${bankName}_${accountType}_${lastFourDigits}"
+        val docKey = explicitId?.takeIf { it.isNotBlank() } ?: "${bankName}_${accountType}_${lastFourDigits}"
             .lowercase()
             .replace(Regex("[^a-z0-9]+"), "_")
             .trim('_')
@@ -1544,21 +1610,114 @@ class OneFamilyRepository(
         firestoreAccountTimestampMap[docKey] = asOfTimestampMillis
 
         val docRef = db.collection("users").document(uid).collection("accounts").document(docKey)
-        val payload = mapOf(
-            "userId" to uid,
-            "name" to name.trim().ifBlank { bankName }.take(100),
-            "bankName" to bankName.trim().ifBlank { "Bank" }.take(100),
-            "accountType" to if (accountType in setOf("BANK", "CREDIT_CARD", "WALLET", "CASH", "UPI")) accountType else "BANK",
-            "lastFourDigits" to lastFourDigits.trim().take(10),
-            "balance" to balance,
-            "creditLimit" to creditLimit.coerceAtLeast(0.0),
-            "isSharedVisible" to isSharedVisible,
-            "createdAt" to FieldValue.serverTimestamp(),
-            "updatedAt" to FieldValue.serverTimestamp()
-        )
         try {
+            val existingSnap = docRef.get().await()
+            val normalizedType = accountType.trim().uppercase()
+            val validType = if (normalizedType in setOf("BANK", "DEBIT_CARD", "CREDIT_CARD", "WALLET", "CASH", "UPI")) {
+                normalizedType
+            } else {
+                "BANK"
+            }
+            val resolvedLinkedId = (linkedBankAccountId ?: existingSnap.getString("linkedBankAccountId") ?: "")
+                .trim()
+                .take(128)
+            val resolvedLinkedName = (linkedBankAccountName ?: existingSnap.getString("linkedBankAccountName") ?: "")
+                .trim()
+                .take(100)
+            val resolvedSpendLimit = (monthlySpendLimit ?: existingSnap.getDouble("monthlySpendLimit") ?: 0.0)
+                .coerceAtLeast(0.0)
+            val resolvedAlertPct = (alertThresholdPercent?.toLong() ?: existingSnap.getLong("alertThresholdPercent") ?: 80L)
+                .coerceIn(1L, 100L)
+
+            val payload = hashMapOf<String, Any>(
+                "userId" to uid,
+                "name" to name.trim().ifBlank { bankName }.take(100),
+                "bankName" to bankName.trim().ifBlank { "Bank" }.take(100),
+                "accountType" to validType,
+                "lastFourDigits" to lastFourDigits.trim().take(10),
+                "balance" to balance,
+                "creditLimit" to creditLimit.coerceAtLeast(0.0),
+                "linkedBankAccountId" to resolvedLinkedId,
+                "linkedBankAccountName" to resolvedLinkedName,
+                "monthlySpendLimit" to resolvedSpendLimit,
+                "alertThresholdPercent" to resolvedAlertPct,
+                "isSharedVisible" to isSharedVisible,
+                "createdAt" to (existingSnap.getTimestamp("createdAt") ?: FieldValue.serverTimestamp()),
+                "updatedAt" to FieldValue.serverTimestamp()
+            )
             docRef.set(payload).await()
             docRef.id
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.WRITE, docRef.path)
+            throw e
+        }
+    }
+
+    suspend fun updateAccountSpendLimit(
+        account: FinancialAccount,
+        monthlySpendLimit: Double,
+        alertThresholdPercent: Int = 80
+    ): Result<Unit> = runCatching {
+        if (isLocalMode()) {
+            val uid = requireLocalUserId()
+            LocalAccountDataStore.updateAccountSpendLimit(
+                uid = uid,
+                account = account,
+                monthlySpendLimit = monthlySpendLimit,
+                alertThresholdPercent = alertThresholdPercent
+            )
+            return@runCatching
+        }
+        val uid = requireUserId()
+        val sanitizedLimit = monthlySpendLimit.coerceAtLeast(0.0)
+        val sanitizedAlert = alertThresholdPercent.toLong().coerceIn(1L, 100L)
+        val docId = account.id.takeIf { it.isNotBlank() }
+        if (docId == null) {
+            upsertAccount(
+                name = account.name,
+                bankName = account.bankName.ifBlank { account.name },
+                accountType = account.accountType,
+                lastFourDigits = account.lastFourDigits,
+                balance = account.balance,
+                creditLimit = account.creditLimit,
+                isSharedVisible = account.isSharedVisible,
+                linkedBankAccountId = account.linkedBankAccountId,
+                linkedBankAccountName = account.linkedBankAccountName,
+                monthlySpendLimit = sanitizedLimit,
+                alertThresholdPercent = sanitizedAlert.toInt()
+            ).getOrThrow()
+            return@runCatching
+        }
+
+        val docRef = db.collection("users").document(uid).collection("accounts").document(docId)
+        try {
+            val existingSnap = docRef.get().await()
+            if (existingSnap.exists()) {
+                docRef.update(
+                    mapOf(
+                        "monthlySpendLimit" to sanitizedLimit,
+                        "alertThresholdPercent" to sanitizedAlert,
+                        "updatedAt" to FieldValue.serverTimestamp()
+                    )
+                ).await()
+            } else {
+                upsertAccount(
+                    name = account.name,
+                    bankName = account.bankName.ifBlank { account.name },
+                    accountType = account.accountType,
+                    lastFourDigits = account.lastFourDigits,
+                    balance = account.balance,
+                    creditLimit = account.creditLimit,
+                    isSharedVisible = account.isSharedVisible,
+                    linkedBankAccountId = account.linkedBankAccountId,
+                    linkedBankAccountName = account.linkedBankAccountName,
+                    monthlySpendLimit = sanitizedLimit,
+                    alertThresholdPercent = sanitizedAlert.toInt(),
+                    explicitId = docId
+                ).getOrThrow()
+            }
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
