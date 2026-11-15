@@ -1218,8 +1218,10 @@ class OneFamilyRepository(
         visibility: String,
         newCategory: String
     ): Result<Unit> = runCatching {
+        val normalizedCat = com.example.data.model.ExpenseCategories.normalizeCategory(newCategory)
+        val isIncomeCategory = com.example.data.model.ExpenseCategories.isIncomeCategory(normalizedCat)
         if (isLocalMode() || householdId.startsWith("local_")) {
-            LocalAccountDataStore.updateExpenseCategoryById(expenseId, newCategory)
+            LocalAccountDataStore.updateExpenseCategoryById(expenseId, normalizedCat)
             return@runCatching
         }
         val uid = requireUserId()
@@ -1231,18 +1233,114 @@ class OneFamilyRepository(
                 .collection("personal_expenses").document(expenseId)
         }
         try {
-            docRef.update(
-                mapOf(
-                    "category" to com.example.data.model.ExpenseCategories.normalizeCategory(newCategory),
-                    "updatedAt" to FieldValue.serverTimestamp()
-                )
-            ).await()
+            val payload = buildMap<String, Any> {
+                put("category", normalizedCat)
+                if (isIncomeCategory) put("type", "INCOME")
+                put("updatedAt", FieldValue.serverTimestamp())
+            }
+            docRef.update(payload).await()
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
             handleFirestoreError(e, OperationType.UPDATE, docRef.path)
             throw e
         }
+    }
+
+    suspend fun getExpenseOnce(
+        expenseId: String,
+        householdId: String,
+        visibility: String
+    ): ExpenseTransaction? {
+        if (expenseId.isBlank()) return null
+        if (isLocalMode() || householdId.startsWith("local_")) {
+            return LocalAccountDataStore.getExpenseByIdOnce(expenseId)
+        }
+        val uid = runCatching { requireUserId() }.getOrNull() ?: return null
+        val docRef = if (visibility == "SHARED" && householdId.isNotBlank()) {
+            db.collection("households").document(householdId)
+                .collection("shared_expenses").document(expenseId)
+        } else {
+            db.collection("users").document(uid)
+                .collection("personal_expenses").document(expenseId)
+        }
+        return runCatching {
+            docRef.get().await().toObject(ExpenseTransaction::class.java, DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
+        }.getOrNull()
+    }
+
+    suspend fun getRecentExpensesOnce(householdId: String): List<ExpenseTransaction> {
+        if (isLocalMode() || householdId.startsWith("local_")) {
+            val uid = runCatching { requireLocalUserId() }.getOrDefault("")
+            return LocalAccountDataStore.getExpensesForUserOrHouseholdOnce(uid, householdId)
+        }
+        val uid = runCatching { requireUserId() }.getOrNull() ?: return emptyList()
+        val list = mutableListOf<ExpenseTransaction>()
+        runCatching {
+            val pSnap = db.collection("users").document(uid).collection("personal_expenses").get().await()
+            list.addAll(pSnap.toObjects(ExpenseTransaction::class.java, DocumentSnapshot.ServerTimestampBehavior.ESTIMATE))
+        }
+        if (householdId.isNotBlank()) {
+            runCatching {
+                val sSnap = db.collection("households").document(householdId)
+                    .collection("shared_expenses")
+                    .whereArrayContains("memberUids", uid)
+                    .get()
+                    .await()
+                list.addAll(sSnap.toObjects(ExpenseTransaction::class.java, DocumentSnapshot.ServerTimestampBehavior.ESTIMATE))
+            }
+        }
+        return list.distinctBy { it.id }
+    }
+
+    suspend fun batchUpdateExpenseCategories(
+        expenses: List<ExpenseTransaction>,
+        newCategory: String
+    ): Result<Int> = runCatching {
+        if (expenses.isEmpty()) return@runCatching 0
+        val normalizedCat = com.example.data.model.ExpenseCategories.normalizeCategory(newCategory)
+        val isIncomeCategory = com.example.data.model.ExpenseCategories.isIncomeCategory(normalizedCat)
+        if (isLocalMode(expenses.firstOrNull()?.userId)) {
+            return@runCatching LocalAccountDataStore.batchUpdateExpenseCategories(
+                expenseIds = expenses.map { it.id }.toSet(),
+                newCategory = normalizedCat
+            )
+        }
+        val uid = requireUserId()
+        var updatedCount = 0
+        expenses.distinctBy { "${it.visibility}_${it.id}" }
+            .filter { it.id.isNotBlank() }
+            .chunked(350)
+            .forEach { chunk ->
+                val batch = db.batch()
+                var lastPath = ""
+                chunk.forEach { tx ->
+                    val docRef = if (tx.visibility == "SHARED" && tx.householdId.isNotBlank()) {
+                        db.collection("households").document(tx.householdId)
+                            .collection("shared_expenses").document(tx.id)
+                    } else {
+                        db.collection("users").document(uid)
+                            .collection("personal_expenses").document(tx.id)
+                    }
+                    lastPath = docRef.path
+                    val updatePayload = buildMap<String, Any> {
+                        put("category", normalizedCat)
+                        if (isIncomeCategory) put("type", "INCOME")
+                        put("updatedAt", FieldValue.serverTimestamp())
+                    }
+                    batch.update(docRef, updatePayload)
+                }
+                try {
+                    batch.commit().await()
+                    updatedCount += chunk.size
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    handleFirestoreError(e, OperationType.UPDATE, lastPath)
+                    throw e
+                }
+            }
+        updatedCount
     }
 
     suspend fun toggleExpensePrivacy(
@@ -1617,7 +1715,11 @@ class OneFamilyRepository(
         linkedBankAccountId: String? = null,
         linkedBankAccountName: String? = null,
         monthlySpendLimit: Double? = null,
+        spendLimitPeriod: String? = null,
+        spendLimitStartMillis: Long? = null,
+        spendLimitEndMillis: Long? = null,
         alertThresholdPercent: Int? = null,
+        isHidden: Boolean? = null,
         explicitId: String? = null
     ): Result<String> = runCatching {
         if (isLocalMode()) {
@@ -1635,12 +1737,17 @@ class OneFamilyRepository(
                 linkedBankAccountId = linkedBankAccountId,
                 linkedBankAccountName = linkedBankAccountName,
                 monthlySpendLimit = monthlySpendLimit,
+                spendLimitPeriod = spendLimitPeriod,
+                spendLimitStartMillis = spendLimitStartMillis,
+                spendLimitEndMillis = spendLimitEndMillis,
                 alertThresholdPercent = alertThresholdPercent,
+                isHidden = isHidden,
                 explicitId = explicitId
             )
         }
         val uid = requireUserId()
-        val docKey = explicitId?.takeIf { it.isNotBlank() } ?: "${bankName}_${accountType}_${lastFourDigits}"
+        val validType = FinancialAccount.normalizeAccountType(accountType)
+        val docKey = explicitId?.takeIf { it.isNotBlank() } ?: "${bankName}_${validType}_${lastFourDigits}"
             .lowercase()
             .replace(Regex("[^a-z0-9]+"), "_")
             .trim('_')
@@ -1656,12 +1763,6 @@ class OneFamilyRepository(
         val docRef = db.collection("users").document(uid).collection("accounts").document(docKey)
         try {
             val existingSnap = docRef.get().await()
-            val normalizedType = accountType.trim().uppercase()
-            val validType = if (normalizedType in setOf("BANK", "DEBIT_CARD", "CREDIT_CARD", "WALLET", "CASH", "UPI")) {
-                normalizedType
-            } else {
-                "BANK"
-            }
             val resolvedLinkedId = (linkedBankAccountId ?: existingSnap.getString("linkedBankAccountId") ?: "")
                 .trim()
                 .take(128)
@@ -1670,8 +1771,16 @@ class OneFamilyRepository(
                 .take(100)
             val resolvedSpendLimit = (monthlySpendLimit ?: existingSnap.getDouble("monthlySpendLimit") ?: 0.0)
                 .coerceAtLeast(0.0)
+            val resolvedPeriod = com.example.data.model.AccountLimitPeriod.fromRaw(
+                spendLimitPeriod ?: existingSnap.getString("spendLimitPeriod")
+            ).name
+            val resolvedStartMillis = (spendLimitStartMillis ?: existingSnap.getLong("spendLimitStartMillis") ?: 0L)
+                .coerceAtLeast(0L)
+            val resolvedEndMillis = (spendLimitEndMillis ?: existingSnap.getLong("spendLimitEndMillis") ?: 0L)
+                .coerceAtLeast(0L)
             val resolvedAlertPct = (alertThresholdPercent?.toLong() ?: existingSnap.getLong("alertThresholdPercent") ?: 80L)
                 .coerceIn(1L, 100L)
+            val resolvedHidden = isHidden ?: existingSnap.getBoolean("isHidden") ?: false
 
             val payload = hashMapOf<String, Any>(
                 "userId" to uid,
@@ -1684,7 +1793,11 @@ class OneFamilyRepository(
                 "linkedBankAccountId" to resolvedLinkedId,
                 "linkedBankAccountName" to resolvedLinkedName,
                 "monthlySpendLimit" to resolvedSpendLimit,
+                "spendLimitPeriod" to resolvedPeriod,
+                "spendLimitStartMillis" to resolvedStartMillis,
+                "spendLimitEndMillis" to resolvedEndMillis,
                 "alertThresholdPercent" to resolvedAlertPct,
+                "isHidden" to resolvedHidden,
                 "isSharedVisible" to isSharedVisible,
                 "createdAt" to (existingSnap.getTimestamp("createdAt") ?: FieldValue.serverTimestamp()),
                 "updatedAt" to FieldValue.serverTimestamp()
@@ -1702,15 +1815,24 @@ class OneFamilyRepository(
     suspend fun updateAccountSpendLimit(
         account: FinancialAccount,
         monthlySpendLimit: Double,
-        alertThresholdPercent: Int = 80
+        alertThresholdPercent: Int = 80,
+        spendLimitPeriod: String = account.spendLimitPeriod,
+        spendLimitStartMillis: Long = account.spendLimitStartMillis,
+        spendLimitEndMillis: Long = account.spendLimitEndMillis
     ): Result<Unit> = runCatching {
+        val normalizedPeriod = com.example.data.model.AccountLimitPeriod.fromRaw(spendLimitPeriod).name
+        val cleanStart = spendLimitStartMillis.coerceAtLeast(0L)
+        val cleanEnd = spendLimitEndMillis.coerceAtLeast(0L)
         if (isLocalMode()) {
             val uid = requireLocalUserId()
             LocalAccountDataStore.updateAccountSpendLimit(
                 uid = uid,
                 account = account,
                 monthlySpendLimit = monthlySpendLimit,
-                alertThresholdPercent = alertThresholdPercent
+                alertThresholdPercent = alertThresholdPercent,
+                spendLimitPeriod = normalizedPeriod,
+                spendLimitStartMillis = cleanStart,
+                spendLimitEndMillis = cleanEnd
             )
             return@runCatching
         }
@@ -1730,7 +1852,11 @@ class OneFamilyRepository(
                 linkedBankAccountId = account.linkedBankAccountId,
                 linkedBankAccountName = account.linkedBankAccountName,
                 monthlySpendLimit = sanitizedLimit,
-                alertThresholdPercent = sanitizedAlert.toInt()
+                spendLimitPeriod = normalizedPeriod,
+                spendLimitStartMillis = cleanStart,
+                spendLimitEndMillis = cleanEnd,
+                alertThresholdPercent = sanitizedAlert.toInt(),
+                isHidden = account.isHidden
             ).getOrThrow()
             return@runCatching
         }
@@ -1742,6 +1868,9 @@ class OneFamilyRepository(
                 docRef.update(
                     mapOf(
                         "monthlySpendLimit" to sanitizedLimit,
+                        "spendLimitPeriod" to normalizedPeriod,
+                        "spendLimitStartMillis" to cleanStart,
+                        "spendLimitEndMillis" to cleanEnd,
                         "alertThresholdPercent" to sanitizedAlert,
                         "updatedAt" to FieldValue.serverTimestamp()
                     )
@@ -1758,7 +1887,81 @@ class OneFamilyRepository(
                     linkedBankAccountId = account.linkedBankAccountId,
                     linkedBankAccountName = account.linkedBankAccountName,
                     monthlySpendLimit = sanitizedLimit,
+                    spendLimitPeriod = normalizedPeriod,
+                    spendLimitStartMillis = cleanStart,
+                    spendLimitEndMillis = cleanEnd,
                     alertThresholdPercent = sanitizedAlert.toInt(),
+                    isHidden = account.isHidden,
+                    explicitId = docId
+                ).getOrThrow()
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.WRITE, docRef.path)
+            throw e
+        }
+    }
+
+    suspend fun setAccountHidden(
+        account: FinancialAccount,
+        hidden: Boolean
+    ): Result<Unit> = runCatching {
+        if (isLocalMode()) {
+            val uid = requireLocalUserId()
+            LocalAccountDataStore.setAccountHidden(uid, account, hidden)
+            return@runCatching
+        }
+        val uid = requireUserId()
+        val docId = account.id.takeIf { it.isNotBlank() }
+        if (docId == null) {
+            upsertAccount(
+                name = account.name,
+                bankName = account.bankName.ifBlank { account.name },
+                accountType = account.accountType,
+                lastFourDigits = account.lastFourDigits,
+                balance = account.balance,
+                creditLimit = account.creditLimit,
+                isSharedVisible = account.isSharedVisible,
+                linkedBankAccountId = account.linkedBankAccountId,
+                linkedBankAccountName = account.linkedBankAccountName,
+                monthlySpendLimit = account.monthlySpendLimit,
+                spendLimitPeriod = account.spendLimitPeriod,
+                spendLimitStartMillis = account.spendLimitStartMillis,
+                spendLimitEndMillis = account.spendLimitEndMillis,
+                alertThresholdPercent = account.alertThresholdPercent.toInt(),
+                isHidden = hidden
+            ).getOrThrow()
+            return@runCatching
+        }
+
+        val docRef = db.collection("users").document(uid).collection("accounts").document(docId)
+        try {
+            val existingSnap = docRef.get().await()
+            if (existingSnap.exists()) {
+                docRef.update(
+                    mapOf(
+                        "isHidden" to hidden,
+                        "updatedAt" to FieldValue.serverTimestamp()
+                    )
+                ).await()
+            } else {
+                upsertAccount(
+                    name = account.name,
+                    bankName = account.bankName.ifBlank { account.name },
+                    accountType = account.accountType,
+                    lastFourDigits = account.lastFourDigits,
+                    balance = account.balance,
+                    creditLimit = account.creditLimit,
+                    isSharedVisible = account.isSharedVisible,
+                    linkedBankAccountId = account.linkedBankAccountId,
+                    linkedBankAccountName = account.linkedBankAccountName,
+                    monthlySpendLimit = account.monthlySpendLimit,
+                    spendLimitPeriod = account.spendLimitPeriod,
+                    spendLimitStartMillis = account.spendLimitStartMillis,
+                    spendLimitEndMillis = account.spendLimitEndMillis,
+                    alertThresholdPercent = account.alertThresholdPercent.toInt(),
+                    isHidden = hidden,
                     explicitId = docId
                 ).getOrThrow()
             }

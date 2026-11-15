@@ -125,6 +125,7 @@ import com.example.data.model.ExpenseCategories
 import com.example.data.model.ExpenseTransaction
 import com.example.data.model.FamilyCurrencyOption
 import com.example.data.model.Household
+import com.example.data.model.NotificationSubCategory
 import com.example.data.model.WallpaperColorAccent
 import com.example.data.model.WallpaperDensity
 import com.example.data.model.WallpaperPatternStyle
@@ -1420,13 +1421,9 @@ fun AnalyticsTabScreen(
     val dimens = LocalAppDimens.current
     val currency = uiState.activeCurrencySymbol
     val performHaptic = rememberAppHapticPerformer()
-    val activeCategoryItems = remember(uiState.categoryProgressList) {
-        uiState.categoryProgressList.filter { it.spent > 0 }
-    }
-    val categoryTotals = remember(activeCategoryItems) {
-        activeCategoryItems.map { it.category to it.spent }
-    }
+    val allPeriodTransactions = uiState.activeExpenses
 
+    var divisionFilter by rememberSaveable { mutableStateOf("ALL") } // "ALL", "SPEND", "INCOME"
     var selectedAnalysisCategory by rememberSaveable {
         mutableStateOf<String?>(uiState.selectedCategoryFilter.takeIf { it != "All" })
     }
@@ -1436,23 +1433,83 @@ fun AnalyticsTabScreen(
         selectedAnalysisCategory = uiState.selectedCategoryFilter.takeIf { it != "All" }
     }
 
+    val spendCategoryItems = remember(uiState.categoryProgressList) {
+        uiState.categoryProgressList.filter { it.spent > 0 && !ExpenseCategories.isIncomeCategory(it.category) }
+    }
+    val incomeCategoryItems = remember(uiState.incomeCategoryProgressList, allPeriodTransactions) {
+        if (uiState.incomeCategoryProgressList.isNotEmpty()) {
+            uiState.incomeCategoryProgressList.filter { it.spent > 0 }
+        } else {
+            allPeriodTransactions
+                .filter {
+                    it.type.equals("INCOME", ignoreCase = true) ||
+                        ExpenseCategories.isIncomeCategory(it.category)
+                }
+                .groupBy { ExpenseCategories.normalizeCategory(it.category) }
+                .map { (cat, list) ->
+                    CategorySpendProgress(
+                        category = cat,
+                        spent = list.sumOf { it.amount },
+                        limit = 0.0,
+                        alertThresholdPercent = 80,
+                        budgetDoc = null,
+                        memberBreakdown = emptyMap()
+                    )
+                }
+                .sortedByDescending { it.spent }
+        }
+    }
+
+    val periodIncome = remember(allPeriodTransactions) {
+        allPeriodTransactions.filter {
+            it.type.equals("INCOME", ignoreCase = true) || ExpenseCategories.isIncomeCategory(it.category)
+        }.sumOf { it.amount }
+    }
+    val periodSpend = remember(allPeriodTransactions) {
+        allPeriodTransactions.filter {
+            !it.type.equals("INCOME", ignoreCase = true) &&
+                !ExpenseCategories.isIncomeCategory(it.category) &&
+                !it.isExcludedFromExpense
+        }.sumOf { it.amount }
+    }
+
+    val activeCategoryItems = remember(divisionFilter, spendCategoryItems, incomeCategoryItems) {
+        if (divisionFilter == "INCOME") incomeCategoryItems else spendCategoryItems
+    }
+    val categoryTotals = remember(activeCategoryItems) {
+        activeCategoryItems.map { it.category to it.spent }
+    }
+
     val toggleCategorySelection: (String) -> Unit = { clickedCategory ->
         performHaptic()
         if (selectedAnalysisCategory != null && selectedAnalysisCategory.equals(clickedCategory, ignoreCase = true)) {
             selectedAnalysisCategory = null
             onSelectCategory("All")
         } else {
+            val clickedIsIncome = ExpenseCategories.isIncomeCategory(clickedCategory)
+            if (clickedIsIncome && divisionFilter == "SPEND") {
+                divisionFilter = "ALL"
+            } else if (!clickedIsIncome && divisionFilter == "INCOME") {
+                divisionFilter = "ALL"
+            }
             selectedAnalysisCategory = clickedCategory
             onSelectCategory(clickedCategory)
         }
     }
 
-    val allPeriodTransactions = uiState.activeExpenses
-    val filteredAnalysisTransactions = remember(allPeriodTransactions, selectedAnalysisCategory) {
+    val filteredAnalysisTransactions = remember(allPeriodTransactions, selectedAnalysisCategory, divisionFilter) {
+        val divisionList = allPeriodTransactions.filter { tx ->
+            val isInc = tx.type.equals("INCOME", ignoreCase = true) || ExpenseCategories.isIncomeCategory(tx.category)
+            when (divisionFilter) {
+                "INCOME" -> isInc
+                "SPEND" -> !isInc
+                else -> true
+            }
+        }
         val base = if (selectedAnalysisCategory == null) {
-            allPeriodTransactions
+            divisionList
         } else {
-            allPeriodTransactions.filter { tx ->
+            divisionList.filter { tx ->
                 tx.category.equals(selectedAnalysisCategory, ignoreCase = true) ||
                     ExpenseCategories.normalizeCategory(tx.category).equals(selectedAnalysisCategory, ignoreCase = true)
             }
@@ -1460,11 +1517,25 @@ fun AnalyticsTabScreen(
         base.sortedByDescending { it.transactionDateMillis }
     }
 
-    val displayedCategoryItems = remember(activeCategoryItems, selectedAnalysisCategory) {
-        if (selectedAnalysisCategory == null) {
-            activeCategoryItems
+    val displayedCategoryItems = remember(spendCategoryItems, selectedAnalysisCategory, divisionFilter) {
+        if (divisionFilter == "INCOME") {
+            emptyList()
+        } else if (selectedAnalysisCategory == null) {
+            spendCategoryItems
         } else {
-            activeCategoryItems.filter { item ->
+            spendCategoryItems.filter { item ->
+                item.category.equals(selectedAnalysisCategory, ignoreCase = true) ||
+                    ExpenseCategories.normalizeCategory(item.category).equals(selectedAnalysisCategory, ignoreCase = true)
+            }
+        }
+    }
+    val displayedIncomeCategoryItems = remember(incomeCategoryItems, selectedAnalysisCategory, divisionFilter) {
+        if (divisionFilter == "SPEND") {
+            emptyList()
+        } else if (selectedAnalysisCategory == null) {
+            incomeCategoryItems
+        } else {
+            incomeCategoryItems.filter { item ->
                 item.category.equals(selectedAnalysisCategory, ignoreCase = true) ||
                     ExpenseCategories.normalizeCategory(item.category).equals(selectedAnalysisCategory, ignoreCase = true)
             }
@@ -1615,7 +1686,7 @@ fun AnalyticsTabScreen(
                             ReceiptDashedDividerLine()
 
                             Text(
-                                text = "Categories",
+                                text = if (divisionFilter == "INCOME") "Income & Cashback Categories" else "Spend Categories",
                                 style = MaterialTheme.typography.titleMedium,
                                 fontWeight = FontWeight.Bold
                             )
@@ -1624,6 +1695,179 @@ fun AnalyticsTabScreen(
                                 currencySymbol = currency,
                                 selectedCategory = selectedAnalysisCategory,
                                 onCategoryClick = toggleCategorySelection
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        // 1A. Income vs Spend Division Card
+        item {
+            val totalFlow = (periodIncome + periodSpend).coerceAtLeast(1.0)
+            val incomeFraction = (periodIncome / totalFlow).toFloat().coerceIn(0f, 1f)
+            val spendFraction = (periodSpend / totalFlow).toFloat().coerceIn(0f, 1f)
+            val netAmount = periodIncome - periodSpend
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = dimens.horizontalPadding)
+                    .padding(bottom = 12.dp)
+                    .testTag("analytics_income_spend_division_card"),
+                shape = RoundedCornerShape(24.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+                elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(dimens.cardPadding),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "Income vs Spend",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Surface(
+                            shape = RoundedCornerShape(50),
+                            color = if (netAmount >= 0.0) {
+                                BudgetSafeGreen.copy(alpha = 0.14f)
+                            } else {
+                                BudgetDangerCoral.copy(alpha = 0.14f)
+                            }
+                        ) {
+                            Text(
+                                text = if (netAmount >= 0.0) {
+                                    "Net +${formatCurrency(netAmount, currency)}"
+                                } else {
+                                    "Net -${formatCurrency(-netAmount, currency)}"
+                                },
+                                style = MaterialTheme.typography.labelMedium.copy(fontFamily = ReceiptMonoFontFamily),
+                                fontWeight = FontWeight.Bold,
+                                color = if (netAmount >= 0.0) BudgetSafeGreen else BudgetDangerCoral,
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                            )
+                        }
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Surface(
+                            modifier = Modifier.weight(1f),
+                            shape = RoundedCornerShape(16.dp),
+                            color = BudgetSafeGreen.copy(alpha = 0.12f)
+                        ) {
+                            Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp)) {
+                                Text(
+                                    text = "Income & Cashback",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = BudgetSafeGreen,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Text(
+                                    text = "+${formatCurrency(periodIncome, currency)}",
+                                    style = MaterialTheme.typography.titleMedium.copy(fontFamily = ReceiptMonoFontFamily),
+                                    fontWeight = FontWeight.Bold,
+                                    color = BudgetSafeGreen,
+                                    modifier = Modifier.testTag("analytics_division_income_total")
+                                )
+                            }
+                        }
+                        Surface(
+                            modifier = Modifier.weight(1f),
+                            shape = RoundedCornerShape(16.dp),
+                            color = MaterialTheme.colorScheme.primaryContainer
+                        ) {
+                            Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp)) {
+                                Text(
+                                    text = "Total Spend",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Text(
+                                    text = "-${formatCurrency(periodSpend, currency)}",
+                                    style = MaterialTheme.typography.titleMedium.copy(fontFamily = ReceiptMonoFontFamily),
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                    modifier = Modifier.testTag("analytics_division_spend_total")
+                                )
+                            }
+                        }
+                    }
+
+                    if (periodIncome > 0.0 || periodSpend > 0.0) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(10.dp)
+                                .clip(RoundedCornerShape(50))
+                                .background(MaterialTheme.colorScheme.surfaceContainerHighest)
+                        ) {
+                            if (incomeFraction > 0.01f) {
+                                Box(
+                                    modifier = Modifier
+                                        .weight(incomeFraction.coerceAtLeast(0.02f))
+                                        .height(10.dp)
+                                        .background(BudgetSafeGreen)
+                                )
+                            }
+                            if (spendFraction > 0.01f) {
+                                Box(
+                                    modifier = Modifier
+                                        .weight(spendFraction.coerceAtLeast(0.02f))
+                                        .height(10.dp)
+                                        .background(MaterialTheme.colorScheme.primary)
+                                )
+                            }
+                        }
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        listOf(
+                            "ALL" to "All",
+                            "SPEND" to "Spend",
+                            "INCOME" to "Income & Cashback"
+                        ).forEach { (key, label) ->
+                            val selected = divisionFilter == key
+                            FilterChip(
+                                selected = selected,
+                                onClick = {
+                                    performHaptic()
+                                    divisionFilter = key
+                                    if (selectedAnalysisCategory != null) {
+                                        val selIsIncome = ExpenseCategories.isIncomeCategory(selectedAnalysisCategory!!)
+                                        if ((key == "INCOME" && !selIsIncome) || (key == "SPEND" && selIsIncome)) {
+                                            selectedAnalysisCategory = null
+                                            onSelectCategory("All")
+                                        }
+                                    }
+                                },
+                                leadingIcon = if (selected) {
+                                    {
+                                        Icon(
+                                            imageVector = Icons.Default.Check,
+                                            contentDescription = null,
+                                            modifier = Modifier.size(14.dp)
+                                        )
+                                    }
+                                } else {
+                                    null
+                                },
+                                label = { Text(label, style = MaterialTheme.typography.labelSmall) },
+                                shape = RoundedCornerShape(50),
+                                modifier = Modifier.testTag("analytics_division_chip_${key.lowercase()}")
                             )
                         }
                     }
@@ -1700,8 +1944,7 @@ fun AnalyticsTabScreen(
                             Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
                                 visibleSlice.forEachIndexed { idx, tx ->
                                     val isInc = tx.type.equals("INCOME", ignoreCase = true) ||
-                                        ExpenseCategories.normalizeCategory(tx.category)
-                                            .equals("Salary & Income", ignoreCase = true)
+                                        ExpenseCategories.isIncomeCategory(tx.category)
                                     val catColor = categoryAccentColor(tx.category)
                                     val rowShape = groupedCardShape(
                                         index = idx,
@@ -2015,6 +2258,95 @@ fun AnalyticsTabScreen(
             }
         }
 
+
+        // 2B. Connected Income & Cashback Category Breakdown Stack
+        if (displayedIncomeCategoryItems.isNotEmpty()) {
+            item {
+                PerforatedSectionHeader(
+                    title = "Income & Cashback Breakdown",
+                    countBadge = "${displayedIncomeCategoryItems.size}",
+                    modifier = Modifier
+                        .padding(top = 8.dp, bottom = 4.dp)
+                        .testTag("analytics_income_categories_section")
+                )
+            }
+
+            itemsIndexed(
+                items = displayedIncomeCategoryItems,
+                key = { _, item -> "analysis_income_cat_${item.category}" }
+            ) { idx, catItem ->
+                val isExpanded = selectedAnalysisCategory != null &&
+                    selectedAnalysisCategory.equals(catItem.category, ignoreCase = true)
+                val catColor = categoryAccentColor(catItem.category)
+                val categoryTransactions = remember(allPeriodTransactions, catItem.category) {
+                    allPeriodTransactions
+                        .filter {
+                            it.category.equals(catItem.category, ignoreCase = true) ||
+                                ExpenseCategories.normalizeCategory(it.category).equals(catItem.category, ignoreCase = true)
+                        }
+                        .sortedByDescending { it.transactionDateMillis }
+                }
+                val stackShape = groupedCardShape(index = idx, count = displayedIncomeCategoryItems.size)
+                val safeCatTag = catItem.category.lowercase().replace(Regex("[^a-z0-9]+"), "_").trim('_')
+
+                Box(
+                    modifier = Modifier.padding(
+                        horizontal = dimens.horizontalPadding,
+                        vertical = 1.5.dp
+                    )
+                ) {
+                    Card(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(stackShape)
+                            .testTag("analysis_income_category_card_$safeCatTag"),
+                        shape = stackShape,
+                        colors = CardDefaults.cardColors(
+                            containerColor = if (isExpanded) {
+                                MaterialTheme.colorScheme.surfaceContainerHigh
+                            } else {
+                                MaterialTheme.colorScheme.surfaceContainerLow
+                            }
+                        ),
+                        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { toggleCategorySelection(catItem.category) }
+                                .padding(horizontal = 16.dp, vertical = 14.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            SquircleIconBadge(
+                                icon = categoryIcon(catItem.category),
+                                tint = catColor,
+                                containerColor = catColor.copy(alpha = 0.16f),
+                                size = dimens.rowIconBoxSize,
+                                iconSize = dimens.rowIconSize,
+                                emoji = customEmojis[catItem.category.trim().lowercase()],
+                                contentDescription = catItem.category
+                            )
+                            Spacer(modifier = Modifier.width(14.dp))
+                            Text(
+                                text = "${catItem.category} (${categoryTransactions.size})",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.SemiBold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = "+${formatCurrency(catItem.spent, currency)}",
+                                style = MaterialTheme.typography.titleMedium.copy(fontFamily = ReceiptMonoFontFamily),
+                                fontWeight = FontWeight.Bold,
+                                color = BudgetSafeGreen
+                            )
+                        }
+                    }
+                }
+            }
+        }
 
         // 3. Expandable Top Places (& Member Split when Household Mode is enabled)
         val showMemberSplit = uiState.householdFeatureEnabled && uiState.memberSpendMap.isNotEmpty()
@@ -3640,14 +3972,14 @@ fun HouseholdTabScreen(
             )
         }
 
-        // Account Stack Card 1 of 6: Profile & User Info
+        // Account Stack Card 1 of 7: Profile & User Info
         item {
             Card(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = dimens.horizontalPadding, vertical = 1.5.dp)
                     .testTag("account_sharing_card"),
-                shape = groupedCardShape(index = 0, count = 6),
+                shape = groupedCardShape(index = 0, count = 7),
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
                 elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
             ) {
@@ -3731,14 +4063,14 @@ fun HouseholdTabScreen(
             }
         }
 
-        // Account Stack Card 2 of 6: Preferred Currency
+        // Account Stack Card 2 of 7: Preferred Currency
         item {
             Card(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = dimens.horizontalPadding, vertical = 1.5.dp)
                     .testTag("family_currency_settings_card"),
-                shape = groupedCardShape(index = 1, count = 6),
+                shape = groupedCardShape(index = 1, count = 7),
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
                 elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
             ) {
@@ -3860,13 +4192,13 @@ fun HouseholdTabScreen(
             }
         }
 
-        // Account Stack Card 3 of 6: Financial Accounts
+        // Account Stack Card 3 of 7: Financial Accounts
         item {
             Card(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = dimens.horizontalPadding, vertical = 1.5.dp),
-                shape = groupedCardShape(index = 2, count = 6),
+                shape = groupedCardShape(index = 2, count = 7),
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
                 elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
             ) {
@@ -3888,7 +4220,7 @@ fun HouseholdTabScreen(
                                 fontWeight = FontWeight.Bold
                             )
                             Text(
-                                text = "Bank accounts, credit cards, UPI & cash",
+                                text = "Bank accounts, debit & credit cards & wallets",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -3904,13 +4236,205 @@ fun HouseholdTabScreen(
             }
         }
 
-        // Account Stack Card 4 of 6: SMS Inbox Sync
+        // Account Stack Card 4 of 7: Notifications (Toggleable Sub-Categories)
+        item {
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = dimens.horizontalPadding, vertical = 1.5.dp)
+                    .testTag("notification_preferences_card"),
+                shape = groupedCardShape(index = 3, count = 7),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+                elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
+            ) {
+                Column(
+                    modifier = Modifier.padding(dimens.cardPadding),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            SquircleIconBadge(
+                                icon = Icons.Default.NotificationsActive,
+                                tint = MaterialTheme.colorScheme.primary,
+                                containerColor = MaterialTheme.colorScheme.primaryContainer,
+                                contentDescription = "Notifications"
+                            )
+                            Column {
+                                Text(
+                                    text = "Notifications",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Text(
+                                    text = "Choose which alert sub-categories to receive",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                    }
+
+                    NotificationSubCategory.entries.forEach { subCategory ->
+                        val isEnabled = fcmPushSettings.isSubCategoryEnabled(subCategory)
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(14.dp))
+                                .clickable {
+                                    performHaptic()
+                                    LocalAccountSessionManager.updateFcmPushSettings(
+                                        context = context,
+                                        newSettings = fcmPushSettings.withSubCategoryEnabled(subCategory, !isEnabled)
+                                    )
+                                }
+                                .padding(horizontal = 4.dp, vertical = 4.dp)
+                                .testTag("notif_subcategory_row_${subCategory.name.lowercase()}"),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Column(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .padding(end = 8.dp),
+                                verticalArrangement = Arrangement.spacedBy(1.dp)
+                            ) {
+                                Text(
+                                    text = subCategory.shortName,
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                                Text(
+                                    text = subCategory.description,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            M3CheckmarkSwitch(
+                                checked = isEnabled,
+                                onCheckedChange = { checked ->
+                                    performHaptic()
+                                    LocalAccountSessionManager.updateFcmPushSettings(
+                                        context = context,
+                                        newSettings = fcmPushSettings.withSubCategoryEnabled(subCategory, checked)
+                                    )
+                                },
+                                modifier = Modifier.testTag("notif_subcategory_switch_${subCategory.name.lowercase()}")
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        // Account Stack Card: Card Limit Alert Threshold
+        item {
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = dimens.horizontalPadding, vertical = 1.5.dp)
+                    .testTag("notif_credit_threshold_card"),
+                shape = groupedCardShape(index = 4, count = 8),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+                elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(dimens.cardPadding)
+                        .testTag("notif_credit_threshold_section"),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Card Limit Alert Threshold",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            Text(
+                                text = "Alert when a card reaches this % of its spend limit",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Surface(
+                            shape = RoundedCornerShape(50),
+                            color = MaterialTheme.colorScheme.primaryContainer
+                        ) {
+                            Text(
+                                text = "${fcmPushSettings.creditCardAlertThresholdPercent}%",
+                                style = MaterialTheme.typography.labelMedium.copy(fontFamily = ReceiptMonoFontFamily),
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                modifier = Modifier
+                                    .padding(horizontal = 10.dp, vertical = 4.dp)
+                                    .testTag("notif_credit_threshold_value")
+                            )
+                        }
+                    }
+
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        listOf(70, 80, 90, 100).forEach { pct ->
+                            val selected = fcmPushSettings.creditCardAlertThresholdPercent == pct
+                            FilterChip(
+                                selected = selected,
+                                onClick = {
+                                    performHaptic()
+                                    LocalAccountSessionManager.updateFcmPushSettings(
+                                        context = context,
+                                        newSettings = fcmPushSettings.copy(creditCardAlertThresholdPercent = pct)
+                                    )
+                                },
+                                label = { Text("$pct%") },
+                                shape = RoundedCornerShape(50),
+                                modifier = Modifier.testTag("notif_credit_threshold_chip_$pct")
+                            )
+                        }
+                    }
+
+                    Slider(
+                        value = fcmPushSettings.creditCardAlertThresholdPercent.toFloat().coerceIn(50f, 100f),
+                        onValueChange = { raw ->
+                            val rounded = (raw / 5f).roundToInt() * 5
+                            LocalAccountSessionManager.updateFcmPushSettings(
+                                context = context,
+                                newSettings = fcmPushSettings.copy(creditCardAlertThresholdPercent = rounded.coerceIn(50, 100))
+                            )
+                        },
+                        valueRange = 50f..100f,
+                        steps = 9,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("notif_credit_threshold_slider")
+                    )
+                }
+            }
+        }
+
+        // Account Stack Card: SMS Inbox Sync
         item {
             Card(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = dimens.horizontalPadding, vertical = 1.5.dp),
-                shape = groupedCardShape(index = 3, count = 6),
+                shape = groupedCardShape(index = 5, count = 8),
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
                 elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
             ) {
@@ -3977,14 +4501,14 @@ fun HouseholdTabScreen(
             }
         }
 
-        // Account Stack Card 5 of 6: Export Transactions (CSV)
+        // Account Stack Card 7 of 8: Export Transactions (CSV)
         item {
             Card(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = dimens.horizontalPadding, vertical = 1.5.dp)
                     .testTag("export_csv_settings_card"),
-                shape = groupedCardShape(index = 4, count = 6),
+                shape = groupedCardShape(index = 6, count = 8),
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
                 elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
             ) {
@@ -4042,7 +4566,7 @@ fun HouseholdTabScreen(
             }
         }
 
-        // Account Stack Card 6 of 6: Advanced Settings & Diagnostics
+        // Account Stack Card 8 of 8: Advanced Settings & Diagnostics
         item {
             Card(
                 modifier = Modifier
@@ -4051,7 +4575,7 @@ fun HouseholdTabScreen(
                     .padding(bottom = 14.dp)
                     .animateContentSize(spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessMediumLow))
                     .testTag("expert_feature_flag_card"),
-                shape = groupedCardShape(index = 5, count = 6),
+                shape = groupedCardShape(index = 7, count = 8),
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
                 elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
             ) {

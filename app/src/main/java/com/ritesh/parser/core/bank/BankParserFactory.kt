@@ -121,10 +121,16 @@ object BankParserFactory {
     }
 
     fun inferCategory(parsed: ParsedTransaction): String {
-        if (parsed.type == TransactionType.INCOME) return "Salary & Income"
+        val haystack = "${parsed.merchant.orEmpty()} ${parsed.smsBody}".lowercase()
+        if (parsed.type == TransactionType.INCOME) {
+            return when {
+                listOf("cashback", "cash back", "reward").any { haystack.contains(it) } -> "Cashback"
+                listOf("salary", "payroll", "stipend").any { haystack.contains(it) } -> "Salary & Income"
+                else -> "Income"
+            }
+        }
         if (parsed.type == TransactionType.INVESTMENT) return "Investments"
 
-        val haystack = "${parsed.merchant.orEmpty()} ${parsed.smsBody}".lowercase()
         return when {
             listOf("bigbasket", "blinkit", "zepto", "instamart", "dmart", "reliance fresh", "nature's basket", "grocery", "supermarket", "milk", "vegetables", "kirana", "jiomart", "ratnadeep", "more retail").any { haystack.contains(it) } -> "Groceries"
             listOf("zomato", "swiggy", "starbucks", "mcdonald", "kfc", "domino", "pizza", "cafe", "restaurant", "dining", "burger", "haldiram", "barbeque", "eatfit", "bakery", "coffee", "tea", "bistro", "biryani", "sweet").any { haystack.contains(it) } -> "Food & Dining"

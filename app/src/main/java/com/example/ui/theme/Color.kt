@@ -110,6 +110,8 @@ fun categoryAccentColorArgb(category: String): Int {
         lower.contains("health") || lower.contains("medical") || lower.contains("fitness") -> 0xFF10B981.toInt()
         lower.contains("entertain") -> 0xFFF97316.toInt()
         lower.contains("invest") -> 0xFF2563EB.toInt()
+        lower.contains("cashback") || lower.contains("cash back") -> 0xFF0D9488.toInt()
+        lower == "income" -> 0xFF10B981.toInt()
         lower.contains("salary") || lower.contains("income") -> 0xFF16A34A.toInt()
         else -> 0xFF0EA5E9.toInt()
     }

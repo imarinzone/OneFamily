@@ -59,24 +59,54 @@ data class CategoryBudget(
     @ServerTimestamp val updatedAt: Timestamp? = null
 )
 
+enum class AccountLimitPeriod(val label: String) {
+    MONTHLY("Monthly"),
+    WEEKLY("Weekly"),
+    QUARTERLY("Quarterly"),
+    YEARLY("Yearly"),
+    CUSTOM("Custom");
+
+    companion object {
+        fun fromRaw(raw: String?): AccountLimitPeriod {
+            return entries.firstOrNull { it.name.equals(raw?.trim(), ignoreCase = true) } ?: MONTHLY
+        }
+    }
+}
+
 @IgnoreExtraProperties
 data class FinancialAccount(
     @DocumentId val id: String = "",
     val userId: String = "",
     val name: String = "",
     val bankName: String = "",
-    val accountType: String = "BANK", // BANK | DEBIT_CARD | CREDIT_CARD | WALLET | CASH | UPI
+    val accountType: String = "BANK", // BANK | DEBIT_CARD | CREDIT_CARD | WALLET | CASH (UPI normalized to BANK)
     val lastFourDigits: String = "",
     val balance: Double = 0.0,
     val creditLimit: Double = 0.0,
     val linkedBankAccountId: String = "",
     val linkedBankAccountName: String = "",
     val monthlySpendLimit: Double = 0.0,
+    val spendLimitPeriod: String = "MONTHLY",
+    val spendLimitStartMillis: Long = 0L,
+    val spendLimitEndMillis: Long = 0L,
     val alertThresholdPercent: Long = 80L,
+    @get:PropertyName("isHidden")
+    val isHidden: Boolean = false,
     val isSharedVisible: Boolean = true,
     @ServerTimestamp val createdAt: Timestamp? = null,
     @ServerTimestamp val updatedAt: Timestamp? = null
-)
+) {
+    companion object {
+        fun normalizeAccountType(raw: String): String {
+            val upper = raw.trim().uppercase()
+            return when (upper) {
+                "BANK", "UPI" -> "BANK"
+                "DEBIT_CARD", "CREDIT_CARD", "WALLET", "CASH" -> upper
+                else -> "BANK"
+            }
+        }
+    }
+}
 
 enum class AccountSectionType(val title: String) {
     WALLET("Wallets & Cash"),
@@ -176,11 +206,45 @@ data class WallpaperSettings(
     val opacityPercent: Int = 11
 )
 
+enum class NotificationSubCategory(
+    val shortName: String,
+    val description: String
+) {
+    EXPENSES("Expenses", "Bank & UPI debit SMS alerts"),
+    INCOME("Income", "Salary, cashback & credit SMS alerts"),
+    FAMILY_SYNC("Family Sync", "Shared expenses added by family"),
+    BUDGET_LIMITS("Budget Alerts", "Category & monthly budget warnings"),
+    CREDIT_CARD_LIMIT("Card Limits", "Credit card spend limit threshold warnings")
+}
+
 data class FcmPushSettings(
+    val expenseAlertsEnabled: Boolean = true,
+    val incomeAlertsEnabled: Boolean = true,
     val familyTransactionAlertsEnabled: Boolean = true,
     val budgetThresholdAlertsEnabled: Boolean = true,
+    val creditCardLimitAlertsEnabled: Boolean = true,
+    val creditCardAlertThresholdPercent: Int = 80,
     val subscribedTopic: String = "household_shared"
-)
+) {
+    fun isSubCategoryEnabled(subCategory: NotificationSubCategory): Boolean = when (subCategory) {
+        NotificationSubCategory.EXPENSES -> expenseAlertsEnabled
+        NotificationSubCategory.INCOME -> incomeAlertsEnabled
+        NotificationSubCategory.FAMILY_SYNC -> familyTransactionAlertsEnabled
+        NotificationSubCategory.BUDGET_LIMITS -> budgetThresholdAlertsEnabled
+        NotificationSubCategory.CREDIT_CARD_LIMIT -> creditCardLimitAlertsEnabled
+    }
+
+    fun withSubCategoryEnabled(
+        subCategory: NotificationSubCategory,
+        enabled: Boolean
+    ): FcmPushSettings = when (subCategory) {
+        NotificationSubCategory.EXPENSES -> copy(expenseAlertsEnabled = enabled)
+        NotificationSubCategory.INCOME -> copy(incomeAlertsEnabled = enabled)
+        NotificationSubCategory.FAMILY_SYNC -> copy(familyTransactionAlertsEnabled = enabled)
+        NotificationSubCategory.BUDGET_LIMITS -> copy(budgetThresholdAlertsEnabled = enabled)
+        NotificationSubCategory.CREDIT_CARD_LIMIT -> copy(creditCardLimitAlertsEnabled = enabled)
+    }
+}
 
 data class CrashlyticsSettings(
     val crashReportingEnabled: Boolean = true
@@ -202,6 +266,25 @@ data class StabilityDiagnosticEntry(
 )
 
 object ExpenseCategories {
+    val INCOME_CATEGORIES = listOf(
+        "Salary & Income",
+        "Income",
+        "Cashback"
+    )
+
+    val EXPENSE_ONLY = listOf(
+        "Groceries",
+        "Food & Dining",
+        "Rent & Housing",
+        "Bills & Utilities",
+        "Fuel & Travel",
+        "Shopping",
+        "Health & Fitness",
+        "Entertainment",
+        "Investments",
+        "Unknown"
+    )
+
     val ALL = listOf(
         "Groceries",
         "Food & Dining",
@@ -213,10 +296,15 @@ object ExpenseCategories {
         "Entertainment",
         "Investments",
         "Salary & Income",
+        "Income",
+        "Cashback",
         "Unknown"
     )
 
-    val EXPENSE_ONLY = ALL.filter { it != "Salary & Income" }
+    fun isIncomeCategory(category: String): Boolean {
+        val norm = normalizeCategory(category)
+        return INCOME_CATEGORIES.any { it.equals(norm, ignoreCase = true) }
+    }
 
     /**
      * Normalizes category names so legacy "General", blank strings, and duplicate default aliases
@@ -228,7 +316,9 @@ object ExpenseCategories {
         if (cleaned.isBlank()) return "Unknown"
         return when (cleaned.lowercase()) {
             "general", "unknown", "uncategorized", "other", "misc", "miscellaneous" -> "Unknown"
-            "salary", "salary & income", "income" -> "Salary & Income"
+            "salary", "salary & income", "payroll" -> "Salary & Income"
+            "income", "other income", "interest", "dividend", "refund" -> "Income"
+            "cashback", "cash back", "reward", "rewards" -> "Cashback"
             "utilities", "bills", "bills & utilities" -> "Bills & Utilities"
             "transportation", "transport", "fuel", "travel", "fuel & travel" -> "Fuel & Travel"
             "health & medical", "medical", "health", "fitness", "health & fitness" -> "Health & Fitness"

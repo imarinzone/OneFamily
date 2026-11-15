@@ -34,6 +34,14 @@
             </intent-filter>
         </activity>
 
+        <activity
+            android:name=".data.sms.NotificationCategoryWheelActivity"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:launchMode="singleTop"
+            android:taskAffinity=""
+            android:theme="@style/Theme.MyApplication.Translucent" />
+
         <receiver
             android:name=".data.sms.IncomingSmsBroadcastReceiver"
             android:exported="true"

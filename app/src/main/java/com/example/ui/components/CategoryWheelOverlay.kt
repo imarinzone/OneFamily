@@ -10,16 +10,25 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -433,70 +442,362 @@ private fun CompactHalfCircleCategoryWheel(
             )
 
             // Visible Half-Circle Nodes (with smooth left-side alpha fade)
-            controller.categories.forEachIndexed { index, cat ->
-                var diff = (index.toFloat() - animatedSlotOffset) % count.toFloat()
-                if (diff > count / 2f) diff -= count
-                if (diff < -count / 2f) diff += count
+            HalfCircleWheelNodes(
+                categories = controller.categories,
+                selectedIndex = controller.selectedIndex,
+                animatedSlotOffset = animatedSlotOffset,
+                halfWheelPx = halfWheelPx,
+                orbitRadiusPx = orbitRadiusPx,
+                nodeSizePx = nodeSizePx,
+                nodeSizeDp = nodeSizeDp,
+                stepAngleDeg = stepAngleDeg,
+                customEmojis = customEmojis,
+                onNodeTap = null
+            )
+        }
+    }
+}
 
-                val angleDeg = diff * stepAngleDeg
-                val absAngle = abs(angleDeg)
-                if (absAngle <= 112f) {
-                    val angleRad = Math.toRadians(angleDeg.toDouble())
-                    val nodeCenterX = halfWheelPx + (orbitRadiusPx * cos(angleRad)).toFloat()
-                    val nodeCenterY = halfWheelPx + (orbitRadiusPx * sin(angleRad)).toFloat()
-                    val nodeTopLeftX = (nodeCenterX - nodeSizePx / 2f).roundToInt()
-                    val nodeTopLeftY = (nodeCenterY - nodeSizePx / 2f).roundToInt()
+@Composable
+private fun HalfCircleWheelNodes(
+    categories: List<String>,
+    selectedIndex: Int,
+    animatedSlotOffset: Float,
+    halfWheelPx: Float,
+    orbitRadiusPx: Float,
+    nodeSizePx: Float,
+    nodeSizeDp: androidx.compose.ui.unit.Dp,
+    stepAngleDeg: Float,
+    customEmojis: Map<String, String>,
+    onNodeTap: ((String) -> Unit)?
+) {
+    val count = categories.size.coerceAtLeast(1)
+    categories.forEachIndexed { index, cat ->
+        var diff = (index.toFloat() - animatedSlotOffset) % count.toFloat()
+        if (diff > count / 2f) diff -= count
+        if (diff < -count / 2f) diff += count
 
-                    // Left-part fade: items approaching/past the left semicircle fade smoothly to 0 alpha
-                    val horizontalBias = ((cos(angleRad).toFloat() + 0.15f) / 0.55f).coerceIn(0f, 1f)
-                    val angularAlpha = if (absAngle <= 72f) {
-                        1f
-                    } else {
-                        (1f - ((absAngle - 72f) / 40f)).coerceIn(0f, 1f)
-                    }
-                    val nodeAlpha = (horizontalBias * angularAlpha).coerceIn(0f, 1f)
+        val angleDeg = diff * stepAngleDeg
+        val absAngle = abs(angleDeg)
+        if (absAngle <= 112f) {
+            val angleRad = Math.toRadians(angleDeg.toDouble())
+            val nodeCenterX = halfWheelPx + (orbitRadiusPx * cos(angleRad)).toFloat()
+            val nodeCenterY = halfWheelPx + (orbitRadiusPx * sin(angleRad)).toFloat()
+            val nodeTopLeftX = (nodeCenterX - nodeSizePx / 2f).roundToInt()
+            val nodeTopLeftY = (nodeCenterY - nodeSizePx / 2f).roundToInt()
 
-                    if (nodeAlpha > 0.02f) {
-                        val isSelected = index == controller.selectedIndex
-                        val nodeAccent = categoryAccentColor(cat)
-                        val nodeEmoji = customEmojis[cat.trim().lowercase()]
-                        val catTag = cat.lowercase().replace(Regex("[^a-z0-9]+"), "_").trim('_')
-                        val nodeScale by animateFloatAsState(
-                            targetValue = if (isSelected) 1.22f else 0.90f,
-                            animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy),
-                            label = "half_wheel_node_scale_$index"
-                        )
+            // Left-part fade: items approaching/past the left semicircle fade smoothly to 0 alpha
+            val horizontalBias = ((cos(angleRad).toFloat() + 0.15f) / 0.55f).coerceIn(0f, 1f)
+            val angularAlpha = if (absAngle <= 72f) {
+                1f
+            } else {
+                (1f - ((absAngle - 72f) / 40f)).coerceIn(0f, 1f)
+            }
+            val nodeAlpha = (horizontalBias * angularAlpha).coerceIn(0f, 1f)
 
-                        Surface(
-                            shape = CircleShape,
-                            color = if (isSelected) nodeAccent else MaterialTheme.colorScheme.surfaceContainerHighest,
-                            shadowElevation = if (isSelected) 6.dp else 1.dp,
-                            modifier = Modifier
-                                .offset { IntOffset(nodeTopLeftX, nodeTopLeftY) }
-                                .size(nodeSizeDp)
-                                .alpha(nodeAlpha)
-                                .graphicsLayer {
-                                    scaleX = nodeScale
-                                    scaleY = nodeScale
-                                }
-                                .border(
-                                    width = if (isSelected) 2.dp else 1.dp,
-                                    color = if (isSelected) Color.White else nodeAccent.copy(alpha = 0.45f),
-                                    shape = CircleShape
-                                )
-                                .testTag("wheel_category_node_$catTag")
-                        ) {
-                            Box(contentAlignment = Alignment.Center) {
-                                CategoryBadgeGlyph(
-                                    category = cat,
-                                    tint = if (isSelected) Color.White else nodeAccent,
-                                    iconSize = 18.dp,
-                                    customEmoji = nodeEmoji
-                                )
-                            }
+            if (nodeAlpha > 0.02f) {
+                val isSelected = index == selectedIndex
+                val nodeAccent = categoryAccentColor(cat)
+                val nodeEmoji = customEmojis[cat.trim().lowercase()]
+                val catTag = cat.lowercase().replace(Regex("[^a-z0-9]+"), "_").trim('_')
+                val nodeScale by animateFloatAsState(
+                    targetValue = if (isSelected) 1.22f else 0.90f,
+                    animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy),
+                    label = "half_wheel_node_scale_$index"
+                )
+
+                Surface(
+                    shape = CircleShape,
+                    color = if (isSelected) nodeAccent else MaterialTheme.colorScheme.surfaceContainerHighest,
+                    shadowElevation = if (isSelected) 6.dp else 1.dp,
+                    modifier = Modifier
+                        .offset { IntOffset(nodeTopLeftX, nodeTopLeftY) }
+                        .size(nodeSizeDp)
+                        .alpha(nodeAlpha)
+                        .graphicsLayer {
+                            scaleX = nodeScale
+                            scaleY = nodeScale
                         }
+                        .border(
+                            width = if (isSelected) 2.dp else 1.dp,
+                            color = if (isSelected) Color.White else nodeAccent.copy(alpha = 0.45f),
+                            shape = CircleShape
+                        )
+                        .then(
+                            if (onNodeTap != null) {
+                                Modifier.clickable { onNodeTap(cat) }
+                            } else {
+                                Modifier
+                            }
+                        )
+                        .testTag("wheel_category_node_$catTag")
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        CategoryBadgeGlyph(
+                            category = cat,
+                            tint = if (isSelected) Color.White else nodeAccent,
+                            iconSize = 18.dp,
+                            customEmoji = nodeEmoji
+                        )
                     }
                 }
+            }
+        }
+    }
+}
+
+/**
+ * Standalone interactive compact half-circle scroll wheel overlay launched from a notification
+ * action button so users can spin or tap a category in one hand without opening the full app.
+ */
+@Composable
+fun NotificationQuickCategoryWheelOverlay(
+    transactionTitle: String,
+    amountDisplay: String,
+    initialCategory: String,
+    availableCategories: List<String>,
+    onSelectCategory: (String) -> Unit,
+    onDismiss: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val performHaptic = rememberAppHapticPerformer()
+    val density = LocalDensity.current
+    val customEmojis = rememberCustomCategoryEmojis()
+
+    val categories = remember(availableCategories, initialCategory) {
+        (availableCategories + listOf(initialCategory))
+            .map { ExpenseCategories.normalizeCategory(it) }
+            .filter { it.isNotBlank() }
+            .distinctBy { it.lowercase() }
+            .ifEmpty { ExpenseCategories.ALL }
+    }
+    val initialIndex = remember(categories, initialCategory) {
+        val norm = ExpenseCategories.normalizeCategory(initialCategory)
+        categories.indexOfFirst { it.equals(norm, ignoreCase = true) }.coerceAtLeast(0)
+    }
+
+    var selectedIndex by remember(initialIndex) { mutableIntStateOf(initialIndex) }
+    var wheelSlotOffset by remember(initialIndex) { mutableFloatStateOf(initialIndex.toFloat()) }
+    var totalDragPx by remember { mutableFloatStateOf(0f) }
+
+    val animatedSlotOffset by animateFloatAsState(
+        targetValue = wheelSlotOffset,
+        animationSpec = spring(
+            dampingRatio = Spring.DampingRatioNoBouncy,
+            stiffness = Spring.StiffnessHigh
+        ),
+        label = "notif_half_circle_wheel_slot_offset"
+    )
+
+    val pxPerSlot = with(density) { 36.dp.toPx() }
+    val wheelDiameterDp = 188.dp
+    val orbitRadiusDp = 64.dp
+    val nodeSizeDp = 38.dp
+    val wheelSizePx = with(density) { wheelDiameterDp.toPx() }
+    val halfWheelPx = wheelSizePx / 2f
+    val orbitRadiusPx = with(density) { orbitRadiusDp.toPx() }
+    val nodeSizePx = with(density) { nodeSizeDp.toPx() }
+    val stepAngleDeg = 34f
+    val count = categories.size.coerceAtLeast(1)
+
+    val selectedCat = categories.getOrElse(selectedIndex.coerceIn(0, categories.lastIndex)) { "Unknown" }
+    val activeAccent = categoryAccentColor(selectedCat)
+    val activeEmoji = customEmojis[selectedCat.trim().lowercase()]
+    val trackColor = MaterialTheme.colorScheme.outlineVariant
+    val wheelBgColor = MaterialTheme.colorScheme.surfaceContainerHigh
+
+    Box(
+        modifier = modifier
+            .fillMaxSize()
+            .background(Color.Black.copy(alpha = 0.62f))
+            .pointerInput(Unit) {
+                detectTapGestures(onTap = { onDismiss() })
+            }
+            .testTag("notification_wheel_overlay")
+    ) {
+        Column(
+            modifier = Modifier
+                .align(Alignment.Center)
+                .statusBarsPadding()
+                .navigationBarsPadding()
+                .padding(horizontal = 24.dp)
+                .pointerInput(Unit) {
+                    detectTapGestures(onTap = { /* Consume taps inside card/wheel area */ })
+                },
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Surface(
+                shape = RoundedCornerShape(22.dp),
+                color = MaterialTheme.colorScheme.surfaceContainerHighest,
+                tonalElevation = 8.dp,
+                shadowElevation = 6.dp,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Text(
+                        text = listOf(amountDisplay, transactionTitle).filter { it.isNotBlank() }.joinToString(" • ").ifBlank { "Assign Category" },
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    Text(
+                        text = "Spin wheel or tap any icon to assign",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+
+            Surface(
+                shape = RoundedCornerShape(50),
+                color = MaterialTheme.colorScheme.surfaceContainerHighest,
+                tonalElevation = 8.dp,
+                shadowElevation = 6.dp,
+                modifier = Modifier
+                    .border(1.5.dp, activeAccent.copy(alpha = 0.75f), RoundedCornerShape(50))
+                    .clickable {
+                        performHaptic()
+                        onSelectCategory(selectedCat)
+                    }
+                    .testTag("category_wheel_active_label")
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 9.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    CategoryBadgeGlyph(
+                        category = selectedCat,
+                        tint = activeAccent,
+                        iconSize = 18.dp,
+                        customEmoji = activeEmoji
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "Set: $selectedCat",
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+            }
+
+            Box(
+                modifier = Modifier
+                    .size(wheelDiameterDp)
+                    .pointerInput(categories) {
+                        detectVerticalDragGestures(
+                            onDragStart = { totalDragPx = 0f },
+                            onDragEnd = {
+                                if (totalDragPx > 32f) {
+                                    performHaptic()
+                                    onSelectCategory(categories.getOrElse(selectedIndex) { selectedCat })
+                                }
+                            },
+                            onVerticalDrag = { change, dragAmount ->
+                                change.consume()
+                                totalDragPx += abs(dragAmount)
+                                wheelSlotOffset += (-dragAmount) / pxPerSlot.coerceAtLeast(12f)
+                                val nextIdx = positiveMod(wheelSlotOffset.roundToInt(), count)
+                                if (nextIdx != selectedIndex) {
+                                    selectedIndex = nextIdx
+                                    performHaptic()
+                                }
+                            }
+                        )
+                    }
+                    .testTag("circular_category_wheel")
+            ) {
+                Canvas(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .graphicsLayer(compositingStrategy = CompositingStrategy.Offscreen)
+                        .drawWithContent {
+                            drawContent()
+                            drawRect(
+                                brush = Brush.horizontalGradient(
+                                    0.0f to Color.Transparent,
+                                    0.24f to Color.Transparent,
+                                    0.44f to Color.Black.copy(alpha = 0.55f),
+                                    0.66f to Color.Black,
+                                    1.0f to Color.Black
+                                ),
+                                blendMode = BlendMode.DstIn
+                            )
+                        }
+                ) {
+                    val cx = size.width / 2f
+                    val cy = size.height / 2f
+                    val outerRadius = orbitRadiusPx + (nodeSizePx * 0.55f)
+
+                    drawCircle(
+                        color = wheelBgColor.copy(alpha = 0.94f),
+                        radius = outerRadius,
+                        center = Offset(cx, cy)
+                    )
+
+                    drawCircle(
+                        color = trackColor.copy(alpha = 0.50f),
+                        radius = orbitRadiusPx,
+                        center = Offset(cx, cy),
+                        style = Stroke(width = 2.dp.toPx())
+                    )
+
+                    val tickCount = 24
+                    val phaseDeg = -(animatedSlotOffset * stepAngleDeg)
+                    for (i in 0 until tickCount) {
+                        val deg = phaseDeg + i * (360f / tickCount)
+                        val rad = Math.toRadians(deg.toDouble())
+                        val isMajor = i % 2 == 0
+                        val r0 = outerRadius - if (isMajor) 8.dp.toPx() else 4.dp.toPx()
+                        drawLine(
+                            color = if (isMajor) activeAccent.copy(alpha = 0.55f) else trackColor.copy(alpha = 0.35f),
+                            start = Offset(cx + (r0 * cos(rad)).toFloat(), cy + (r0 * sin(rad)).toFloat()),
+                            end = Offset(cx + (outerRadius * cos(rad)).toFloat(), cy + (outerRadius * sin(rad)).toFloat()),
+                            strokeWidth = if (isMajor) 2.dp.toPx() else 1.dp.toPx(),
+                            cap = StrokeCap.Round
+                        )
+                    }
+
+                    drawCircle(
+                        color = activeAccent.copy(alpha = 0.26f),
+                        radius = (nodeSizePx * 0.64f),
+                        center = Offset(cx + orbitRadiusPx, cy)
+                    )
+                }
+
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.Center)
+                        .size(24.dp)
+                        .clip(CircleShape)
+                        .background(activeAccent.copy(alpha = 0.28f))
+                        .border(1.5.dp, activeAccent.copy(alpha = 0.8f), CircleShape)
+                )
+
+                HalfCircleWheelNodes(
+                    categories = categories,
+                    selectedIndex = selectedIndex,
+                    animatedSlotOffset = animatedSlotOffset,
+                    halfWheelPx = halfWheelPx,
+                    orbitRadiusPx = orbitRadiusPx,
+                    nodeSizePx = nodeSizePx,
+                    nodeSizeDp = nodeSizeDp,
+                    stepAngleDeg = stepAngleDeg,
+                    customEmojis = customEmojis,
+                    onNodeTap = { chosen ->
+                        performHaptic()
+                        onSelectCategory(chosen)
+                    }
+                )
             }
         }
     }

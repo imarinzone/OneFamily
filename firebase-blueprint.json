@@ -75,8 +75,12 @@
         "creditLimit": { "type": "number", "description": "Credit card available limit." },
         "linkedBankAccountId": { "type": "string", "description": "Linked parent bank account document ID for debit cards." },
         "linkedBankAccountName": { "type": "string", "description": "Linked parent bank account display name for debit cards." },
-        "monthlySpendLimit": { "type": "number", "description": "Optional per-account monthly spend limit." },
+        "monthlySpendLimit": { "type": "number", "description": "Optional per-account spend limit for the configured period." },
         "alertThresholdPercent": { "type": "integer", "description": "Alert percentage threshold (1..100)." },
+        "spendLimitPeriod": { "type": "string", "enum": ["MONTHLY", "WEEKLY", "QUARTERLY", "YEARLY", "CUSTOM"], "description": "Spend limit tracking period." },
+        "spendLimitStartMillis": { "type": "integer", "description": "Custom spend limit window start epoch millis." },
+        "spendLimitEndMillis": { "type": "integer", "description": "Custom spend limit window end epoch millis." },
+        "isHidden": { "type": "boolean", "description": "Whether account is hidden from main account lists." },
         "isSharedVisible": { "type": "boolean", "description": "Whether balance is summarized in household view." },
         "createdAt": { "type": "string", "format": "date-time", "description": "Server creation timestamp." },
         "updatedAt": { "type": "string", "format": "date-time", "description": "Server update timestamp." }

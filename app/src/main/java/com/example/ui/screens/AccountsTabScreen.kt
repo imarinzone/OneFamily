@@ -36,21 +36,29 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.CreditCard
+import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.FilterList
 import androidx.compose.material.icons.filled.Link
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.VisibilityOff
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -71,6 +79,7 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.example.data.model.AccountLimitPeriod
 import com.example.data.model.AccountSectionType
 import com.example.data.model.BudgetScope
 import com.example.data.model.ExpenseCategories
@@ -123,6 +132,11 @@ fun AccountsTabScreen(
     onSelectType: (String) -> Unit = {},
     onClearFilters: () -> Unit = {},
     onSaveAccountSpendLimitInline: (account: FinancialAccount, monthlyLimit: Double) -> Unit = { _, _ -> },
+    onSaveAccountSpendLimitWithPeriod: (
+        (account: FinancialAccount, monthlyLimit: Double, period: String, startMillis: Long, endMillis: Long) -> Unit
+    )? = null,
+    onToggleAccountHidden: (AccountSpendSummary, Boolean) -> Unit = { _, _ -> },
+    onDeleteOrUntrackAccount: (AccountSpendSummary) -> Unit = {},
     onAddAccountClick: (initialAccountType: String) -> Unit = {},
     onEditTransaction: (ExpenseTransaction) -> Unit = {},
     onQuickChangeCategory: (ExpenseTransaction) -> Unit = {}
@@ -135,6 +149,12 @@ fun AccountsTabScreen(
     var showCustomRangePicker by rememberSaveable { mutableStateOf(false) }
     var activeInlineAccountId by rememberSaveable { mutableStateOf<String?>(null) }
     var inlineLimitInput by rememberSaveable { mutableStateOf("") }
+    var inlineLimitPeriodKey by rememberSaveable { mutableStateOf(AccountLimitPeriod.MONTHLY.name) }
+    var inlineLimitCustomStartMillis by rememberSaveable { mutableStateOf(0L) }
+    var inlineLimitCustomEndMillis by rememberSaveable { mutableStateOf(0L) }
+    var showInlineLimitCustomRangePicker by rememberSaveable { mutableStateOf(false) }
+    var showAllAccountsExpanded by rememberSaveable { mutableStateOf(false) }
+    var pendingDeleteAccount by remember { mutableStateOf<AccountSpendSummary?>(null) }
     val expandedTransactionsMap = remember { mutableStateMapOf<String, Boolean>() }
 
     val hasActiveFilter = uiState.selectedDateRangePreset != DateRangePreset.MONTH ||
@@ -156,7 +176,7 @@ fun AccountsTabScreen(
                     summary.account.name.contains(uiState.searchQuery, ignoreCase = true) ||
                     summary.linkedBankDisplayName.contains(uiState.searchQuery, ignoreCase = true)
                 val isIncome = tx.type.equals("INCOME", ignoreCase = true) ||
-                    ExpenseCategories.normalizeCategory(tx.category).equals("Salary & Income", ignoreCase = true)
+                    ExpenseCategories.isIncomeCategory(tx.category)
                 val matchesType = when {
                     uiState.selectedTypeFilter == "All" -> true
                     uiState.selectedTypeFilter.equals("INCOME", ignoreCase = true) -> isIncome
@@ -170,17 +190,24 @@ fun AccountsTabScreen(
         }
     }
 
-    val totalSpendAllAccounts = remember(filteredAccountSummaries) {
-        filteredAccountSummaries.sumOf { it.spent }
+    val visibleAccountSummaries = remember(filteredAccountSummaries) {
+        filteredAccountSummaries.filter { !it.isHidden }
     }
-    val totalIncomeAllAccounts = remember(filteredAccountSummaries) {
-        filteredAccountSummaries.sumOf { it.income }
+    val hiddenAccountCount = remember(filteredAccountSummaries) {
+        filteredAccountSummaries.count { it.isHidden }
     }
-    val activeLimitCount = remember(filteredAccountSummaries) {
-        filteredAccountSummaries.count { it.limit > 0.0 }
+
+    val totalSpendAllAccounts = remember(visibleAccountSummaries) {
+        visibleAccountSummaries.sumOf { it.spent }
     }
-    val overLimitCount = remember(filteredAccountSummaries) {
-        filteredAccountSummaries.count { it.isOverLimit }
+    val totalIncomeAllAccounts = remember(visibleAccountSummaries) {
+        visibleAccountSummaries.sumOf { it.income }
+    }
+    val activeLimitCount = remember(visibleAccountSummaries) {
+        visibleAccountSummaries.count { it.limit > 0.0 }
+    }
+    val overLimitCount = remember(visibleAccountSummaries) {
+        visibleAccountSummaries.count { it.isOverLimit }
     }
 
     val sectionOrder = remember {
@@ -191,9 +218,9 @@ fun AccountsTabScreen(
             AccountSectionType.CREDIT_CARD
         )
     }
-    val groupedBySection = remember(filteredAccountSummaries) {
+    val groupedBySection = remember(visibleAccountSummaries) {
         sectionOrder.associateWith { section ->
-            filteredAccountSummaries.filter { it.section == section }
+            visibleAccountSummaries.filter { it.section == section }
         }
     }
 
@@ -208,6 +235,9 @@ fun AccountsTabScreen(
             } else {
                 ""
             }
+            inlineLimitPeriodKey = summary.limitPeriod.name
+            inlineLimitCustomStartMillis = summary.account.spendLimitStartMillis
+            inlineLimitCustomEndMillis = summary.account.spendLimitEndMillis
         }
     }
 
@@ -222,7 +252,11 @@ fun AccountsTabScreen(
         item {
             EditorialScreenHeader(
                 title = "Accounts",
-                countPillText = "${filteredAccountSummaries.size} accounts",
+                countPillText = if (hiddenAccountCount > 0) {
+                    "${visibleAccountSummaries.size} shown • $hiddenAccountCount hidden"
+                } else {
+                    "${visibleAccountSummaries.size} accounts"
+                },
                 subtitle = uiState.periodLabel,
                 modifier = Modifier.padding(bottom = 8.dp),
                 actions = {
@@ -575,14 +609,41 @@ fun AccountsTabScreen(
                             cardShape = stackShape,
                             isEditingLimit = isEditingLimit,
                             inlineLimitInput = inlineLimitInput,
+                            inlineLimitPeriod = AccountLimitPeriod.fromRaw(inlineLimitPeriodKey),
+                            inlineCustomStartMillis = inlineLimitCustomStartMillis,
+                            inlineCustomEndMillis = inlineLimitCustomEndMillis,
                             isTransactionsExpanded = isTransactionsExpanded,
                             onToggleLimitEditor = { activateInlineEditor(summary) },
                             onInlineLimitInputChange = { inlineLimitInput = sanitizeDecimalInput(it) },
+                            onSelectInlineLimitPeriod = { chosenPeriod ->
+                                inlineLimitPeriodKey = chosenPeriod.name
+                                if (chosenPeriod == AccountLimitPeriod.CUSTOM) {
+                                    showInlineLimitCustomRangePicker = true
+                                }
+                            },
                             onSaveInlineLimit = { parsedLimit ->
-                                onSaveAccountSpendLimitInline(summary.account, parsedLimit)
+                                if (onSaveAccountSpendLimitWithPeriod != null) {
+                                    onSaveAccountSpendLimitWithPeriod(
+                                        summary.account,
+                                        parsedLimit,
+                                        inlineLimitPeriodKey,
+                                        inlineLimitCustomStartMillis,
+                                        inlineLimitCustomEndMillis
+                                    )
+                                } else {
+                                    onSaveAccountSpendLimitInline(summary.account, parsedLimit)
+                                }
                                 activeInlineAccountId = null
                             },
                             onCancelInlineLimit = { activeInlineAccountId = null },
+                            onToggleHidden = {
+                                performHaptic()
+                                onToggleAccountHidden(summary, !summary.isHidden)
+                            },
+                            onRequestDelete = {
+                                performHaptic()
+                                pendingDeleteAccount = summary
+                            },
                             onToggleTransactionsExpanded = {
                                 performHaptic()
                                 expandedTransactionsMap[summary.account.id] = !isTransactionsExpanded
@@ -591,6 +652,153 @@ fun AccountsTabScreen(
                             onQuickChangeCategory = onQuickChangeCategory,
                             availableCategories = uiState.availableCategories
                         )
+                    }
+                }
+            }
+        }
+
+        // 5. Show All Accounts Bottom Section (allows unhiding hidden accounts or deleting/untracking any account)
+        if (filteredAccountSummaries.isNotEmpty()) {
+            item(key = "accounts_show_all_footer") {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = dimens.horizontalPadding, vertical = 10.dp)
+                ) {
+                    OutlinedButton(
+                        onClick = {
+                            performHaptic()
+                            showAllAccountsExpanded = !showAllAccountsExpanded
+                        },
+                        shape = RoundedCornerShape(50),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("accounts_show_all_button")
+                    ) {
+                        Icon(
+                            imageVector = if (showAllAccountsExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        val hiddenSuffix = if (hiddenAccountCount > 0) " • $hiddenAccountCount hidden" else ""
+                        Text(
+                            text = if (showAllAccountsExpanded) {
+                                "Hide All Accounts (${filteredAccountSummaries.size}$hiddenSuffix)"
+                            } else {
+                                "Show All Accounts (${filteredAccountSummaries.size}$hiddenSuffix)"
+                            },
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+                }
+            }
+
+            if (showAllAccountsExpanded) {
+                itemsIndexed(
+                    items = filteredAccountSummaries,
+                    key = { _, s -> "all_acc_${s.account.id}" }
+                ) { idx, summary ->
+                    val rowShape = groupedCardShape(index = idx, count = filteredAccountSummaries.size)
+                    val safeTag = summary.account.name.lowercase()
+                        .replace(Regex("[^a-z0-9]+"), "_")
+                        .trim('_')
+                        .ifBlank { summary.account.id }
+                    Card(
+                        shape = rowShape,
+                        colors = CardDefaults.cardColors(
+                            containerColor = if (summary.isHidden) {
+                                MaterialTheme.colorScheme.surfaceContainerHighest.copy(alpha = 0.7f)
+                            } else {
+                                MaterialTheme.colorScheme.surfaceContainerLow
+                            }
+                        ),
+                        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(
+                                start = dimens.horizontalPadding,
+                                end = dimens.horizontalPadding,
+                                bottom = 4.dp
+                            )
+                            .testTag("all_accounts_row_$safeTag")
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 14.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    Text(
+                                        text = summary.account.name,
+                                        style = MaterialTheme.typography.titleSmall,
+                                        fontWeight = FontWeight.Bold,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        modifier = Modifier.weight(1f, fill = false)
+                                    )
+                                    if (summary.isHidden) {
+                                        Surface(
+                                            shape = RoundedCornerShape(50),
+                                            color = MaterialTheme.colorScheme.secondaryContainer,
+                                            modifier = Modifier.testTag("all_accounts_hidden_badge_$safeTag")
+                                        ) {
+                                            Text(
+                                                text = "Hidden",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                fontWeight = FontWeight.Bold,
+                                                color = MaterialTheme.colorScheme.onSecondaryContainer,
+                                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
+                                            )
+                                        }
+                                    }
+                                }
+                                Text(
+                                    text = buildString {
+                                        append(summary.section.title)
+                                        if (summary.account.lastFourDigits.isNotBlank()) {
+                                            append(" • ••${summary.account.lastFourDigits}")
+                                        }
+                                        append(" • Spent ${formatCurrency(summary.spent, currency)}")
+                                    },
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                            IconButton(
+                                onClick = {
+                                    performHaptic()
+                                    onToggleAccountHidden(summary, !summary.isHidden)
+                                },
+                                modifier = Modifier.testTag("all_accounts_toggle_hide_$safeTag")
+                            ) {
+                                Icon(
+                                    imageVector = if (summary.isHidden) Icons.Default.Visibility else Icons.Default.VisibilityOff,
+                                    contentDescription = if (summary.isHidden) "Show Account" else "Hide Account",
+                                    tint = MaterialTheme.colorScheme.primary
+                                )
+                            }
+                            IconButton(
+                                onClick = {
+                                    performHaptic()
+                                    pendingDeleteAccount = summary
+                                },
+                                modifier = Modifier.testTag("all_accounts_delete_$safeTag")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.DeleteOutline,
+                                    contentDescription = "Delete or Untrack Account",
+                                    tint = MaterialTheme.colorScheme.error
+                                )
+                            }
+                        }
                     }
                 }
             }
@@ -607,6 +815,59 @@ fun AccountsTabScreen(
             }
         )
     }
+
+    if (showInlineLimitCustomRangePicker) {
+        val nowMs = System.currentTimeMillis()
+        CustomDateRangePickerModal(
+            initialStartMillis = if (inlineLimitCustomStartMillis > 0L) inlineLimitCustomStartMillis else (nowMs - 30L * 86_400_000L),
+            initialEndMillis = if (inlineLimitCustomEndMillis > 0L) inlineLimitCustomEndMillis else nowMs,
+            onDismiss = { showInlineLimitCustomRangePicker = false },
+            onApplyRange = { start, end ->
+                inlineLimitCustomStartMillis = start
+                inlineLimitCustomEndMillis = end
+                inlineLimitPeriodKey = AccountLimitPeriod.CUSTOM.name
+            }
+        )
+    }
+
+    val deleteTarget = pendingDeleteAccount
+    if (deleteTarget != null) {
+        AlertDialog(
+            onDismissRequest = { pendingDeleteAccount = null },
+            shape = RoundedCornerShape(28.dp),
+            containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+            modifier = Modifier.testTag("delete_account_confirm_dialog"),
+            title = {
+                Text(
+                    text = "Delete / Untrack Account?",
+                    fontWeight = FontWeight.Bold
+                )
+            },
+            text = {
+                Text(
+                    text = "Remove ${deleteTarget.account.name} from tracked accounts? Existing transactions stay intact, and you can re-add the account anytime."
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        performHaptic()
+                        onDeleteOrUntrackAccount(deleteTarget)
+                        pendingDeleteAccount = null
+                    },
+                    shape = RoundedCornerShape(50),
+                    modifier = Modifier.testTag("confirm_delete_account_button")
+                ) {
+                    Text("Delete / Untrack")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingDeleteAccount = null }) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
 }
 
 @OptIn(ExperimentalFoundationApi::class)
@@ -619,11 +880,17 @@ private fun AccountCardWithTransactions(
     cardShape: RoundedCornerShape,
     isEditingLimit: Boolean,
     inlineLimitInput: String,
+    inlineLimitPeriod: AccountLimitPeriod,
+    inlineCustomStartMillis: Long,
+    inlineCustomEndMillis: Long,
     isTransactionsExpanded: Boolean,
     onToggleLimitEditor: () -> Unit,
     onInlineLimitInputChange: (String) -> Unit,
+    onSelectInlineLimitPeriod: (AccountLimitPeriod) -> Unit,
     onSaveInlineLimit: (Double) -> Unit,
     onCancelInlineLimit: () -> Unit,
+    onToggleHidden: () -> Unit,
+    onRequestDelete: () -> Unit,
     onToggleTransactionsExpanded: () -> Unit,
     onEditTransaction: (ExpenseTransaction) -> Unit,
     onQuickChangeCategory: (ExpenseTransaction) -> Unit,
@@ -722,7 +989,7 @@ private fun AccountCardWithTransactions(
                         fontWeight = FontWeight.SemiBold
                     )
                 }
-                Spacer(modifier = Modifier.width(8.dp))
+                Spacer(modifier = Modifier.width(6.dp))
                 FilledTonalButton(
                     onClick = onToggleLimitEditor,
                     shape = RoundedCornerShape(50),
@@ -741,6 +1008,64 @@ private fun AccountCardWithTransactions(
                         ),
                         fontWeight = FontWeight.Bold
                     )
+                }
+                var menuExpanded by remember { mutableStateOf(false) }
+                Box {
+                    IconButton(
+                        onClick = {
+                            performHaptic()
+                            menuExpanded = true
+                        },
+                        modifier = Modifier.testTag("account_menu_button_$safeTag")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.MoreVert,
+                            contentDescription = "Account Options",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    DropdownMenu(
+                        expanded = menuExpanded,
+                        onDismissRequest = { menuExpanded = false }
+                    ) {
+                        DropdownMenuItem(
+                            text = { Text(if (summary.limit > 0.0) "Edit Limit & Period" else "Set Spend Limit") },
+                            leadingIcon = { Icon(Icons.Default.Edit, contentDescription = null) },
+                            onClick = {
+                                menuExpanded = false
+                                onToggleLimitEditor()
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text(if (summary.isHidden) "Show Account" else "Hide Account") },
+                            leadingIcon = {
+                                Icon(
+                                    imageVector = if (summary.isHidden) Icons.Default.Visibility else Icons.Default.VisibilityOff,
+                                    contentDescription = null
+                                )
+                            },
+                            onClick = {
+                                menuExpanded = false
+                                onToggleHidden()
+                            },
+                            modifier = Modifier.testTag("account_menu_hide_$safeTag")
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Delete / Untrack", color = MaterialTheme.colorScheme.error) },
+                            leadingIcon = {
+                                Icon(
+                                    imageVector = Icons.Default.DeleteOutline,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.error
+                                )
+                            },
+                            onClick = {
+                                menuExpanded = false
+                                onRequestDelete()
+                            },
+                            modifier = Modifier.testTag("account_menu_delete_$safeTag")
+                        )
+                    }
                 }
             }
 
@@ -773,7 +1098,7 @@ private fun AccountCardWithTransactions(
                 }
             }
 
-            // Inline Spend Limit Numeric Editor (no modal opened)
+            // Inline Spend Limit Numeric & Period Editor (no modal opened)
             AnimatedVisibility(visible = isEditingLimit) {
                 val inlineError = if (inlineLimitInput.isNotEmpty()) {
                     validateNonNegativeAmount(inlineLimitInput)
@@ -787,75 +1112,111 @@ private fun AccountCardWithTransactions(
                         onSaveInlineLimit(parsedLimit)
                     }
                 }
-                Row(
+                Column(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(top = 10.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    OutlinedTextField(
-                        value = inlineLimitInput,
-                        onValueChange = onInlineLimitInputChange,
-                        label = { Text("Spend Limit ($currency)") },
-                        placeholder = { Text("0 to clear") },
-                        isError = inlineError != null,
-                        supportingText = inlineError?.let { err -> { Text(err) } },
-                        keyboardOptions = KeyboardOptions(
-                            keyboardType = KeyboardType.Decimal,
-                            imeAction = ImeAction.Done
-                        ),
-                        keyboardActions = KeyboardActions(onDone = { commitInlineLimit() }),
-                        singleLine = true,
-                        shape = RoundedCornerShape(16.dp),
-                        modifier = Modifier
-                            .weight(1f)
-                            .testTag("inline_account_limit_input_$safeTag")
-                    )
-                    Button(
-                        onClick = commitInlineLimit,
-                        enabled = inlineError == null,
-                        shape = CircleShape,
-                        contentPadding = PaddingValues(0.dp),
-                        modifier = Modifier
-                            .size(48.dp)
-                            .testTag("inline_save_account_limit_$safeTag")
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        Icon(
-                            imageVector = Icons.Default.Check,
-                            contentDescription = "Save Spend Limit",
-                            modifier = Modifier.size(20.dp)
+                        OutlinedTextField(
+                            value = inlineLimitInput,
+                            onValueChange = onInlineLimitInputChange,
+                            label = { Text("Spend Limit ($currency)") },
+                            placeholder = { Text("0 to clear") },
+                            isError = inlineError != null,
+                            supportingText = inlineError?.let { err -> { Text(err) } },
+                            keyboardOptions = KeyboardOptions(
+                                keyboardType = KeyboardType.Decimal,
+                                imeAction = ImeAction.Done
+                            ),
+                            keyboardActions = KeyboardActions(onDone = { commitInlineLimit() }),
+                            singleLine = true,
+                            shape = RoundedCornerShape(16.dp),
+                            modifier = Modifier
+                                .weight(1f)
+                                .testTag("inline_account_limit_input_$safeTag")
                         )
-                    }
-                    if (summary.limit > 0.0) {
-                        IconButton(
-                            onClick = {
-                                performHaptic()
-                                onSaveInlineLimit(0.0)
-                            },
-                            modifier = Modifier.testTag("inline_clear_account_limit_$safeTag")
+                        Button(
+                            onClick = commitInlineLimit,
+                            enabled = inlineError == null,
+                            shape = CircleShape,
+                            contentPadding = PaddingValues(0.dp),
+                            modifier = Modifier
+                                .size(48.dp)
+                                .testTag("inline_save_account_limit_$safeTag")
                         ) {
                             Icon(
-                                imageVector = Icons.Default.Clear,
-                                contentDescription = "Clear Spend Limit",
-                                tint = MaterialTheme.colorScheme.error
+                                imageVector = Icons.Default.Check,
+                                contentDescription = "Save Spend Limit",
+                                modifier = Modifier.size(20.dp)
                             )
                         }
-                    } else {
-                        IconButton(
-                            onClick = onCancelInlineLimit,
-                            modifier = Modifier.testTag("inline_cancel_account_limit_$safeTag")
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Close,
-                                contentDescription = "Cancel Spend Limit Edit"
+                        if (summary.limit > 0.0) {
+                            IconButton(
+                                onClick = {
+                                    performHaptic()
+                                    onSaveInlineLimit(0.0)
+                                },
+                                modifier = Modifier.testTag("inline_clear_account_limit_$safeTag")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Clear,
+                                    contentDescription = "Clear Spend Limit",
+                                    tint = MaterialTheme.colorScheme.error
+                                )
+                            }
+                        } else {
+                            IconButton(
+                                onClick = onCancelInlineLimit,
+                                modifier = Modifier.testTag("inline_cancel_account_limit_$safeTag")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Close,
+                                    contentDescription = "Cancel Spend Limit Edit"
+                                )
+                            }
+                        }
+                    }
+
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        AccountLimitPeriod.entries.forEach { period ->
+                            val selected = inlineLimitPeriod == period
+                            FilterChip(
+                                selected = selected,
+                                onClick = {
+                                    performHaptic()
+                                    onSelectInlineLimitPeriod(period)
+                                },
+                                label = {
+                                    val labelText = if (period == AccountLimitPeriod.CUSTOM &&
+                                        inlineCustomStartMillis > 0L && inlineCustomEndMillis > 0L
+                                    ) {
+                                        "${formatShortDate(inlineCustomStartMillis)} – ${formatShortDate(inlineCustomEndMillis)}"
+                                    } else {
+                                        period.label
+                                    }
+                                    Text(labelText, style = MaterialTheme.typography.labelSmall)
+                                },
+                                shape = RoundedCornerShape(50),
+                                modifier = Modifier.testTag("inline_limit_period_${safeTag}_${period.name.lowercase()}")
                             )
                         }
                     }
                 }
             }
 
-            // Spend Limit Progress Tracker (similar to Budgets)
+            // Spend Limit Progress Tracker (scoped to account's configured Limit Period)
             if (summary.limit > 0.0) {
                 Spacer(modifier = Modifier.height(10.dp))
                 LinearProgressIndicator(
@@ -875,12 +1236,12 @@ private fun AccountCardWithTransactions(
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
                     Text(
-                        text = "${summary.percentage}% used",
+                        text = "${summary.percentage}% used • ${summary.limitPeriodLabel}",
                         style = MaterialTheme.typography.labelSmall.copy(fontFamily = ReceiptMonoFontFamily),
                         color = barColor,
                         fontWeight = FontWeight.SemiBold
                     )
-                    val diff = summary.limit - summary.spent
+                    val diff = summary.limit - summary.limitSpent
                     Text(
                         text = if (diff >= 0.0) {
                             "${formatCurrency(diff, currency)} remaining"
@@ -946,7 +1307,7 @@ private fun AccountCardWithTransactions(
                     summary.transactions.forEach { tx ->
                         val catColor = categoryAccentColor(tx.category)
                         val isIncome = tx.type.equals("INCOME", ignoreCase = true) ||
-                            ExpenseCategories.normalizeCategory(tx.category).equals("Salary & Income", ignoreCase = true)
+                            ExpenseCategories.isIncomeCategory(tx.category)
                         Surface(
                             shape = RoundedCornerShape(16.dp),
                             color = MaterialTheme.colorScheme.surfaceContainerLowest,

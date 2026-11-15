@@ -283,7 +283,35 @@ test("FinancialAccounts: DEBIT_CARD linked to bank and monthlySpendLimit allowed
       .update({
         monthlySpendLimit: 20000,
         alertThresholdPercent: 85,
+        spendLimitPeriod: "CUSTOM",
+        spendLimitStartMillis: 1730000000000,
+        spendLimitEndMillis: 1732500000000,
+        isHidden: true,
         updatedAt: new Date(Date.now() - 500),
+      })
+  );
+
+  await assertFails(
+    aliceDb
+      .collection("users")
+      .doc(ALICE_UID)
+      .collection("accounts")
+      .doc("hdfc_debit_5512")
+      .update({
+        spendLimitPeriod: "DAILY",
+        updatedAt: new Date(Date.now() - 300),
+      })
+  );
+
+  await assertFails(
+    aliceDb
+      .collection("users")
+      .doc(ALICE_UID)
+      .collection("accounts")
+      .doc("hdfc_debit_5512")
+      .update({
+        isHidden: "yes",
+        updatedAt: new Date(Date.now() - 280),
       })
   );
 

@@ -122,6 +122,7 @@ import com.example.ui.screens.FirstTimeSmsSyncScreen
 import com.example.ui.screens.HomeTabScreen
 import com.example.ui.screens.HouseholdTabScreen
 import com.example.ui.screens.LinkDuplicateTransactionDialog
+import com.example.ui.screens.MerchantCategoryBatchUpdateDialog
 import com.example.ui.screens.QuickCategoryPickerDialog
 import com.example.ui.theme.LocalAppDimens
 import com.example.ui.theme.OneFamilyTheme
@@ -306,6 +307,8 @@ fun OneFamilyMainShell(
     val smsSyncPeriodOption by viewModel.smsSyncPeriodOption.collectAsStateWithLifecycle()
     val smsSyncCustomRange by viewModel.smsSyncCustomRange.collectAsStateWithLifecycle()
     val isDeletingAccount by viewModel.isDeletingAccount.collectAsStateWithLifecycle()
+    val merchantCategoryPrompt by viewModel.merchantCategoryPrompt.collectAsStateWithLifecycle()
+    val fcmPushSettings by LocalAccountSessionManager.fcmPushSettings.collectAsStateWithLifecycle()
     val tabs = OneFamilyNavTab.entries
     val pagerState = rememberPagerState(initialPage = 0, pageCount = { tabs.size })
     val currentTab = tabs[pagerState.currentPage]
@@ -366,6 +369,14 @@ fun OneFamilyMainShell(
                 onConsumeDeepLinkExpenseId()
             }
         }
+    }
+
+    LaunchedEffect(
+        uiState.accountSummaries,
+        fcmPushSettings.creditCardAlertThresholdPercent,
+        fcmPushSettings.creditCardLimitAlertsEnabled
+    ) {
+        viewModel.evaluateCreditCardLimitNotifications(context)
     }
 
     val permissionsLauncher = rememberLauncherForActivityResult(
@@ -665,6 +676,21 @@ fun OneFamilyMainShell(
                                         onClearFilters = { viewModel.clearFilters() },
                                         onSaveAccountSpendLimitInline = { account, monthlyLimit ->
                                             viewModel.updateAccountSpendLimit(account, monthlyLimit)
+                                        },
+                                        onSaveAccountSpendLimitWithPeriod = { account, monthlyLimit, period, startMillis, endMillis ->
+                                            viewModel.updateAccountSpendLimit(
+                                                account = account,
+                                                monthlySpendLimit = monthlyLimit,
+                                                spendLimitPeriod = period,
+                                                spendLimitStartMillis = startMillis,
+                                                spendLimitEndMillis = endMillis
+                                            )
+                                        },
+                                        onToggleAccountHidden = { summary, hidden ->
+                                            viewModel.setAccountHidden(context, summary, hidden)
+                                        },
+                                        onDeleteOrUntrackAccount = { summary ->
+                                            viewModel.deleteOrUntrackAccount(context, summary)
                                         },
                                         onAddAccountClick = { initialType ->
                                             addAccountInitialType = initialType
@@ -992,7 +1018,7 @@ fun OneFamilyMainShell(
             accounts = uiState.accounts,
             initialAccountType = addAccountInitialType,
             onDismiss = { showAddAccountDialog = false },
-            onSave = { name, bankName, accountType, lastFour, balance, creditLimit, linkedBankId, linkedBankName, spendLimit ->
+            onSaveWithPeriod = { name, bankName, accountType, lastFour, balance, creditLimit, linkedBankId, linkedBankName, spendLimit, period, startMillis, endMillis ->
                 viewModel.saveFinancialAccount(
                     name = name,
                     bankName = bankName,
@@ -1003,7 +1029,11 @@ fun OneFamilyMainShell(
                     isSharedVisible = true,
                     linkedBankAccountId = linkedBankId,
                     linkedBankAccountName = linkedBankName,
-                    monthlySpendLimit = spendLimit
+                    monthlySpendLimit = spendLimit,
+                    spendLimitPeriod = period,
+                    spendLimitStartMillis = startMillis,
+                    spendLimitEndMillis = endMillis,
+                    context = context
                 )
                 showAddAccountDialog = false
             }
@@ -1037,6 +1067,18 @@ fun OneFamilyMainShell(
                 }.onFailure { err ->
                     viewModel.notifyCsvExportError(err.localizedMessage ?: "Unable to share CSV.")
                 }
+            }
+        )
+    }
+
+    val activeMerchantPrompt = merchantCategoryPrompt
+    if (activeMerchantPrompt != null) {
+        MerchantCategoryBatchUpdateDialog(
+            prompt = activeMerchantPrompt,
+            currencySymbol = currency,
+            onDismiss = { viewModel.dismissMerchantCategoryBatchPrompt() },
+            onConfirm = { selectedIds ->
+                viewModel.confirmMerchantCategoryBatchUpdate(selectedIds)
             }
         )
     }

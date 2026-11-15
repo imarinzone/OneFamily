@@ -32,6 +32,7 @@ import com.example.data.model.FamilyCurrencyOption
 import com.example.data.model.FcmPushSettings
 import com.example.data.model.FinancialAccount
 import com.example.data.model.Household
+import com.example.data.model.NotificationSubCategory
 import com.example.data.model.UserProfile
 import com.example.data.model.WallpaperColorAccent
 import com.example.data.model.WallpaperDensity
@@ -63,8 +64,10 @@ import com.example.ui.screens.FirstTimeSmsSyncScreen
 import com.example.ui.screens.HomeTabScreen
 import com.example.ui.screens.HouseholdTabScreen
 import com.example.ui.screens.LinkDuplicateTransactionDialog
+import com.example.ui.screens.MerchantCategoryBatchUpdateDialog
 import com.example.ui.screens.mergeSelectedDatePreservingTime
 import com.example.ui.viewmodel.CategorySpendProgress
+import com.example.ui.viewmodel.MerchantCategoryUpdatePrompt
 import com.ritesh.parser.core.bank.BankParserFactory
 import com.example.ui.screens.mergeSelectedTimePreservingDate
 import com.example.ui.screens.sanitizeDecimalInput
@@ -89,6 +92,11 @@ import com.example.ui.theme.resolveAppColorScheme
 import com.example.ui.viewmodel.DateRangeFilterUtils
 import com.example.ui.viewmodel.DateRangePreset
 import com.example.ui.viewmodel.MonthlySpendBar
+import com.example.data.model.AccountLimitPeriod
+import com.example.data.model.AccountSectionType
+import com.example.ui.components.NotificationQuickCategoryWheelOverlay
+import com.example.ui.viewmodel.AccountLimitPeriodUtils
+import com.example.ui.viewmodel.AccountSpendSummary
 import com.example.ui.viewmodel.OneFamilyDashboardUiState
 import com.example.ui.viewmodel.OneFamilyViewModel
 import com.example.ui.viewmodel.SmsReadPreviewItem
@@ -1891,7 +1899,7 @@ class ExampleRobolectricTest {
         val notifTitle = posted.extras.getCharSequence(Notification.EXTRA_TITLE)?.toString().orEmpty()
         val notifBody = posted.extras.getCharSequence(Notification.EXTRA_TEXT)?.toString().orEmpty()
 
-        assertEquals("Blue Tokai Coffee • ₹650", notifTitle)
+        assertEquals("₹650 • Blue Tokai Coffee", notifTitle)
         assertFalse(notifTitle.contains("Not you", ignoreCase = true))
         assertFalse(notifTitle.contains("7308080808"))
         assertFalse(notifTitle.contains("18002586161"))
@@ -2223,9 +2231,13 @@ class ExampleRobolectricTest {
             novPeriod,
             selectedPeriod
         )
+        composeTestRule.onNodeWithTag("analytics_tab_list")
+            .performScrollToNode(hasTestTag("analytics_selected_month_transactions_card"))
         composeTestRule.onNodeWithText("November Organic Groceries").assertExists()
 
         // 4. Tap October's month column -> selectedPeriod updates to Oct 2026 and shows October's transactions!
+        composeTestRule.onNodeWithTag("analytics_tab_list")
+            .performScrollToNode(hasTestTag("monthly_bar_graph_scroll_container"))
         composeTestRule.onNodeWithTag("month_bar_column_2026_9").performScrollTo().performClick()
         composeTestRule.waitForIdle()
         assertEquals(octPeriod, selectedPeriod)
@@ -3011,6 +3023,625 @@ class ExampleRobolectricTest {
             .performScrollToNode(hasTestTag("expense_card_tx_wheel_1"))
         composeTestRule.onNodeWithText("Client Dinner Reimbursement").assertIsDisplayed()
         assertTrue(composeTestRule.onAllNodesWithText("Daily Milk & Bread").fetchSemanticsNodes().isEmpty())
+    }
+
+    @Test
+    fun `test notification sub categories have short toggleable names and every notification title shows amount`() {
+        val app = ApplicationProvider.getApplicationContext<Application>()
+        shadowOf(app).grantPermissions(Manifest.permission.POST_NOTIFICATIONS)
+        val nm = app.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        nm.cancelAll()
+        LocalAccountSessionManager.ensureInitialized(app)
+        LocalAccountSessionManager.updateFcmPushSettings(app, FcmPushSettings())
+
+        // 1. Verify Android notification channels are created with concise short names
+        TransactionNotificationHelper.ensureChannel(app)
+        val channels = nm.notificationChannels.associateBy { it.id }
+        assertEquals("Expenses", channels[TransactionNotificationHelper.CHANNEL_ID]?.name?.toString())
+        assertEquals("Income", channels[TransactionNotificationHelper.CHANNEL_ID_SMS_INCOME]?.name?.toString())
+        assertEquals("Family Sync", channels[TransactionNotificationHelper.CHANNEL_ID_FCM_FAMILY]?.name?.toString())
+        assertEquals("Budget Alerts", channels[TransactionNotificationHelper.CHANNEL_ID_FCM_BUDGET]?.name?.toString())
+
+        // 2. Verify EVERY notification type puts the formatted amount prominently in its title
+        TransactionNotificationHelper.showNewTransactionNotification(
+            context = app,
+            expenseId = "exp_amount_1",
+            householdId = "",
+            visibility = "PERSONAL",
+            title = "Very Long Merchant Name That Could Truncate On Status Bar",
+            amount = 1490.0,
+            currentCategory = "Shopping",
+            currencySymbol = "₹",
+            transactionType = "EXPENSE"
+        )
+        TransactionNotificationHelper.showNewTransactionNotification(
+            context = app,
+            expenseId = "inc_amount_2",
+            householdId = "",
+            visibility = "PERSONAL",
+            title = "Acme Tech Payroll",
+            amount = 85000.0,
+            currentCategory = "Salary & Income",
+            currencySymbol = "₹",
+            transactionType = "INCOME"
+        )
+        TransactionNotificationHelper.showFamilyTransactionPushNotification(
+            context = app,
+            expenseId = "fam_amount_3",
+            householdId = "hh_1",
+            householdName = "Home",
+            memberName = "Priya",
+            title = "BigBasket Order",
+            amount = 920.0,
+            category = "Groceries",
+            currencySymbol = "₹"
+        )
+        TransactionNotificationHelper.showBudgetThresholdPushNotification(
+            context = app,
+            categoryOrScopeName = "Groceries",
+            spentAmount = 8400.0,
+            limitAmount = 10000.0,
+            thresholdPercent = 80,
+            currencySymbol = "₹",
+            forceNotify = true
+        )
+
+        val allNotifs = shadowOf(nm).allNotifications
+        assertEquals(4, allNotifs.size)
+        val titles = allNotifs.map { it.extras.getCharSequence(Notification.EXTRA_TITLE)?.toString().orEmpty() }
+        assertTrue(titles.any { it.startsWith("₹1,490 • ") })
+        assertTrue(titles.any { it.startsWith("+₹85,000 • ") })
+        assertTrue(titles.any { it.startsWith("₹920 • ") })
+        assertTrue(titles.any { it.startsWith("₹8,400 / ₹10,000 • Groceries") })
+
+        // 3. Render Settings Notifications card & verify user can toggle sub-categories ON/OFF
+        val uiState = OneFamilyDashboardUiState(
+            isLoading = false,
+            userProfile = UserProfile(uid = "local_u1", displayName = "Alex", currencySymbol = "₹")
+        )
+        composeTestRule.setContent {
+            OneFamilyTheme {
+                HouseholdTabScreen(
+                    uiState = uiState,
+                    onCreateHousehold = { _, _ -> },
+                    onJoinByCode = {},
+                    onInviteByEmail = {},
+                    onAcceptEmailInvite = {}
+                )
+            }
+        }
+        composeTestRule.waitForIdle()
+
+        composeTestRule.onNodeWithTag("household_tab_list")
+            .performScrollToNode(hasTestTag("notification_preferences_card"))
+        composeTestRule.onNodeWithTag("notification_preferences_card").assertIsDisplayed()
+
+        NotificationSubCategory.entries.forEach { subCat ->
+            composeTestRule.onNodeWithText(subCat.shortName).assertExists()
+        }
+
+        // Turn OFF Expenses sub-category via UI switch -> expense notification is suppressed while Income still posts
+        composeTestRule.onNodeWithTag("notif_subcategory_switch_expenses").performClick()
+        composeTestRule.waitForIdle()
+        assertFalse(LocalAccountSessionManager.fcmPushSettings.value.expenseAlertsEnabled)
+        assertTrue(LocalAccountSessionManager.fcmPushSettings.value.incomeAlertsEnabled)
+
+        nm.cancelAll()
+        TransactionNotificationHelper.showNewTransactionNotification(
+            context = app,
+            expenseId = "exp_suppressed",
+            householdId = "",
+            visibility = "PERSONAL",
+            title = "Swiggy",
+            amount = 350.0,
+            currentCategory = "Food & Dining",
+            currencySymbol = "₹",
+            transactionType = "EXPENSE"
+        )
+        assertEquals(0, shadowOf(nm).allNotifications.size)
+
+        TransactionNotificationHelper.showNewTransactionNotification(
+            context = app,
+            expenseId = "inc_allowed",
+            householdId = "",
+            visibility = "PERSONAL",
+            title = "Refund",
+            amount = 350.0,
+            currentCategory = "Salary & Income",
+            currencySymbol = "₹",
+            transactionType = "INCOME"
+        )
+        assertEquals(1, shadowOf(nm).allNotifications.size)
+
+        // Restore defaults
+        LocalAccountSessionManager.updateFcmPushSettings(app, FcmPushSettings())
+    }
+
+    @Test
+    fun `test upi and bank are unified into single BANK account type`() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        LocalAccountDataStore.ensureInitialized(context)
+        LocalAccountDataStore.deleteAllUserData("u_unified")
+
+        val upiDocId = LocalAccountDataStore.upsertAccount(
+            uid = "u_unified",
+            name = "HDFC UPI",
+            bankName = "HDFC Bank",
+            accountType = "UPI",
+            lastFourDigits = "4821",
+            balance = 24000.0
+        )
+        val saved = runBlocking {
+            LocalAccountDataStore.observeAccounts("u_unified").first()
+        }.first { it.id == upiDocId }
+        assertEquals("BANK", saved.accountType)
+        assertEquals("BANK", FinancialAccount.normalizeAccountType("UPI"))
+
+        composeTestRule.setContent {
+            OneFamilyTheme {
+                AddAccountDialog(
+                    currencySymbol = "₹",
+                    accounts = listOf(saved),
+                    initialAccountType = "UPI",
+                    onDismiss = {},
+                    onSave = { _, _, _, _, _, _, _, _, _ -> }
+                )
+            }
+        }
+        composeTestRule.waitForIdle()
+
+        composeTestRule.onNodeWithTag("account_type_chip_bank").assertExists()
+        assertTrue(
+            "UPI must NOT be shown as a separate account type chip",
+            composeTestRule.onAllNodesWithTag("account_type_chip_upi").fetchSemanticsNodes().isEmpty()
+        )
+        LocalAccountDataStore.deleteAllUserData("u_unified")
+    }
+
+    @Test
+    fun `test updating merchant category prompts older receipts of same merchant with individual tick and untick`() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        LocalAccountDataStore.ensureInitialized(context)
+        LocalAccountSessionManager.ensureInitialized(context)
+        LocalAccountDataStore.deleteAllUserData("u_batch")
+
+        val now = System.currentTimeMillis()
+        val olderSwiggy1 = ExpenseTransaction(
+            id = "swiggy_old_1",
+            userId = "u_batch",
+            userName = "Alex",
+            title = "Swiggy",
+            amount = 420.0,
+            type = "EXPENSE",
+            category = "Shopping",
+            accountName = "HDFC ••4821",
+            paymentMode = "UPI",
+            visibility = "PERSONAL",
+            transactionDateMillis = now - 86_400_000L * 2
+        )
+        val olderSwiggy2 = ExpenseTransaction(
+            id = "swiggy_old_2",
+            userId = "u_batch",
+            userName = "Alex",
+            title = "  swiggy ",
+            amount = 290.0,
+            type = "EXPENSE",
+            category = "Unknown",
+            accountName = "HDFC ••4821",
+            paymentMode = "UPI",
+            visibility = "PERSONAL",
+            transactionDateMillis = now - 86_400_000L
+        )
+        val latestSwiggy = ExpenseTransaction(
+            id = "swiggy_new_3",
+            userId = "u_batch",
+            userName = "Alex",
+            title = "Swiggy",
+            amount = 510.0,
+            type = "EXPENSE",
+            category = "Unknown",
+            accountName = "HDFC ••4821",
+            paymentMode = "UPI",
+            visibility = "PERSONAL",
+            transactionDateMillis = now
+        )
+        LocalAccountDataStore.restoreExpense(olderSwiggy1)
+        LocalAccountDataStore.restoreExpense(olderSwiggy2)
+        LocalAccountDataStore.restoreExpense(latestSwiggy)
+
+        val prompt = MerchantCategoryUpdatePrompt(
+            merchantTitle = "Swiggy",
+            newCategory = "Food & Dining",
+            matchingTransactions = listOf(olderSwiggy2, olderSwiggy1)
+        )
+        var confirmedIds: Set<String>? = null
+
+        composeTestRule.setContent {
+            OneFamilyTheme {
+                MerchantCategoryBatchUpdateDialog(
+                    prompt = prompt,
+                    currencySymbol = "₹",
+                    onDismiss = {},
+                    onConfirm = { confirmedIds = it }
+                )
+            }
+        }
+        composeTestRule.waitForIdle()
+
+        // All older receipts of the merchant are pre-ticked by default
+        composeTestRule.onNodeWithTag("merchant_batch_category_dialog").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("merchant_batch_selected_count").assertIsDisplayed()
+        composeTestRule.onNodeWithText("2 of 2 selected").assertIsDisplayed()
+
+        // User unticks swiggy_old_1 so only swiggy_old_2 stays ticked
+        composeTestRule.onNodeWithTag("merchant_batch_checkbox_swiggy_old_1").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithText("1 of 2 selected").assertIsDisplayed()
+
+        composeTestRule.onNodeWithTag("merchant_batch_confirm_button").performClick()
+        composeTestRule.waitForIdle()
+
+        assertEquals(setOf("swiggy_old_2"), confirmedIds)
+
+        // Apply batch update through LocalAccountDataStore and confirm only the ticked transaction changed
+        val updatedCount = LocalAccountDataStore.batchUpdateExpenseCategories(confirmedIds!!, "Food & Dining")
+        assertEquals(1, updatedCount)
+        val storedMap = runBlocking {
+            LocalAccountDataStore.observePersonalExpenses("u_batch").first()
+        }.associateBy { it.id }
+        assertEquals("Food & Dining", storedMap["swiggy_old_2"]?.category)
+        assertEquals("Shopping", storedMap["swiggy_old_1"]?.category)
+
+        LocalAccountDataStore.deleteAllUserData("u_batch")
+    }
+
+    @Test
+    fun `test credit card period limit bounds, customizable threshold setting, and limit alert notification`() {
+        val app = ApplicationProvider.getApplicationContext<Application>()
+        shadowOf(app).grantPermissions(Manifest.permission.POST_NOTIFICATIONS)
+        val nm = app.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        nm.cancelAll()
+        LocalAccountSessionManager.ensureInitialized(app)
+        LocalAccountSessionManager.updateFcmPushSettings(app, FcmPushSettings())
+
+        // 1. Default credit card alert threshold is 80% and AccountLimitPeriodUtils computes Weekly/Quarterly/Custom bounds accurately
+        assertEquals(80, LocalAccountSessionManager.fcmPushSettings.value.creditCardAlertThresholdPercent)
+
+        val cal = Calendar.getInstance().apply {
+            set(2026, Calendar.OCTOBER, 14, 12, 0, 0)
+            set(Calendar.MILLISECOND, 0)
+        }
+        val refMs = cal.timeInMillis
+        val quarterlyAcc = FinancialAccount(
+            id = "cc_regalia",
+            name = "HDFC Regalia Credit Card",
+            accountType = "CREDIT_CARD",
+            monthlySpendLimit = 50000.0,
+            spendLimitPeriod = AccountLimitPeriod.QUARTERLY.name
+        )
+        val qBounds = AccountLimitPeriodUtils.computeBoundsMillis(quarterlyAcc, refMs)
+        val expectedQStart = Calendar.getInstance().apply {
+            set(2026, Calendar.OCTOBER, 1, 0, 0, 0)
+            set(Calendar.MILLISECOND, 0)
+        }.timeInMillis
+        assertTrue(qBounds.first >= expectedQStart)
+        assertEquals("Quarterly", AccountLimitPeriodUtils.formatLimitPeriodLabel(quarterlyAcc))
+
+        val customAcc = FinancialAccount(
+            id = "cc_custom",
+            name = "Axis Magnus Credit Card",
+            accountType = "CREDIT_CARD",
+            monthlySpendLimit = 20000.0,
+            spendLimitPeriod = AccountLimitPeriod.CUSTOM.name,
+            spendLimitStartMillis = refMs - 86_400_000L * 5,
+            spendLimitEndMillis = refMs + 86_400_000L * 5
+        )
+        val cBounds = AccountLimitPeriodUtils.computeBoundsMillis(customAcc, refMs)
+        assertEquals(refMs - 86_400_000L * 5, cBounds.first)
+        assertEquals(refMs + 86_400_000L * 5, cBounds.second)
+
+        // 2. Customize threshold to 90% via Settings Notifications card
+        val uiState = OneFamilyDashboardUiState(
+            isLoading = false,
+            userProfile = UserProfile(uid = "local_u_cc", displayName = "Alex", currencySymbol = "₹")
+        )
+        composeTestRule.setContent {
+            OneFamilyTheme {
+                HouseholdTabScreen(
+                    uiState = uiState,
+                    onCreateHousehold = { _, _ -> },
+                    onJoinByCode = {},
+                    onInviteByEmail = {},
+                    onAcceptEmailInvite = {}
+                )
+            }
+        }
+        composeTestRule.waitForIdle()
+
+        composeTestRule.onNodeWithTag("household_tab_list")
+            .performScrollToNode(hasTestTag("notif_credit_threshold_card"))
+        composeTestRule.onNodeWithTag("notif_credit_threshold_chip_90").performClick()
+        composeTestRule.waitForIdle()
+
+        assertEquals(90, LocalAccountSessionManager.fcmPushSettings.value.creditCardAlertThresholdPercent)
+        composeTestRule.onNodeWithTag("notif_credit_threshold_value").assertIsDisplayed()
+
+        // 3. Fire credit card limit notification -> posts on Card Limits channel with spent/limit & % in title
+        TransactionNotificationHelper.showCreditCardLimitNotification(
+            context = app,
+            accountId = "cc_regalia",
+            accountName = "HDFC Regalia Credit Card",
+            spentAmount = 45000.0,
+            limitAmount = 50000.0,
+            periodLabel = "Quarterly",
+            thresholdPercent = 90,
+            currencySymbol = "₹",
+            forceNotify = true
+        )
+        val notifs = shadowOf(nm).allNotifications
+        assertEquals(1, notifs.size)
+        val title = notifs.first().extras.getCharSequence(Notification.EXTRA_TITLE)?.toString().orEmpty()
+        assertTrue("Expected spent & % in credit limit alert title, got: $title", title.contains("45,000") && title.contains("90%"))
+
+        LocalAccountSessionManager.updateFcmPushSettings(app, FcmPushSettings())
+    }
+
+    @Test
+    fun `test AccountsTabScreen show all accounts at bottom, hide and delete untrack actions`() {
+        val visibleBank = FinancialAccount(
+            id = "acc_hdfc_visible",
+            name = "HDFC Bank ••4321",
+            bankName = "HDFC Bank",
+            accountType = "BANK",
+            lastFourDigits = "4321",
+            balance = 50000.0
+        )
+        val hiddenCard = FinancialAccount(
+            id = "acc_axis_hidden",
+            name = "Axis Ace Credit Card",
+            bankName = "Axis Bank",
+            accountType = "CREDIT_CARD",
+            lastFourDigits = "9911",
+            monthlySpendLimit = 30000.0,
+            spendLimitPeriod = "QUARTERLY",
+            isHidden = true
+        )
+        val summaries = listOf(
+            AccountSpendSummary(
+                account = visibleBank,
+                section = AccountSectionType.BANK,
+                linkedBankDisplayName = "",
+                spent = 4500.0,
+                income = 0.0,
+                limit = 0.0,
+                alertThresholdPercent = 80,
+                transactions = emptyList(),
+                isHidden = false
+            ),
+            AccountSpendSummary(
+                account = hiddenCard,
+                section = AccountSectionType.CREDIT_CARD,
+                linkedBankDisplayName = "",
+                spent = 12000.0,
+                income = 0.0,
+                limit = 30000.0,
+                alertThresholdPercent = 80,
+                transactions = emptyList(),
+                limitSpent = 12000.0,
+                limitPeriod = AccountLimitPeriod.QUARTERLY,
+                limitPeriodLabel = "Quarterly",
+                isHidden = true
+            )
+        )
+        var toggledHidden: Pair<String, Boolean>? = null
+        var deletedId: String? = null
+
+        composeTestRule.setContent {
+            OneFamilyTheme {
+                AccountsTabScreen(
+                    uiState = OneFamilyDashboardUiState(
+                        isLoading = false,
+                        accounts = listOf(visibleBank, hiddenCard),
+                        accountSummaries = summaries
+                    ),
+                    onToggleAccountHidden = { summary, hidden ->
+                        toggledHidden = summary.account.id to hidden
+                    },
+                    onDeleteOrUntrackAccount = { summary ->
+                        deletedId = summary.account.id
+                    }
+                )
+            }
+        }
+        composeTestRule.waitForIdle()
+
+        // Hidden card should NOT be rendered in main Credit Card section initially
+        assertTrue(
+            composeTestRule.onAllNodesWithTag("account_card_axis_ace_credit_card").fetchSemanticsNodes().isEmpty()
+        )
+        composeTestRule.onNodeWithTag("accounts_tab_list")
+            .performScrollToNode(hasTestTag("account_card_hdfc_bank_4321"))
+
+        // Tap "Show All Accounts" at bottom -> both accounts (including hidden with badge) appear
+        composeTestRule.onNodeWithTag("accounts_tab_list")
+            .performScrollToNode(hasTestTag("accounts_show_all_button"))
+        composeTestRule.onNodeWithTag("accounts_show_all_button").performClick()
+        composeTestRule.waitForIdle()
+
+        composeTestRule.onNodeWithTag("accounts_tab_list")
+            .performScrollToNode(hasTestTag("all_accounts_row_axis_ace_credit_card"))
+        composeTestRule.onNodeWithTag("all_accounts_row_axis_ace_credit_card").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("all_accounts_hidden_badge_axis_ace_credit_card").assertIsDisplayed()
+
+        // Unhide Axis card via bottom list toggle
+        composeTestRule.onNodeWithTag("all_accounts_toggle_hide_axis_ace_credit_card").performClick()
+        composeTestRule.waitForIdle()
+        assertEquals("acc_axis_hidden" to false, toggledHidden)
+
+        // Delete / untrack Axis card via confirmation dialog
+        composeTestRule.onNodeWithTag("all_accounts_delete_axis_ace_credit_card").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("delete_account_confirm_dialog").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("confirm_delete_account_button").performClick()
+        composeTestRule.waitForIdle()
+        assertEquals("acc_axis_hidden", deletedId)
+    }
+
+    @Test
+    fun `test transaction dialog save icon at top and Income plus Cashback category division`() {
+        var savedTuple: Triple<String, String, Double>? = null
+
+        composeTestRule.setContent {
+            OneFamilyTheme {
+                AddTransactionDialog(
+                    hasHousehold = false,
+                    defaultShared = false,
+                    accounts = emptyList(),
+                    availableCategories = ExpenseCategories.ALL,
+                    currencySymbol = "₹",
+                    onDismiss = {},
+                    onSave = { title, amount, type, category, _, _, _, _, _, _ ->
+                        savedTuple = Triple(type, category, amount)
+                    }
+                )
+            }
+        }
+        composeTestRule.waitForIdle()
+
+        // Both Spend and Income & Cashback category divisions render distinctly
+        composeTestRule.onNodeWithTag("receipt_category_division_spend").performScrollTo().assertIsDisplayed()
+        composeTestRule.onNodeWithTag("receipt_category_division_income").performScrollTo().assertIsDisplayed()
+        composeTestRule.onNodeWithTag("receipt_category_chip_income").performScrollTo().assertIsDisplayed()
+        composeTestRule.onNodeWithTag("receipt_category_chip_cashback").performScrollTo().assertIsDisplayed()
+
+        // Selecting Cashback auto-switches transaction type to INCOME and saves via top icon button
+        composeTestRule.onNodeWithTag("receipt_category_chip_cashback").performClick()
+        composeTestRule.onNodeWithTag("add_tx_amount_input").performScrollTo().performTextReplacement("250")
+        composeTestRule.onNodeWithTag("add_tx_title_input").performScrollTo().performTextReplacement("Amazon Pay Cashback")
+        composeTestRule.onNodeWithTag("save_transaction_button").performScrollTo().performClick()
+        composeTestRule.waitForIdle()
+
+        assertEquals(Triple("INCOME", "Cashback", 250.0), savedTuple)
+    }
+
+    @Test
+    fun `test AnalyticsTabScreen income vs spend division card, filter chips, and cashback breakdown`() {
+        val now = System.currentTimeMillis()
+        val groceryTx = ExpenseTransaction(
+            id = "tx_spend_1",
+            userId = "u_ana",
+            title = "BigBasket",
+            amount = 1800.0,
+            type = "EXPENSE",
+            category = "Groceries",
+            transactionDateMillis = now
+        )
+        val cashbackTx = ExpenseTransaction(
+            id = "tx_cb_1",
+            userId = "u_ana",
+            title = "HDFC Cashback",
+            amount = 450.0,
+            type = "INCOME",
+            category = "Cashback",
+            transactionDateMillis = now - 3_600_000L
+        )
+        val incomeTx = ExpenseTransaction(
+            id = "tx_inc_1",
+            userId = "u_ana",
+            title = "Freelance Payout",
+            amount = 15000.0,
+            type = "INCOME",
+            category = "Income",
+            transactionDateMillis = now - 7_200_000L
+        )
+        val uiState = OneFamilyDashboardUiState(
+            isLoading = false,
+            activeExpenses = listOf(groceryTx, cashbackTx, incomeTx),
+            categoryProgressList = listOf(
+                CategorySpendProgress("Groceries", 1800.0, 5000.0, 80, null, emptyMap())
+            ),
+            incomeCategoryProgressList = listOf(
+                CategorySpendProgress("Income", 15000.0, 0.0, 80, null, emptyMap()),
+                CategorySpendProgress("Cashback", 450.0, 0.0, 80, null, emptyMap())
+            )
+        )
+
+        composeTestRule.setContent {
+            OneFamilyTheme {
+                AnalyticsTabScreen(
+                    uiState = uiState,
+                    onStepMonth = {},
+                    onSelectPeriod = {}
+                )
+            }
+        }
+        composeTestRule.waitForIdle()
+
+        composeTestRule.onNodeWithTag("analytics_tab_list")
+            .performScrollToNode(hasTestTag("analytics_income_spend_division_card"))
+        composeTestRule.onNodeWithTag("analytics_income_spend_division_card").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("analytics_division_income_total").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("analytics_division_spend_total").assertIsDisplayed()
+
+        // Filter to Income & Cashback only -> Spend tx is hidden, Cashback card is visible
+        composeTestRule.onNodeWithTag("analytics_division_chip_income").performScrollTo().performClick()
+        composeTestRule.waitForIdle()
+        assertTrue(
+            composeTestRule.onAllNodesWithTag("analytics_month_tx_row_tx_spend_1").fetchSemanticsNodes().isEmpty()
+        )
+        composeTestRule.onNodeWithTag("analytics_tab_list")
+            .performScrollToNode(hasTestTag("analysis_income_category_card_cashback"))
+        composeTestRule.onNodeWithTag("analysis_income_category_card_cashback").assertIsDisplayed()
+    }
+
+    @Test
+    fun `test notification includes Category Wheel action and standalone overlay assigns category`() {
+        val app = ApplicationProvider.getApplicationContext<Application>()
+        shadowOf(app).grantPermissions(Manifest.permission.POST_NOTIFICATIONS)
+        val nm = app.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        nm.cancelAll()
+        LocalAccountSessionManager.ensureInitialized(app)
+        LocalAccountSessionManager.updateFcmPushSettings(app, FcmPushSettings())
+
+        // 1. Notification includes Category Wheel as its first action
+        TransactionNotificationHelper.showNewTransactionNotification(
+            context = app,
+            expenseId = "exp_wheel_1",
+            householdId = "",
+            visibility = "PERSONAL",
+            title = "Uber Trip",
+            amount = 380.0,
+            currentCategory = "Unknown",
+            currencySymbol = "₹",
+            transactionType = "EXPENSE"
+        )
+        val posted = shadowOf(nm).allNotifications.single()
+        val actionTitles = posted.actions.map { it.title?.toString().orEmpty() }
+        assertTrue("Expected Category Wheel action on notification, got $actionTitles", actionTitles.contains("Category Wheel"))
+        assertTrue(posted.actions.size <= 3)
+
+        // 2. Render NotificationQuickCategoryWheelOverlay and tap a category node
+        var assignedCategory: String? = null
+        composeTestRule.setContent {
+            OneFamilyTheme {
+                NotificationQuickCategoryWheelOverlay(
+                    transactionTitle = "Uber Trip",
+                    amountDisplay = "₹380",
+                    initialCategory = "Unknown",
+                    availableCategories = ExpenseCategories.ALL,
+                    onSelectCategory = { assignedCategory = it },
+                    onDismiss = {}
+                )
+            }
+        }
+        composeTestRule.waitForIdle()
+
+        composeTestRule.onNodeWithTag("notification_wheel_overlay").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("circular_category_wheel").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("wheel_category_node_groceries").performClick()
+        composeTestRule.waitForIdle()
+
+        assertEquals("Groceries", assignedCategory)
     }
 }
 

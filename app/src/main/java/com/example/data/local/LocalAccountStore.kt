@@ -56,6 +56,8 @@ object LocalAccountSessionManager {
     private const val KEY_CUSTOM_CATEGORY_EMOJIS = "custom_category_emojis_json"
     private const val KEY_AMOLED_DARK_ENABLED = "amoled_dark_enabled"
     private const val KEY_HAPTIC_FEEDBACK_ENABLED = "haptic_feedback_enabled"
+    private const val KEY_HIDDEN_VIRTUAL_ACCOUNTS = "hidden_virtual_accounts_json"
+    private const val KEY_UNTRACKED_VIRTUAL_ACCOUNTS = "untracked_virtual_accounts_json"
 
     const val DEFAULT_TEST_USERNAME = "test"
     const val DEFAULT_TEST_PASSWORD = "pass"
@@ -104,6 +106,12 @@ object LocalAccountSessionManager {
     private val _hapticFeedbackEnabled = MutableStateFlow(true)
     val hapticFeedbackEnabled: StateFlow<Boolean> = _hapticFeedbackEnabled.asStateFlow()
 
+    private val _hiddenVirtualAccountIds = MutableStateFlow<Set<String>>(emptySet())
+    val hiddenVirtualAccountIds: StateFlow<Set<String>> = _hiddenVirtualAccountIds.asStateFlow()
+
+    private val _untrackedVirtualAccountIds = MutableStateFlow<Set<String>>(emptySet())
+    val untrackedVirtualAccountIds: StateFlow<Set<String>> = _untrackedVirtualAccountIds.asStateFlow()
+
     private var initialized = false
     private var uncaughtHandlerInstalled = false
 
@@ -138,9 +146,57 @@ object LocalAccountSessionManager {
             _customCategoryEmojis.value = decodeCustomCategoryEmojis(prefs.getString(KEY_CUSTOM_CATEGORY_EMOJIS, null))
             _amoledDarkEnabled.value = prefs.getBoolean(KEY_AMOLED_DARK_ENABLED, false)
             _hapticFeedbackEnabled.value = prefs.getBoolean(KEY_HAPTIC_FEEDBACK_ENABLED, true)
+            _hiddenVirtualAccountIds.value = decodeStringSet(prefs.getString(KEY_HIDDEN_VIRTUAL_ACCOUNTS, null))
+            _untrackedVirtualAccountIds.value = decodeStringSet(prefs.getString(KEY_UNTRACKED_VIRTUAL_ACCOUNTS, null))
             initialized = true
         }
     }
+
+    fun setVirtualAccountHidden(context: Context, virtualId: String, hidden: Boolean) {
+        if (virtualId.isBlank()) return
+        ensureInitialized(context)
+        val updated = if (hidden) {
+            _hiddenVirtualAccountIds.value + virtualId
+        } else {
+            _hiddenVirtualAccountIds.value - virtualId
+        }
+        _hiddenVirtualAccountIds.value = updated
+        saveStringSet(context, KEY_HIDDEN_VIRTUAL_ACCOUNTS, updated)
+    }
+
+    fun setVirtualAccountUntracked(context: Context, virtualId: String, untracked: Boolean) {
+        if (virtualId.isBlank()) return
+        ensureInitialized(context)
+        val updated = if (untracked) {
+            _untrackedVirtualAccountIds.value + virtualId
+        } else {
+            _untrackedVirtualAccountIds.value - virtualId
+        }
+        _untrackedVirtualAccountIds.value = updated
+        saveStringSet(context, KEY_UNTRACKED_VIRTUAL_ACCOUNTS, updated)
+        if (untracked && virtualId in _hiddenVirtualAccountIds.value) {
+            val cleanedHidden = _hiddenVirtualAccountIds.value - virtualId
+            _hiddenVirtualAccountIds.value = cleanedHidden
+            saveStringSet(context, KEY_HIDDEN_VIRTUAL_ACCOUNTS, cleanedHidden)
+        }
+    }
+
+    private fun saveStringSet(context: Context, key: String, items: Set<String>) {
+        val arr = JSONArray()
+        items.forEach { arr.put(it) }
+        prefs(context).edit().putString(key, arr.toString()).apply()
+    }
+
+    private fun decodeStringSet(raw: String?): Set<String> = runCatching {
+        if (raw.isNullOrBlank()) return emptySet()
+        val arr = JSONArray(raw)
+        buildSet {
+            for (i in 0 until arr.length()) {
+                val item = arr.optString(i, "").trim()
+                if (item.isNotBlank()) add(item)
+            }
+        }
+    }.getOrDefault(emptySet())
 
     fun setHouseholdFeatureEnabled(context: Context, enabled: Boolean) {
         ensureInitialized(context)
@@ -292,11 +348,18 @@ object LocalAccountSessionManager {
 
     fun setFcmPushSettings(context: Context, settings: FcmPushSettings) {
         ensureInitialized(context)
-        _fcmPushSettings.value = settings
+        val clamped = settings.copy(
+            creditCardAlertThresholdPercent = settings.creditCardAlertThresholdPercent.coerceIn(1, 100)
+        )
+        _fcmPushSettings.value = clamped
         val obj = JSONObject().apply {
-            put("familyTransactionAlertsEnabled", settings.familyTransactionAlertsEnabled)
-            put("budgetThresholdAlertsEnabled", settings.budgetThresholdAlertsEnabled)
-            put("subscribedTopic", settings.subscribedTopic)
+            put("expenseAlertsEnabled", clamped.expenseAlertsEnabled)
+            put("incomeAlertsEnabled", clamped.incomeAlertsEnabled)
+            put("familyTransactionAlertsEnabled", clamped.familyTransactionAlertsEnabled)
+            put("budgetThresholdAlertsEnabled", clamped.budgetThresholdAlertsEnabled)
+            put("creditCardLimitAlertsEnabled", clamped.creditCardLimitAlertsEnabled)
+            put("creditCardAlertThresholdPercent", clamped.creditCardAlertThresholdPercent)
+            put("subscribedTopic", clamped.subscribedTopic)
         }
         prefs(context).edit().putString(KEY_FCM_SETTINGS, obj.toString()).apply()
     }
@@ -400,8 +463,12 @@ object LocalAccountSessionManager {
         return runCatching {
             val o = JSONObject(raw)
             FcmPushSettings(
+                expenseAlertsEnabled = o.optBoolean("expenseAlertsEnabled", true),
+                incomeAlertsEnabled = o.optBoolean("incomeAlertsEnabled", true),
                 familyTransactionAlertsEnabled = o.optBoolean("familyTransactionAlertsEnabled", true),
                 budgetThresholdAlertsEnabled = o.optBoolean("budgetThresholdAlertsEnabled", true),
+                creditCardLimitAlertsEnabled = o.optBoolean("creditCardLimitAlertsEnabled", true),
+                creditCardAlertThresholdPercent = o.optInt("creditCardAlertThresholdPercent", 80).coerceIn(1, 100),
                 subscribedTopic = o.optString("subscribedTopic", "household_shared")
             )
         }.getOrDefault(FcmPushSettings())
@@ -1250,6 +1317,14 @@ object LocalAccountDataStore {
         }
     }
 
+    fun getExpenseByIdOnce(expenseId: String): ExpenseTransaction? =
+        expensesFlow.value.firstOrNull { it.id == expenseId }
+
+    fun getExpensesForUserOrHouseholdOnce(userId: String, householdId: String): List<ExpenseTransaction> =
+        expensesFlow.value.filter {
+            it.userId == userId || (householdId.isNotBlank() && it.householdId == householdId)
+        }
+
     fun observePersonalExpenses(userId: String): Flow<List<ExpenseTransaction>> =
         expensesFlow.map { list ->
             if (userId.isBlank()) {
@@ -1826,10 +1901,13 @@ object LocalAccountDataStore {
     }
 
     fun updateExpenseCategoryById(expenseId: String, newCategory: String) = synchronized(storeLock) {
+        val normalizedCat = com.example.data.model.ExpenseCategories.normalizeCategory(newCategory)
+        val isIncomeCategory = com.example.data.model.ExpenseCategories.isIncomeCategory(normalizedCat)
         val updatedList = expensesFlow.value.map { tx ->
             if (tx.id == expenseId) {
                 tx.copy(
-                    category = com.example.data.model.ExpenseCategories.normalizeCategory(newCategory),
+                    category = normalizedCat,
+                    type = if (isIncomeCategory) "INCOME" else tx.type,
                     updatedAt = Timestamp.now()
                 )
             } else {
@@ -1838,6 +1916,30 @@ object LocalAccountDataStore {
         }
         expensesFlow.value = updatedList
         saveExpenses(updatedList)
+    }
+
+    fun batchUpdateExpenseCategories(expenseIds: Set<String>, newCategory: String): Int = synchronized(storeLock) {
+        if (expenseIds.isEmpty()) return 0
+        val normalizedCat = com.example.data.model.ExpenseCategories.normalizeCategory(newCategory)
+        val isIncomeCategory = com.example.data.model.ExpenseCategories.isIncomeCategory(normalizedCat)
+        var updatedCount = 0
+        val updatedList = expensesFlow.value.map { tx ->
+            if (tx.id in expenseIds) {
+                updatedCount++
+                tx.copy(
+                    category = normalizedCat,
+                    type = if (isIncomeCategory) "INCOME" else tx.type,
+                    updatedAt = Timestamp.now()
+                )
+            } else {
+                tx
+            }
+        }
+        if (updatedCount > 0) {
+            expensesFlow.value = updatedList
+            saveExpenses(updatedList)
+        }
+        return updatedCount
     }
 
     fun toggleExpensePrivacy(uid: String, expense: ExpenseTransaction, household: Household) = synchronized(storeLock) {
@@ -1989,10 +2091,15 @@ object LocalAccountDataStore {
         linkedBankAccountId: String? = null,
         linkedBankAccountName: String? = null,
         monthlySpendLimit: Double? = null,
+        spendLimitPeriod: String? = null,
+        spendLimitStartMillis: Long? = null,
+        spendLimitEndMillis: Long? = null,
         alertThresholdPercent: Int? = null,
+        isHidden: Boolean? = null,
         explicitId: String? = null
     ): String = synchronized(storeLock) {
-        val docKey = explicitId?.takeIf { it.isNotBlank() } ?: "${uid}_${bankName}_${accountType}_${lastFourDigits}"
+        val validType = FinancialAccount.normalizeAccountType(accountType)
+        val docKey = explicitId?.takeIf { it.isNotBlank() } ?: "${uid}_${bankName}_${validType}_${lastFourDigits}"
             .lowercase()
             .replace(Regex("[^a-z0-9]+"), "_")
             .trim('_')
@@ -2006,12 +2113,9 @@ object LocalAccountDataStore {
         accountTimestampMap[docKey] = asOfTimestampMillis
 
         val existing = accountsFlow.value.firstOrNull { it.id == docKey }
-        val normalizedType = accountType.trim().uppercase()
-        val validType = if (normalizedType in setOf("BANK", "DEBIT_CARD", "CREDIT_CARD", "WALLET", "CASH", "UPI")) {
-            normalizedType
-        } else {
-            "BANK"
-        }
+        val resolvedPeriod = com.example.data.model.AccountLimitPeriod.fromRaw(
+            spendLimitPeriod ?: existing?.spendLimitPeriod
+        ).name
 
         val acc = FinancialAccount(
             id = docKey,
@@ -2025,7 +2129,11 @@ object LocalAccountDataStore {
             linkedBankAccountId = (linkedBankAccountId ?: existing?.linkedBankAccountId ?: "").trim().take(128),
             linkedBankAccountName = (linkedBankAccountName ?: existing?.linkedBankAccountName ?: "").trim().take(100),
             monthlySpendLimit = (monthlySpendLimit ?: existing?.monthlySpendLimit ?: 0.0).coerceAtLeast(0.0),
+            spendLimitPeriod = resolvedPeriod,
+            spendLimitStartMillis = (spendLimitStartMillis ?: existing?.spendLimitStartMillis ?: 0L).coerceAtLeast(0L),
+            spendLimitEndMillis = (spendLimitEndMillis ?: existing?.spendLimitEndMillis ?: 0L).coerceAtLeast(0L),
             alertThresholdPercent = (alertThresholdPercent?.toLong() ?: existing?.alertThresholdPercent ?: 80L).coerceIn(1L, 100L),
+            isHidden = isHidden ?: existing?.isHidden ?: false,
             isSharedVisible = isSharedVisible,
             createdAt = existing?.createdAt ?: Timestamp.now(),
             updatedAt = Timestamp.now()
@@ -2041,14 +2149,23 @@ object LocalAccountDataStore {
         uid: String,
         account: FinancialAccount,
         monthlySpendLimit: Double,
-        alertThresholdPercent: Int = 80
+        alertThresholdPercent: Int = 80,
+        spendLimitPeriod: String = account.spendLimitPeriod,
+        spendLimitStartMillis: Long = account.spendLimitStartMillis,
+        spendLimitEndMillis: Long = account.spendLimitEndMillis
     ) = synchronized(storeLock) {
         val existing = accountsFlow.value.firstOrNull { it.id == account.id }
         val sanitizedLimit = monthlySpendLimit.coerceAtLeast(0.0)
         val sanitizedThreshold = alertThresholdPercent.toLong().coerceIn(1L, 100L)
+        val normalizedPeriod = com.example.data.model.AccountLimitPeriod.fromRaw(spendLimitPeriod).name
+        val cleanStart = spendLimitStartMillis.coerceAtLeast(0L)
+        val cleanEnd = spendLimitEndMillis.coerceAtLeast(0L)
         if (existing != null) {
             val updatedAccount = existing.copy(
                 monthlySpendLimit = sanitizedLimit,
+                spendLimitPeriod = normalizedPeriod,
+                spendLimitStartMillis = cleanStart,
+                spendLimitEndMillis = cleanEnd,
                 alertThresholdPercent = sanitizedThreshold,
                 updatedAt = Timestamp.now()
             )
@@ -2068,7 +2185,45 @@ object LocalAccountDataStore {
                 linkedBankAccountId = account.linkedBankAccountId,
                 linkedBankAccountName = account.linkedBankAccountName,
                 monthlySpendLimit = sanitizedLimit,
+                spendLimitPeriod = normalizedPeriod,
+                spendLimitStartMillis = cleanStart,
+                spendLimitEndMillis = cleanEnd,
                 alertThresholdPercent = sanitizedThreshold.toInt(),
+                isHidden = account.isHidden,
+                explicitId = account.id.takeIf { it.isNotBlank() }
+            )
+        }
+    }
+
+    fun setAccountHidden(
+        uid: String,
+        account: FinancialAccount,
+        hidden: Boolean
+    ) = synchronized(storeLock) {
+        val existing = accountsFlow.value.firstOrNull { it.id == account.id }
+        if (existing != null) {
+            val updatedAccount = existing.copy(isHidden = hidden, updatedAt = Timestamp.now())
+            val updated = accountsFlow.value.map { if (it.id == existing.id) updatedAccount else it }
+            accountsFlow.value = updated
+            saveAccounts(updated)
+        } else {
+            upsertAccount(
+                uid = uid,
+                name = account.name,
+                bankName = account.bankName.ifBlank { account.name },
+                accountType = account.accountType,
+                lastFourDigits = account.lastFourDigits,
+                balance = account.balance,
+                creditLimit = account.creditLimit,
+                isSharedVisible = account.isSharedVisible,
+                linkedBankAccountId = account.linkedBankAccountId,
+                linkedBankAccountName = account.linkedBankAccountName,
+                monthlySpendLimit = account.monthlySpendLimit,
+                spendLimitPeriod = account.spendLimitPeriod,
+                spendLimitStartMillis = account.spendLimitStartMillis,
+                spendLimitEndMillis = account.spendLimitEndMillis,
+                alertThresholdPercent = account.alertThresholdPercent.toInt(),
+                isHidden = hidden,
                 explicitId = account.id.takeIf { it.isNotBlank() }
             )
         }
@@ -2415,7 +2570,11 @@ object LocalAccountDataStore {
                     put("linkedBankAccountId", a.linkedBankAccountId)
                     put("linkedBankAccountName", a.linkedBankAccountName)
                     put("monthlySpendLimit", a.monthlySpendLimit)
+                    put("spendLimitPeriod", a.spendLimitPeriod)
+                    put("spendLimitStartMillis", a.spendLimitStartMillis)
+                    put("spendLimitEndMillis", a.spendLimitEndMillis)
                     put("alertThresholdPercent", a.alertThresholdPercent)
+                    put("isHidden", a.isHidden)
                     put("isSharedVisible", a.isSharedVisible)
                 }
             )
@@ -2436,14 +2595,20 @@ object LocalAccountDataStore {
                         userId = o.optString("userId", ""),
                         name = o.optString("name", "Bank"),
                         bankName = o.optString("bankName", "Bank"),
-                        accountType = o.optString("accountType", "BANK"),
+                        accountType = FinancialAccount.normalizeAccountType(o.optString("accountType", "BANK")),
                         lastFourDigits = o.optString("lastFourDigits", ""),
                         balance = o.optDouble("balance", 0.0),
                         creditLimit = o.optDouble("creditLimit", 0.0),
                         linkedBankAccountId = o.optString("linkedBankAccountId", ""),
                         linkedBankAccountName = o.optString("linkedBankAccountName", ""),
                         monthlySpendLimit = o.optDouble("monthlySpendLimit", 0.0),
+                        spendLimitPeriod = com.example.data.model.AccountLimitPeriod.fromRaw(
+                            o.optString("spendLimitPeriod", "MONTHLY")
+                        ).name,
+                        spendLimitStartMillis = o.optLong("spendLimitStartMillis", 0L),
+                        spendLimitEndMillis = o.optLong("spendLimitEndMillis", 0L),
                         alertThresholdPercent = o.optLong("alertThresholdPercent", 80L),
+                        isHidden = o.optBoolean("isHidden", false),
                         isSharedVisible = o.optBoolean("isSharedVisible", true),
                         createdAt = Timestamp.now(),
                         updatedAt = Timestamp.now()

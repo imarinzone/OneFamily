@@ -2,6 +2,7 @@ package com.example.data.sms
 
 import android.Manifest
 import android.app.NotificationChannel
+import android.app.NotificationChannelGroup
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.BroadcastReceiver
@@ -42,12 +43,16 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
 object TransactionNotificationHelper {
+    const val CHANNEL_GROUP_ID = "onefamily_alerts_group"
     const val CHANNEL_ID = "onefamily_realtime_transactions"
+    const val CHANNEL_ID_SMS_INCOME = "onefamily_sms_income_alerts"
     const val CHANNEL_ID_FCM_FAMILY = "onefamily_fcm_family_push"
     const val CHANNEL_ID_FCM_BUDGET = "onefamily_fcm_budget_push"
+    const val CHANNEL_ID_CREDIT_LIMIT = "onefamily_credit_card_limit_alerts"
     const val EXTRA_EDIT_EXPENSE_ID = "extra_edit_expense_id"
     const val EXTRA_EDIT_HOUSEHOLD_ID = "extra_edit_household_id"
     const val EXTRA_EDIT_VISIBILITY = "extra_edit_visibility"
+    const val EXTRA_EDIT_CURRENT_CATEGORY = "extra_edit_current_category"
     const val EXTRA_NEW_CATEGORY = "extra_new_category"
     const val EXTRA_NOTIFICATION_ID = "extra_notification_id"
     const val extraTitle = "extra_tx_title"
@@ -59,37 +64,69 @@ object TransactionNotificationHelper {
     private val notifiedBodyTimestamps = java.util.concurrent.ConcurrentHashMap<String, Long>()
     private val notifiedBudgetKeys: MutableSet<String> =
         Collections.synchronizedSet(mutableSetOf<String>())
+    private val notifiedCreditLimitKeys: MutableSet<String> =
+        Collections.synchronizedSet(mutableSetOf<String>())
 
     fun ensureChannel(context: Context) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
-            val smsChannel = NotificationChannel(
+            manager?.createNotificationChannelGroup(
+                NotificationChannelGroup(CHANNEL_GROUP_ID, "Alerts")
+            )
+            val smsExpenseChannel = NotificationChannel(
                 CHANNEL_ID,
-                "Real-Time Expense & Category Alerts",
+                "Expenses",
                 NotificationManager.IMPORTANCE_HIGH
             ).apply {
-                description = "Instant alerts for new SMS transactions with quick category editing"
+                group = CHANNEL_GROUP_ID
+                description = "Bank & UPI debit alerts with quick category editing"
+                enableVibration(true)
+            }
+            val smsIncomeChannel = NotificationChannel(
+                CHANNEL_ID_SMS_INCOME,
+                "Income",
+                NotificationManager.IMPORTANCE_HIGH
+            ).apply {
+                group = CHANNEL_GROUP_ID
+                description = "Salary, cashback & credit SMS alerts"
                 enableVibration(true)
             }
             val fcmFamilyChannel = NotificationChannel(
                 CHANNEL_ID_FCM_FAMILY,
-                "FCM Family Transaction Push Alerts",
+                "Family Sync",
                 NotificationManager.IMPORTANCE_HIGH
             ).apply {
-                description = "Instant FCM push alerts when a family member logs a shared transaction"
+                group = CHANNEL_GROUP_ID
+                description = "Shared transactions logged by family members"
                 enableVibration(true)
             }
             val fcmBudgetChannel = NotificationChannel(
                 CHANNEL_ID_FCM_BUDGET,
-                "FCM Budget Threshold Push Alerts",
+                "Budget Alerts",
                 NotificationManager.IMPORTANCE_HIGH
             ).apply {
-                description = "Instant FCM push alerts when a category or household budget nears or exceeds its threshold"
+                group = CHANNEL_GROUP_ID
+                description = "Category or monthly budget spend limit warnings"
                 enableVibration(true)
             }
-            manager?.createNotificationChannel(smsChannel)
-            manager?.createNotificationChannel(fcmFamilyChannel)
-            manager?.createNotificationChannel(fcmBudgetChannel)
+            val creditLimitChannel = NotificationChannel(
+                CHANNEL_ID_CREDIT_LIMIT,
+                "Card Limits",
+                NotificationManager.IMPORTANCE_HIGH
+            ).apply {
+                group = CHANNEL_GROUP_ID
+                description = "Credit card spend limit threshold warnings"
+                enableVibration(true)
+            }
+            manager?.createNotificationChannels(
+                listOf(
+                    smsExpenseChannel,
+                    smsIncomeChannel,
+                    fcmFamilyChannel,
+                    fcmBudgetChannel,
+                    creditLimitChannel
+                )
+            )
         }
     }
 
@@ -107,7 +144,7 @@ object TransactionNotificationHelper {
             normalized.contains("health") || normalized.contains("fitness") -> R.drawable.ic_cat_health
             normalized.contains("entertain") -> R.drawable.ic_cat_entertainment
             normalized.contains("invest") -> R.drawable.ic_cat_investments
-            normalized.contains("salary") || normalized.contains("income") -> R.drawable.ic_cat_income
+            normalized.contains("cashback") || normalized.contains("salary") || normalized.contains("income") -> R.drawable.ic_cat_income
             else -> R.drawable.ic_cat_custom
         }
     }
@@ -223,6 +260,14 @@ object TransactionNotificationHelper {
         paymentSummary: String = "",
         transactionType: String = "EXPENSE"
     ) {
+        LocalAccountSessionManager.ensureInitialized(context.applicationContext)
+        val cleanCategory = ExpenseCategories.normalizeCategory(currentCategory)
+        val isIncome = transactionType.equals("INCOME", ignoreCase = true) ||
+            ExpenseCategories.isIncomeCategory(cleanCategory)
+        val notifSettings = LocalAccountSessionManager.fcmPushSettings.value
+        if (isIncome && !notifSettings.incomeAlertsEnabled) return
+        if (!isIncome && !notifSettings.expenseAlertsEnabled) return
+
         ensureChannel(context)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             val granted = ContextCompat.checkSelfPermission(
@@ -233,16 +278,16 @@ object TransactionNotificationHelper {
         }
 
         val notificationId = expenseId.hashCode()
-        val cleanCategory = ExpenseCategories.normalizeCategory(currentCategory)
         val cleanMerchant = cleanNotificationMerchant(title, cleanCategory, transactionType)
         val formattedAmt = NumberFormat.getNumberInstance(Locale.forLanguageTag("en-IN")).apply {
             maximumFractionDigits = if (amount % 1.0 == 0.0) 0 else 2
         }.format(amount)
-        val amountDisplay = if (transactionType.equals("INCOME", ignoreCase = true)) {
+        val amountDisplay = if (isIncome) {
             "+$currencySymbol$formattedAmt"
         } else {
             "$currencySymbol$formattedAmt"
         }
+        val targetChannelId = if (isIncome) CHANNEL_ID_SMS_INCOME else CHANNEL_ID
 
         // Tap notification -> Open MainActivity directly into the Edit Transaction / Category dialog
         val openEditIntent = Intent(context, MainActivity::class.java).apply {
@@ -258,13 +303,32 @@ object TransactionNotificationHelper {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
-        val quickCategories = listOf(
-            "Food & Dining",
-            "Groceries",
-            "Shopping",
-            "Bills & Utilities",
-            "Fuel & Travel"
-        ).filterNot { it.equals(cleanCategory, ignoreCase = true) }.take(3)
+        // Category Wheel action (first of max 3 actions so it's always visible on Android notifications)
+        val openWheelIntent = Intent(context, NotificationCategoryWheelActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_MULTIPLE_TASK or Intent.FLAG_ACTIVITY_NO_HISTORY
+            putExtra(EXTRA_EDIT_EXPENSE_ID, expenseId)
+            putExtra(EXTRA_EDIT_HOUSEHOLD_ID, householdId)
+            putExtra(EXTRA_EDIT_VISIBILITY, visibility)
+            putExtra(EXTRA_EDIT_CURRENT_CATEGORY, cleanCategory)
+            putExtra(EXTRA_NOTIFICATION_ID, notificationId)
+            putExtra(extraTitle, cleanMerchant)
+            putExtra(extraAmount, amountDisplay)
+        }
+        val wheelPendingIntent = PendingIntent.getActivity(
+            context,
+            notificationId + 99,
+            openWheelIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        val quickCandidates = if (isIncome) {
+            listOf("Income", "Cashback", "Salary & Income")
+        } else {
+            listOf("Food & Dining", "Groceries", "Shopping", "Bills & Utilities", "Fuel & Travel")
+        }
+        val quickCategories = quickCandidates
+            .filterNot { it.equals(cleanCategory, ignoreCase = true) }
+            .take(2)
 
         val cleanPayment = sanitizeSummaryField(paymentSummary, "")
         val collapsedSummary = buildString {
@@ -283,17 +347,18 @@ object TransactionNotificationHelper {
             }
         }
 
-        val builder = NotificationCompat.Builder(context, CHANNEL_ID)
+        val builder = NotificationCompat.Builder(context, targetChannelId)
             .setSmallIcon(categoryNotificationIconRes(cleanCategory))
             .setLargeIcon(buildCategoryLargeIconBitmap(context, cleanCategory))
             .setColor(categoryAccentColorArgb(cleanCategory))
-            .setContentTitle("$cleanMerchant • $amountDisplay")
+            .setContentTitle("$amountDisplay • $cleanMerchant")
             .setContentText(collapsedSummary)
             .setStyle(NotificationCompat.BigTextStyle().bigText(expandedSummary))
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setCategory(NotificationCompat.CATEGORY_MESSAGE)
             .setAutoCancel(true)
             .setContentIntent(contentPendingIntent)
+            .addAction(0, "Category Wheel", wheelPendingIntent)
 
         quickCategories.forEachIndexed { index, targetCategory ->
             val actionIntent = Intent(context, NotificationCategoryActionReceiver::class.java).apply {
@@ -316,6 +381,44 @@ object TransactionNotificationHelper {
 
         runCatching {
             NotificationManagerCompat.from(context).notify(notificationId, builder.build())
+        }
+    }
+
+    fun postUpdatedCategoryNotification(
+        context: Context,
+        notificationId: Int,
+        title: String,
+        amountText: String,
+        newCategory: String
+    ) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        ) {
+            return
+        }
+        ensureChannel(context)
+        val normalizedNew = ExpenseCategories.normalizeCategory(newCategory)
+        val targetChannel = if (ExpenseCategories.isIncomeCategory(normalizedNew)) {
+            CHANNEL_ID_SMS_INCOME
+        } else {
+            CHANNEL_ID
+        }
+        val updatedTitle = when {
+            amountText.isNotBlank() && title.isNotBlank() -> "$amountText • $title"
+            amountText.isNotBlank() -> amountText
+            else -> title
+        }
+        val updatedBuilder = NotificationCompat.Builder(context, targetChannel)
+            .setSmallIcon(categoryNotificationIconRes(normalizedNew))
+            .setLargeIcon(buildCategoryLargeIconBitmap(context, normalizedNew))
+            .setColor(categoryAccentColorArgb(normalizedNew))
+            .setContentTitle(updatedTitle)
+            .setContentText("Category: $normalizedNew ✓")
+            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+            .setAutoCancel(true)
+            .setTimeoutAfter(4000L)
+        runCatching {
+            NotificationManagerCompat.from(context).notify(notificationId, updatedBuilder.build())
         }
     }
 
@@ -375,7 +478,7 @@ object TransactionNotificationHelper {
             .setSmallIcon(categoryNotificationIconRes(cleanCategory))
             .setLargeIcon(buildCategoryLargeIconBitmap(context, cleanCategory))
             .setColor(categoryAccentColorArgb(cleanCategory))
-            .setContentTitle("$cleanMerchant • $currencySymbol$formattedAmt")
+            .setContentTitle("$currencySymbol$formattedAmt • $cleanMerchant")
             .setContentText(summaryLine)
             .setStyle(NotificationCompat.BigTextStyle().bigText(expandedSummary))
             .setPriority(NotificationCompat.PRIORITY_HIGH)
@@ -428,9 +531,9 @@ object TransactionNotificationHelper {
         val spentStr = "$currencySymbol${numFmt.format(spentAmount)}"
         val limitStr = "$currencySymbol${numFmt.format(limitAmount)}"
         val headline = if (usedPercent >= 100) {
-            "$categoryOrScopeName • Budget Exceeded ($usedPercent%)"
+            "$spentStr / $limitStr • $categoryOrScopeName Exceeded ($usedPercent%)"
         } else {
-            "$categoryOrScopeName • $usedPercent% Budget Used"
+            "$spentStr / $limitStr • $categoryOrScopeName ($usedPercent%)"
         }
         val bodyText = "$spentStr of $limitStr monthly limit"
 
@@ -449,6 +552,84 @@ object TransactionNotificationHelper {
             .setSmallIcon(categoryNotificationIconRes(categoryOrScopeName))
             .setLargeIcon(buildCategoryLargeIconBitmap(context, categoryOrScopeName))
             .setColor(categoryAccentColorArgb(categoryOrScopeName))
+            .setContentTitle(headline)
+            .setContentText(bodyText)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(bodyText))
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setCategory(NotificationCompat.CATEGORY_ALARM)
+            .setAutoCancel(true)
+            .setContentIntent(contentPendingIntent)
+
+        runCatching {
+            NotificationManagerCompat.from(context).notify(notificationId, builder.build())
+        }
+    }
+
+    /**
+     * Fires a Credit Card Spend Limit notification when spend in the configured period reaches
+     * the customizable threshold percentage (default 80%).
+     */
+    fun showCreditCardLimitNotification(
+        context: Context,
+        accountId: String,
+        accountName: String,
+        spentAmount: Double,
+        limitAmount: Double,
+        periodLabel: String,
+        thresholdPercent: Int,
+        currencySymbol: String = "₹",
+        forceNotify: Boolean = false
+    ) {
+        LocalAccountSessionManager.ensureInitialized(context.applicationContext)
+        val fcmSettings = LocalAccountSessionManager.fcmPushSettings.value
+        if (!fcmSettings.creditCardLimitAlertsEnabled && !forceNotify) return
+        if (limitAmount <= 0.0) return
+
+        val effectiveThreshold = thresholdPercent.coerceIn(1, 100)
+        val usedPercent = ((spentAmount / limitAmount) * 100.0).toInt()
+        if (usedPercent < effectiveThreshold && !forceNotify) return
+
+        val bucket = if (usedPercent >= 100) "100" else effectiveThreshold.toString()
+        val dedupeKey = "${accountId.ifBlank { accountName }.lowercase()}_${periodLabel.lowercase()}_$bucket"
+        if (!forceNotify && !notifiedCreditLimitKeys.add(dedupeKey)) return
+
+        ensureChannel(context)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            val granted = ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.POST_NOTIFICATIONS
+            ) == PackageManager.PERMISSION_GRANTED
+            if (!granted) return
+        }
+
+        val numFmt = NumberFormat.getNumberInstance(Locale.forLanguageTag("en-IN")).apply {
+            maximumFractionDigits = 0
+        }
+        val spentStr = "$currencySymbol${numFmt.format(spentAmount)}"
+        val limitStr = "$currencySymbol${numFmt.format(limitAmount)}"
+        val cleanName = sanitizeSummaryField(accountName, "Credit Card")
+        val headline = if (usedPercent >= 100) {
+            "$spentStr / $limitStr • $cleanName Limit Exceeded ($usedPercent%)"
+        } else {
+            "$spentStr / $limitStr • $cleanName ($usedPercent%)"
+        }
+        val bodyText = "$periodLabel limit ($effectiveThreshold% alert) • $spentStr of $limitStr"
+
+        val openAppIntent = Intent(context, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
+        }
+        val notificationId = ("cc_limit_$dedupeKey").hashCode()
+        val contentPendingIntent = PendingIntent.getActivity(
+            context,
+            notificationId,
+            openAppIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        val builder = NotificationCompat.Builder(context, CHANNEL_ID_CREDIT_LIMIT)
+            .setSmallIcon(R.drawable.ic_cat_utilities)
+            .setLargeIcon(buildCategoryLargeIconBitmap(context, "Bills & Utilities"))
+            .setColor(categoryAccentColorArgb("Bills & Utilities"))
             .setContentTitle(headline)
             .setContentText(bodyText)
             .setStyle(NotificationCompat.BigTextStyle().bigText(bodyText))
@@ -641,23 +822,13 @@ class NotificationCategoryActionReceiver : BroadcastReceiver() {
                     newCategory = newCategory
                 )
 
-                if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
-                    ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
-                ) {
-                    val normalizedNew = ExpenseCategories.normalizeCategory(newCategory)
-                    val updatedBuilder = NotificationCompat.Builder(context, TransactionNotificationHelper.CHANNEL_ID)
-                        .setSmallIcon(TransactionNotificationHelper.categoryNotificationIconRes(normalizedNew))
-                        .setLargeIcon(TransactionNotificationHelper.buildCategoryLargeIconBitmap(context, normalizedNew))
-                        .setColor(categoryAccentColorArgb(normalizedNew))
-                        .setContentTitle("$title • $amountText")
-                        .setContentText("Category: $normalizedNew ✓")
-                        .setPriority(NotificationCompat.PRIORITY_DEFAULT)
-                        .setAutoCancel(true)
-                        .setTimeoutAfter(4000L)
-                    runCatching {
-                        NotificationManagerCompat.from(context).notify(notificationId, updatedBuilder.build())
-                    }
-                }
+                TransactionNotificationHelper.postUpdatedCategoryNotification(
+                    context = context,
+                    notificationId = notificationId,
+                    title = title,
+                    amountText = amountText,
+                    newCategory = newCategory
+                )
             } finally {
                 pendingResult.finish()
             }

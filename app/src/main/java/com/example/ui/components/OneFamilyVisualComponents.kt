@@ -47,10 +47,12 @@ import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.filled.ReceiptLong
 import androidx.compose.material.icons.automirrored.filled.TrendingUp
 import androidx.compose.material.icons.filled.AccountBalance
+import androidx.compose.material.icons.filled.AccountBalanceWallet
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.CalendarMonth
+import androidx.compose.material.icons.filled.CardGiftcard
 import androidx.compose.material.icons.filled.Category
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Colorize
@@ -204,6 +206,8 @@ fun categoryIcon(category: String): ImageVector {
         lower.contains("health") || lower.contains("medical") || lower.contains("fitness") -> Icons.Default.MedicalServices
         lower.contains("entertain") -> Icons.Default.Movie
         lower.contains("invest") -> Icons.AutoMirrored.Filled.TrendingUp
+        lower.contains("cashback") || lower.contains("cash back") -> Icons.Default.CardGiftcard
+        lower == "income" -> Icons.Default.AccountBalanceWallet
         lower.contains("salary") || lower.contains("income") -> Icons.Default.Payments
         else -> Icons.Default.Category
     }
@@ -2231,10 +2235,9 @@ private fun AccountSummaryCard(
     amountLabel: String,
     accountType: String
 ) {
-    val icon = when (accountType) {
-        "CREDIT_CARD" -> Icons.Default.CreditCard
-        "UPI" -> Icons.Default.QrCode2
-        "CASH" -> Icons.Default.Payments
+    val icon = when (FinancialAccount.normalizeAccountType(accountType)) {
+        "CREDIT_CARD", "DEBIT_CARD" -> Icons.Default.CreditCard
+        "CASH", "WALLET" -> Icons.Default.Payments
         else -> Icons.Default.AccountBalance
     }
     Surface(
@@ -2301,7 +2304,7 @@ fun ExpenseTransactionItemCard(
     val effectiveContainerColor = containerColor ?: MaterialTheme.colorScheme.surfaceContainerLow
 
     val isIncome = expense.type.equals("INCOME", ignoreCase = true) ||
-        com.example.data.model.ExpenseCategories.normalizeCategory(expense.category).equals("Salary & Income", ignoreCase = true)
+        com.example.data.model.ExpenseCategories.isIncomeCategory(expense.category)
     val catColor = categoryAccentColor(expense.category)
     var dragOffsetX by remember { mutableFloatStateOf(0f) }
     var cardWidthPx by remember { mutableFloatStateOf(1f) }
