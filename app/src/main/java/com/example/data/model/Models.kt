@@ -86,6 +86,7 @@ data class FinancialAccount(
     val linkedBankAccountId: String = "",
     val linkedBankAccountName: String = "",
     val monthlySpendLimit: Double = 0.0,
+    val billingCycleDay: Int = 1,
     val spendLimitPeriod: String = "MONTHLY",
     val spendLimitStartMillis: Long = 0L,
     val spendLimitEndMillis: Long = 0L,
@@ -214,7 +215,13 @@ enum class NotificationSubCategory(
     INCOME("Income", "Salary, cashback & credit SMS alerts"),
     FAMILY_SYNC("Family Sync", "Shared expenses added by family"),
     BUDGET_LIMITS("Budget Alerts", "Category & monthly budget warnings"),
-    CREDIT_CARD_LIMIT("Card Limits", "Credit card spend limit threshold warnings")
+    CREDIT_CARD_LIMIT("Card Limits", "Credit card spend limit threshold warnings"),
+    DAILY_SUMMARY("Daily Summary", "Daily total spend recap at your scheduled time"),
+    WEEKLY_SUMMARY("Weekly Summary", "Weekly total spend recap at your scheduled time"),
+    MONTHLY_SUMMARY("Monthly Summary", "Monthly total spend recap at your scheduled time");
+
+    fun isSpendSummaryCategory(): Boolean =
+        this == DAILY_SUMMARY || this == WEEKLY_SUMMARY || this == MONTHLY_SUMMARY
 }
 
 data class FcmPushSettings(
@@ -224,6 +231,17 @@ data class FcmPushSettings(
     val budgetThresholdAlertsEnabled: Boolean = true,
     val creditCardLimitAlertsEnabled: Boolean = true,
     val creditCardAlertThresholdPercent: Int = 80,
+    val dailySummaryEnabled: Boolean = true,
+    val weeklySummaryEnabled: Boolean = true,
+    val monthlySummaryEnabled: Boolean = true,
+    val dailySummaryHour: Int = 20,
+    val dailySummaryMinute: Int = 0,
+    val weeklySummaryHour: Int = 10,
+    val weeklySummaryMinute: Int = 0,
+    val monthlySummaryHour: Int = 9,
+    val monthlySummaryMinute: Int = 0,
+    val summaryNotificationHour: Int = dailySummaryHour,
+    val summaryNotificationMinute: Int = dailySummaryMinute,
     val subscribedTopic: String = "household_shared"
 ) {
     fun isSubCategoryEnabled(subCategory: NotificationSubCategory): Boolean = when (subCategory) {
@@ -232,6 +250,9 @@ data class FcmPushSettings(
         NotificationSubCategory.FAMILY_SYNC -> familyTransactionAlertsEnabled
         NotificationSubCategory.BUDGET_LIMITS -> budgetThresholdAlertsEnabled
         NotificationSubCategory.CREDIT_CARD_LIMIT -> creditCardLimitAlertsEnabled
+        NotificationSubCategory.DAILY_SUMMARY -> dailySummaryEnabled
+        NotificationSubCategory.WEEKLY_SUMMARY -> weeklySummaryEnabled
+        NotificationSubCategory.MONTHLY_SUMMARY -> monthlySummaryEnabled
     }
 
     fun withSubCategoryEnabled(
@@ -243,6 +264,69 @@ data class FcmPushSettings(
         NotificationSubCategory.FAMILY_SYNC -> copy(familyTransactionAlertsEnabled = enabled)
         NotificationSubCategory.BUDGET_LIMITS -> copy(budgetThresholdAlertsEnabled = enabled)
         NotificationSubCategory.CREDIT_CARD_LIMIT -> copy(creditCardLimitAlertsEnabled = enabled)
+        NotificationSubCategory.DAILY_SUMMARY -> copy(dailySummaryEnabled = enabled)
+        NotificationSubCategory.WEEKLY_SUMMARY -> copy(weeklySummaryEnabled = enabled)
+        NotificationSubCategory.MONTHLY_SUMMARY -> copy(monthlySummaryEnabled = enabled)
+    }
+
+    fun getSummaryTime(subCategory: NotificationSubCategory): Pair<Int, Int> = when (subCategory) {
+        NotificationSubCategory.DAILY_SUMMARY -> dailySummaryHour.coerceIn(0, 23) to dailySummaryMinute.coerceIn(0, 59)
+        NotificationSubCategory.WEEKLY_SUMMARY -> weeklySummaryHour.coerceIn(0, 23) to weeklySummaryMinute.coerceIn(0, 59)
+        NotificationSubCategory.MONTHLY_SUMMARY -> monthlySummaryHour.coerceIn(0, 23) to monthlySummaryMinute.coerceIn(0, 59)
+        else -> summaryNotificationHour.coerceIn(0, 23) to summaryNotificationMinute.coerceIn(0, 59)
+    }
+
+    fun withSummaryTime(
+        subCategory: NotificationSubCategory,
+        hour: Int,
+        minute: Int
+    ): FcmPushSettings {
+        val h = hour.coerceIn(0, 23)
+        val m = minute.coerceIn(0, 59)
+        return when (subCategory) {
+            NotificationSubCategory.DAILY_SUMMARY -> copy(
+                dailySummaryHour = h,
+                dailySummaryMinute = m,
+                summaryNotificationHour = h,
+                summaryNotificationMinute = m
+            )
+            NotificationSubCategory.WEEKLY_SUMMARY -> copy(
+                weeklySummaryHour = h,
+                weeklySummaryMinute = m
+            )
+            NotificationSubCategory.MONTHLY_SUMMARY -> copy(
+                monthlySummaryHour = h,
+                monthlySummaryMinute = m
+            )
+            else -> copy(
+                summaryNotificationHour = h,
+                summaryNotificationMinute = m
+            )
+        }
+    }
+
+    fun formatSummaryTime(subCategory: NotificationSubCategory): String {
+        val (h, m) = getSummaryTime(subCategory)
+        return formatClock12Hour(h, m)
+    }
+
+    fun formatSummaryTime(): String = formatClock12Hour(
+        dailySummaryHour.coerceIn(0, 23),
+        dailySummaryMinute.coerceIn(0, 59)
+    )
+
+    companion object {
+        fun formatClock12Hour(hour: Int, minute: Int): String {
+            val h = hour.coerceIn(0, 23)
+            val m = minute.coerceIn(0, 59)
+            val amPm = if (h >= 12) "PM" else "AM"
+            val hour12 = when {
+                h == 0 -> 12
+                h > 12 -> h - 12
+                else -> h
+            }
+            return String.format(java.util.Locale.US, "%02d:%02d %s", hour12, m, amPm)
+        }
     }
 }
 

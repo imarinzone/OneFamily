@@ -78,6 +78,7 @@ service cloud.firestore {
              (!('linkedBankAccountId' in data) || (data.linkedBankAccountId is string && data.linkedBankAccountId.size() <= 128)) &&
              (!('linkedBankAccountName' in data) || (data.linkedBankAccountName is string && data.linkedBankAccountName.size() <= 100)) &&
              (!('monthlySpendLimit' in data) || (data.monthlySpendLimit is number && data.monthlySpendLimit >= 0)) &&
+             (!('billingCycleDay' in data) || (data.billingCycleDay is number && data.billingCycleDay >= 1 && data.billingCycleDay <= 31)) &&
              (!('alertThresholdPercent' in data) || (data.alertThresholdPercent is number && data.alertThresholdPercent >= 1 && data.alertThresholdPercent <= 100)) &&
              (!('spendLimitPeriod' in data) || (data.spendLimitPeriod is string && data.spendLimitPeriod in ['MONTHLY', 'WEEKLY', 'QUARTERLY', 'YEARLY', 'CUSTOM'])) &&
              (!('spendLimitStartMillis' in data) || (data.spendLimitStartMillis is number && data.spendLimitStartMillis >= 0)) &&
@@ -190,7 +191,7 @@ service cloud.firestore {
                          request.auth.uid == userId &&
                          incoming().userId == request.auth.uid &&
                          incoming().keys().hasAll(['userId', 'name', 'bankName', 'accountType', 'balance', 'isSharedVisible', 'createdAt', 'updatedAt']) &&
-                         incoming().keys().hasOnly(['userId', 'name', 'bankName', 'accountType', 'lastFourDigits', 'balance', 'creditLimit', 'linkedBankAccountId', 'linkedBankAccountName', 'monthlySpendLimit', 'spendLimitPeriod', 'spendLimitStartMillis', 'spendLimitEndMillis', 'alertThresholdPercent', 'isHidden', 'isSharedVisible', 'createdAt', 'updatedAt']) &&
+                         incoming().keys().hasOnly(['userId', 'name', 'bankName', 'accountType', 'lastFourDigits', 'balance', 'creditLimit', 'linkedBankAccountId', 'linkedBankAccountName', 'monthlySpendLimit', 'billingCycleDay', 'spendLimitPeriod', 'spendLimitStartMillis', 'spendLimitEndMillis', 'alertThresholdPercent', 'isHidden', 'isSharedVisible', 'createdAt', 'updatedAt']) &&
                          isValidFinancialAccount(incoming());
 
         allow update: if isSignedIn() &&
@@ -199,7 +200,7 @@ service cloud.firestore {
                          isValidId(accountId) &&
                          request.auth.uid == userId &&
                          incoming().userId == existing().userId &&
-                         incoming().diff(existing()).affectedKeys().hasOnly(['name', 'bankName', 'accountType', 'lastFourDigits', 'balance', 'creditLimit', 'linkedBankAccountId', 'linkedBankAccountName', 'monthlySpendLimit', 'spendLimitPeriod', 'spendLimitStartMillis', 'spendLimitEndMillis', 'alertThresholdPercent', 'isHidden', 'isSharedVisible', 'createdAt', 'updatedAt']);
+                         incoming().diff(existing()).affectedKeys().hasOnly(['name', 'bankName', 'accountType', 'lastFourDigits', 'balance', 'creditLimit', 'linkedBankAccountId', 'linkedBankAccountName', 'monthlySpendLimit', 'billingCycleDay', 'spendLimitPeriod', 'spendLimitStartMillis', 'spendLimitEndMillis', 'alertThresholdPercent', 'isHidden', 'isSharedVisible', 'createdAt', 'updatedAt']);
 
         allow delete: if isSignedIn() && isValidId(userId) && isValidId(accountId) && request.auth.uid == userId;
       }

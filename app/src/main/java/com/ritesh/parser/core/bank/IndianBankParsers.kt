@@ -283,8 +283,229 @@ class AirtelPaymentsBankParser : BankParser() {
 }
 
 /**
- * Generic fallback Bank/UPI parser for any bank DLT sender not matched above.
+ * RBL Bank Parser (`RBLBNK`, `RBLCRD`)
  */
-class GenericBankParser(override val bankName: String = "Bank Account") : BankParser() {
-    override fun canHandle(sender: String): Boolean = true
+class RBLBankParser : BankParser() {
+    override val bankName: String = "RBL Bank"
+
+    override fun canHandle(sender: String): Boolean {
+        val normalized = sender.uppercase()
+        return normalized.contains("RBLBNK") || normalized.contains("RBLCRD") || normalized == "RBL"
+    }
+}
+
+/**
+ * AU Small Finance Bank Parser (`AUBANK`, `AUSFBL`)
+ */
+class AUBankParser : BankParser() {
+    override val bankName: String = "AU Small Finance Bank"
+
+    override fun canHandle(sender: String): Boolean {
+        val normalized = sender.uppercase()
+        return normalized.contains("AUBANK") || normalized.contains("AUSFBL") || normalized.contains("AUBNK")
+    }
+}
+
+/**
+ * Bandhan Bank Parser (`BDNBNK`, `BANDHN`)
+ */
+class BandhanBankParser : BankParser() {
+    override val bankName: String = "Bandhan Bank"
+
+    override fun canHandle(sender: String): Boolean {
+        val normalized = sender.uppercase()
+        return normalized.contains("BDNBNK") || normalized.contains("BANDHN") || normalized.contains("BANDHAN")
+    }
+}
+
+/**
+ * Indian Bank Parser (`INDBNK`)
+ */
+class IndianBankParser : BankParser() {
+    override val bankName: String = "Indian Bank"
+
+    override fun canHandle(sender: String): Boolean {
+        val normalized = sender.uppercase()
+        return normalized.contains("INDBNK") || normalized == "INDIAN"
+    }
+}
+
+/**
+ * Bank of India Parser (`BOIIND`, `BOIBNK`)
+ */
+class BankOfIndiaParser : BankParser() {
+    override val bankName: String = "Bank of India"
+
+    override fun canHandle(sender: String): Boolean {
+        val normalized = sender.uppercase()
+        return normalized.contains("BOIIND") || normalized.contains("BOIBNK") || normalized == "BOI"
+    }
+}
+
+/**
+ * Central Bank of India Parser (`CENTRL`, `CBIBNK`)
+ */
+class CentralBankParser : BankParser() {
+    override val bankName: String = "Central Bank of India"
+
+    override fun canHandle(sender: String): Boolean {
+        val normalized = sender.uppercase()
+        return normalized.contains("CENTRL") || normalized.contains("CBIBNK") || normalized.contains("CBIOTP")
+    }
+}
+
+/**
+ * UCO Bank Parser (`UCOBNK`)
+ */
+class UCOBankParser : BankParser() {
+    override val bankName: String = "UCO Bank"
+
+    override fun canHandle(sender: String): Boolean {
+        val normalized = sender.uppercase()
+        return normalized.contains("UCOBNK")
+    }
+}
+
+/**
+ * Indian Overseas Bank Parser (`IOBCHN`, `IOBBNK`)
+ */
+class IOBBankParser : BankParser() {
+    override val bankName: String = "Indian Overseas Bank"
+
+    override fun canHandle(sender: String): Boolean {
+        val normalized = sender.uppercase()
+        return normalized.contains("IOBCHN") || normalized.contains("IOBBNK") || normalized == "IOB"
+    }
+}
+
+/**
+ * HSBC Bank Parser (`HSBCIN`, `HSBCBK`)
+ */
+class HSBCBankParser : BankParser() {
+    override val bankName: String = "HSBC Bank"
+
+    override fun canHandle(sender: String): Boolean {
+        val normalized = sender.uppercase()
+        return normalized.contains("HSBC")
+    }
+}
+
+/**
+ * Standard Chartered Bank Parser (`SCBANK`, `SCBLIN`)
+ */
+class StandardCharteredParser : BankParser() {
+    override val bankName: String = "Standard Chartered"
+
+    override fun canHandle(sender: String): Boolean {
+        val normalized = sender.uppercase()
+        return normalized.contains("SCBANK") || normalized.contains("SCBLIN") || normalized.contains("STANCH")
+    }
+}
+
+/**
+ * Citi Bank Parser (`CITIBK`, `CITIIN`)
+ */
+class CitiBankParser : BankParser() {
+    override val bankName: String = "Citi Bank"
+
+    override fun canHandle(sender: String): Boolean {
+        val normalized = sender.uppercase()
+        return normalized.contains("CITIBK") || normalized.contains("CITIIN") || normalized == "CITI"
+    }
+}
+
+/**
+ * DBS Bank Parser (`DBSBNK`, `DBSINB`)
+ */
+class DBSBankParser : BankParser() {
+    override val bankName: String = "DBS Bank"
+
+    override fun canHandle(sender: String): Boolean {
+        val normalized = sender.uppercase()
+        return normalized.contains("DBSBNK") || normalized.contains("DBSINB") || normalized == "DBS"
+    }
+}
+
+/**
+ * Jupiter Money Parser (`JUPITR`)
+ */
+class JupiterParser : BankParser() {
+    override val bankName: String = "Jupiter"
+
+    override fun canHandle(sender: String): Boolean {
+        val normalized = sender.uppercase()
+        return normalized.contains("JUPITR") || normalized.contains("JUPITER")
+    }
+}
+
+/**
+ * Fi Money Parser (`FIMONY`, `EPIFI`)
+ */
+class FiMoneyParser : BankParser() {
+    override val bankName: String = "Fi Money"
+
+    override fun canHandle(sender: String): Boolean {
+        val normalized = sender.uppercase()
+        return normalized.contains("FIMONY") || normalized.contains("EPIFI")
+    }
+}
+
+/**
+ * Slice Parser (`SLICEP`, `SLICE`)
+ */
+class SliceParser : BankParser() {
+    override val bankName: String = "Slice"
+
+    override fun canHandle(sender: String): Boolean {
+        val normalized = sender.uppercase()
+        return normalized.contains("SLICEP") || normalized == "SLICE"
+    }
+}
+
+/**
+ * South Indian Bank Parser (`SIBSMS`, `SIBBNK`)
+ */
+class SouthIndianBankParser : BankParser() {
+    override val bankName: String = "South Indian Bank"
+
+    override fun canHandle(sender: String): Boolean {
+        val normalized = sender.uppercase()
+        return normalized.contains("SIBSMS") || normalized.contains("SIBBNK")
+    }
+}
+
+/**
+ * Karur Vysya Bank Parser (`KVBSMS`, `KVBBNK`)
+ */
+class KarurVysyaBankParser : BankParser() {
+    override val bankName: String = "Karur Vysya Bank"
+
+    override fun canHandle(sender: String): Boolean {
+        val normalized = sender.uppercase()
+        return normalized.contains("KVBSMS") || normalized.contains("KVBBNK") || normalized == "KVB"
+    }
+}
+
+/**
+ * Karnataka Bank Parser (`KTKBNK`)
+ */
+class KarnatakaBankParser : BankParser() {
+    override val bankName: String = "Karnataka Bank"
+
+    override fun canHandle(sender: String): Boolean {
+        val normalized = sender.uppercase()
+        return normalized.contains("KTKBNK")
+    }
+}
+
+/**
+ * India Post Payments Bank Parser (`IPPBSM`, `DOPBNK`)
+ */
+class DOPBankParser : BankParser() {
+    override val bankName: String = "India Post Bank"
+
+    override fun canHandle(sender: String): Boolean {
+        val normalized = sender.uppercase()
+        return normalized.contains("IPPBSM") || normalized.contains("DOPBNK") || normalized == "IPPB"
+    }
 }

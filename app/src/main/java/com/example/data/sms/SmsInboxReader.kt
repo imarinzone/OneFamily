@@ -200,10 +200,9 @@ class SmsInboxReader(private val context: Context) {
                                     monotonicMatched,
                                     latestCandidate
                                 )
-                            }
-
-                            if (perBatchDelayMs > 0L && currentReadRaw < totalCount) {
-                                delay(perBatchDelayMs)
+                                if (perBatchDelayMs > 0L && monotonicRead < totalCount) {
+                                    delay(perBatchDelayMs)
+                                }
                             }
                             batchCandidates
                         }

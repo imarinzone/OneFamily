@@ -286,8 +286,21 @@ test("FinancialAccounts: DEBIT_CARD linked to bank and monthlySpendLimit allowed
         spendLimitPeriod: "CUSTOM",
         spendLimitStartMillis: 1730000000000,
         spendLimitEndMillis: 1732500000000,
+        billingCycleDay: 15,
         isHidden: true,
         updatedAt: new Date(Date.now() - 500),
+      })
+  );
+
+  await assertFails(
+    aliceDb
+      .collection("users")
+      .doc(ALICE_UID)
+      .collection("accounts")
+      .doc("hdfc_debit_5512")
+      .update({
+        billingCycleDay: 35,
+        updatedAt: new Date(Date.now() - 400),
       })
   );
 

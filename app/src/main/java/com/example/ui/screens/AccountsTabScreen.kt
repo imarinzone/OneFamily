@@ -28,10 +28,12 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.filled.ReceiptLong
 import androidx.compose.material.icons.filled.AccountBalance
 import androidx.compose.material.icons.filled.AccountBalanceWallet
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Close
@@ -65,7 +67,6 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -85,6 +86,7 @@ import com.example.data.model.BudgetScope
 import com.example.data.model.ExpenseCategories
 import com.example.data.model.ExpenseTransaction
 import com.example.data.model.FinancialAccount
+import com.example.ui.components.BillingCycleCalendarGrid
 import com.example.ui.components.CircularTonalIconButton
 import com.example.ui.components.CustomDateRangePickerModal
 import com.example.ui.components.EditorialScreenHeader
@@ -93,18 +95,13 @@ import com.example.ui.components.ReceiptDashedDividerLine
 import com.example.ui.components.ReceiptTicketCard
 import com.example.ui.components.ScopeSwitcherBar
 import com.example.ui.components.SquircleIconBadge
-import com.example.ui.components.categoryIcon
-import com.example.ui.components.categoryWheelLongPressGesture
 import com.example.ui.components.formatCurrency
-import com.example.ui.components.formatShortDate
-import com.example.ui.components.rememberCustomCategoryEmojis
 import com.example.ui.theme.BudgetDangerCoral
 import com.example.ui.theme.BudgetSafeGreen
 import com.example.ui.theme.BudgetWarnAmber
 import com.example.ui.theme.HouseholdBadgeIndigo
 import com.example.ui.theme.LocalAppDimens
 import com.example.ui.theme.ReceiptMonoFontFamily
-import com.example.ui.theme.categoryAccentColor
 import com.example.ui.theme.groupedCardShape
 import com.example.ui.theme.rememberAppHapticPerformer
 import com.example.ui.viewmodel.AccountSpendSummary
@@ -120,7 +117,7 @@ import com.example.ui.viewmodel.OneFamilyDashboardUiState
  *   2. Bank Accounts
  *   3. Debit Cards (Linked to Bank)
  *   4. Credit Cards
- * - Each account features inline monthly spend limit tracking & full list of transactions for that account.
+ * - Transactions stay hidden on the accounts list until the user taps an account to open its dedicated detail & graph page.
  */
 @Composable
 fun AccountsTabScreen(
@@ -135,11 +132,15 @@ fun AccountsTabScreen(
     onSaveAccountSpendLimitWithPeriod: (
         (account: FinancialAccount, monthlyLimit: Double, period: String, startMillis: Long, endMillis: Long) -> Unit
     )? = null,
+    onSaveAccountSpendLimitWithBillingCycle: (
+        (account: FinancialAccount, monthlyLimit: Double, billingCycleDay: Int) -> Unit
+    )? = null,
     onToggleAccountHidden: (AccountSpendSummary, Boolean) -> Unit = { _, _ -> },
     onDeleteOrUntrackAccount: (AccountSpendSummary) -> Unit = {},
     onAddAccountClick: (initialAccountType: String) -> Unit = {},
-    onEditTransaction: (ExpenseTransaction) -> Unit = {},
-    onQuickChangeCategory: (ExpenseTransaction) -> Unit = {}
+    onAccountClick: (accountId: String) -> Unit = {},
+    @Suppress("UNUSED_PARAMETER") onEditTransaction: (ExpenseTransaction) -> Unit = {},
+    @Suppress("UNUSED_PARAMETER") onQuickChangeCategory: (ExpenseTransaction) -> Unit = {}
 ) {
     val dimens = LocalAppDimens.current
     val currency = uiState.activeCurrencySymbol
@@ -149,13 +150,9 @@ fun AccountsTabScreen(
     var showCustomRangePicker by rememberSaveable { mutableStateOf(false) }
     var activeInlineAccountId by rememberSaveable { mutableStateOf<String?>(null) }
     var inlineLimitInput by rememberSaveable { mutableStateOf("") }
-    var inlineLimitPeriodKey by rememberSaveable { mutableStateOf(AccountLimitPeriod.MONTHLY.name) }
-    var inlineLimitCustomStartMillis by rememberSaveable { mutableStateOf(0L) }
-    var inlineLimitCustomEndMillis by rememberSaveable { mutableStateOf(0L) }
-    var showInlineLimitCustomRangePicker by rememberSaveable { mutableStateOf(false) }
+    var inlineBillingCycleDayInput by rememberSaveable { mutableStateOf("1") }
     var showAllAccountsExpanded by rememberSaveable { mutableStateOf(false) }
     var pendingDeleteAccount by remember { mutableStateOf<AccountSpendSummary?>(null) }
-    val expandedTransactionsMap = remember { mutableStateMapOf<String, Boolean>() }
 
     val hasActiveFilter = uiState.selectedDateRangePreset != DateRangePreset.MONTH ||
         uiState.searchQuery.isNotBlank() ||
@@ -235,9 +232,7 @@ fun AccountsTabScreen(
             } else {
                 ""
             }
-            inlineLimitPeriodKey = summary.limitPeriod.name
-            inlineLimitCustomStartMillis = summary.account.spendLimitStartMillis
-            inlineLimitCustomEndMillis = summary.account.spendLimitEndMillis
+            inlineBillingCycleDayInput = summary.account.billingCycleDay.coerceIn(1, 31).toString()
         }
     }
 
@@ -592,8 +587,6 @@ fun AccountsTabScreen(
                         .trim('_')
                         .ifBlank { summary.account.id }
                     val isEditingLimit = activeInlineAccountId == summary.account.id
-                    val isTransactionsExpanded = expandedTransactionsMap[summary.account.id]
-                        ?: summary.transactions.isNotEmpty()
 
                     Box(
                         modifier = Modifier.padding(
@@ -609,29 +602,43 @@ fun AccountsTabScreen(
                             cardShape = stackShape,
                             isEditingLimit = isEditingLimit,
                             inlineLimitInput = inlineLimitInput,
-                            inlineLimitPeriod = AccountLimitPeriod.fromRaw(inlineLimitPeriodKey),
-                            inlineCustomStartMillis = inlineLimitCustomStartMillis,
-                            inlineCustomEndMillis = inlineLimitCustomEndMillis,
-                            isTransactionsExpanded = isTransactionsExpanded,
+                            inlineBillingCycleDayInput = inlineBillingCycleDayInput,
+                            onAccountClick = {
+                                performHaptic()
+                                onAccountClick(summary.account.id)
+                            },
                             onToggleLimitEditor = { activateInlineEditor(summary) },
                             onInlineLimitInputChange = { inlineLimitInput = sanitizeDecimalInput(it) },
-                            onSelectInlineLimitPeriod = { chosenPeriod ->
-                                inlineLimitPeriodKey = chosenPeriod.name
-                                if (chosenPeriod == AccountLimitPeriod.CUSTOM) {
-                                    showInlineLimitCustomRangePicker = true
-                                }
+                            onInlineBillingCycleDayChange = { raw ->
+                                inlineBillingCycleDayInput = raw.filter { it.isDigit() }.take(2)
                             },
                             onSaveInlineLimit = { parsedLimit ->
-                                if (onSaveAccountSpendLimitWithPeriod != null) {
-                                    onSaveAccountSpendLimitWithPeriod(
-                                        summary.account,
-                                        parsedLimit,
-                                        inlineLimitPeriodKey,
-                                        inlineLimitCustomStartMillis,
-                                        inlineLimitCustomEndMillis
-                                    )
-                                } else {
-                                    onSaveAccountSpendLimitInline(summary.account, parsedLimit)
+                                val parsedCycleDay = (inlineBillingCycleDayInput.trim().toIntOrNull()
+                                    ?: summary.account.billingCycleDay)
+                                    .coerceIn(1, 31)
+                                when {
+                                    onSaveAccountSpendLimitWithBillingCycle != null -> {
+                                        onSaveAccountSpendLimitWithBillingCycle(
+                                            summary.account,
+                                            parsedLimit,
+                                            parsedCycleDay
+                                        )
+                                    }
+                                    onSaveAccountSpendLimitWithPeriod != null -> {
+                                        onSaveAccountSpendLimitWithPeriod(
+                                            summary.account.copy(billingCycleDay = parsedCycleDay),
+                                            parsedLimit,
+                                            AccountLimitPeriod.MONTHLY.name,
+                                            0L,
+                                            0L
+                                        )
+                                    }
+                                    else -> {
+                                        onSaveAccountSpendLimitInline(
+                                            summary.account.copy(billingCycleDay = parsedCycleDay),
+                                            parsedLimit
+                                        )
+                                    }
                                 }
                                 activeInlineAccountId = null
                             },
@@ -643,14 +650,7 @@ fun AccountsTabScreen(
                             onRequestDelete = {
                                 performHaptic()
                                 pendingDeleteAccount = summary
-                            },
-                            onToggleTransactionsExpanded = {
-                                performHaptic()
-                                expandedTransactionsMap[summary.account.id] = !isTransactionsExpanded
-                            },
-                            onEditTransaction = onEditTransaction,
-                            onQuickChangeCategory = onQuickChangeCategory,
-                            availableCategories = uiState.availableCategories
+                            }
                         )
                     }
                 }
@@ -721,6 +721,11 @@ fun AccountsTabScreen(
                                 end = dimens.horizontalPadding,
                                 bottom = 4.dp
                             )
+                            .clip(rowShape)
+                            .clickable {
+                                performHaptic()
+                                onAccountClick(summary.account.id)
+                            }
                             .testTag("all_accounts_row_$safeTag")
                     ) {
                         Row(
@@ -816,20 +821,6 @@ fun AccountsTabScreen(
         )
     }
 
-    if (showInlineLimitCustomRangePicker) {
-        val nowMs = System.currentTimeMillis()
-        CustomDateRangePickerModal(
-            initialStartMillis = if (inlineLimitCustomStartMillis > 0L) inlineLimitCustomStartMillis else (nowMs - 30L * 86_400_000L),
-            initialEndMillis = if (inlineLimitCustomEndMillis > 0L) inlineLimitCustomEndMillis else nowMs,
-            onDismiss = { showInlineLimitCustomRangePicker = false },
-            onApplyRange = { start, end ->
-                inlineLimitCustomStartMillis = start
-                inlineLimitCustomEndMillis = end
-                inlineLimitPeriodKey = AccountLimitPeriod.CUSTOM.name
-            }
-        )
-    }
-
     val deleteTarget = pendingDeleteAccount
     if (deleteTarget != null) {
         AlertDialog(
@@ -880,25 +871,18 @@ private fun AccountCardWithTransactions(
     cardShape: RoundedCornerShape,
     isEditingLimit: Boolean,
     inlineLimitInput: String,
-    inlineLimitPeriod: AccountLimitPeriod,
-    inlineCustomStartMillis: Long,
-    inlineCustomEndMillis: Long,
-    isTransactionsExpanded: Boolean,
+    inlineBillingCycleDayInput: String,
+    onAccountClick: () -> Unit,
     onToggleLimitEditor: () -> Unit,
     onInlineLimitInputChange: (String) -> Unit,
-    onSelectInlineLimitPeriod: (AccountLimitPeriod) -> Unit,
+    onInlineBillingCycleDayChange: (String) -> Unit,
     onSaveInlineLimit: (Double) -> Unit,
     onCancelInlineLimit: () -> Unit,
     onToggleHidden: () -> Unit,
-    onRequestDelete: () -> Unit,
-    onToggleTransactionsExpanded: () -> Unit,
-    onEditTransaction: (ExpenseTransaction) -> Unit,
-    onQuickChangeCategory: (ExpenseTransaction) -> Unit,
-    availableCategories: List<String> = ExpenseCategories.ALL
+    onRequestDelete: () -> Unit
 ) {
     val dimens = LocalAppDimens.current
     val performHaptic = rememberAppHapticPerformer()
-    val customEmojis = rememberCustomCategoryEmojis()
     val account = summary.account
     val barColor = when {
         summary.isOverLimit -> BudgetDangerCoral
@@ -923,8 +907,7 @@ private fun AccountCardWithTransactions(
             .clip(cardShape)
             .animateContentSize(
                 spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessMediumLow)
-            )
-            .testTag("account_card_$safeTag"),
+            ),
         shape = cardShape,
         colors = CardDefaults.cardColors(
             containerColor = if (isEditingLimit) {
@@ -935,7 +918,14 @@ private fun AccountCardWithTransactions(
         ),
         elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
     ) {
-        Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp)) {
+        Box(modifier = Modifier.fillMaxWidth()) {
+            Box(
+                modifier = Modifier
+                    .matchParentSize()
+                    .clickable(onClickLabel = "Open ${account.name} details") { onAccountClick() }
+                    .testTag("account_card_$safeTag")
+            )
+            Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp)) {
             // Top Account Identity & Inline Set Limit CTA
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -1029,7 +1019,15 @@ private fun AccountCardWithTransactions(
                         onDismissRequest = { menuExpanded = false }
                     ) {
                         DropdownMenuItem(
-                            text = { Text(if (summary.limit > 0.0) "Edit Limit & Period" else "Set Spend Limit") },
+                            text = {
+                                Text(
+                                    if (summary.section == AccountSectionType.CREDIT_CARD) {
+                                        if (summary.limit > 0.0) "Edit Limit & Billing Cycle" else "Set Limit & Billing Cycle"
+                                    } else {
+                                        if (summary.limit > 0.0) "Edit Limit & Period" else "Set Spend Limit"
+                                    }
+                                )
+                            },
                             leadingIcon = { Icon(Icons.Default.Edit, contentDescription = null) },
                             onClick = {
                                 menuExpanded = false
@@ -1100,6 +1098,20 @@ private fun AccountCardWithTransactions(
 
             // Inline Spend Limit Numeric & Period Editor (no modal opened)
             AnimatedVisibility(visible = isEditingLimit) {
+                val isCreditCard = summary.section == AccountSectionType.CREDIT_CARD
+                val parsedCycleDay = inlineBillingCycleDayInput.trim().toIntOrNull()?.coerceIn(1, 31)
+                    ?: account.billingCycleDay.coerceIn(1, 31)
+                val cycleRangePreview = remember(isCreditCard, parsedCycleDay) {
+                    if (isCreditCard) {
+                        com.example.ui.viewmodel.AccountLimitPeriodUtils.formatBillingCycleRange(
+                            billingCycleDay = parsedCycleDay,
+                            cycleOffset = 0,
+                            includeYear = false
+                        )
+                    } else {
+                        ""
+                    }
+                }
                 val inlineError = if (inlineLimitInput.isNotEmpty()) {
                     validateNonNegativeAmount(inlineLimitInput)
                 } else {
@@ -1126,10 +1138,16 @@ private fun AccountCardWithTransactions(
                         OutlinedTextField(
                             value = inlineLimitInput,
                             onValueChange = onInlineLimitInputChange,
-                            label = { Text("Spend Limit ($currency)") },
+                            label = {
+                                Text(if (isCreditCard) "Billing Cycle Limit ($currency)" else "Spend Limit ($currency)")
+                            },
                             placeholder = { Text("0 to clear") },
                             isError = inlineError != null,
-                            supportingText = inlineError?.let { err -> { Text(err) } },
+                            supportingText = inlineError?.let { err -> { Text(err) } } ?: if (isCreditCard) {
+                                { Text("Linked to Day $parsedCycleDay cycle ($cycleRangePreview)") }
+                            } else {
+                                null
+                            },
                             keyboardOptions = KeyboardOptions(
                                 keyboardType = KeyboardType.Decimal,
                                 imeAction = ImeAction.Done
@@ -1183,40 +1201,51 @@ private fun AccountCardWithTransactions(
                         }
                     }
 
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .horizontalScroll(rememberScrollState()),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        AccountLimitPeriod.entries.forEach { period ->
-                            val selected = inlineLimitPeriod == period
-                            FilterChip(
-                                selected = selected,
-                                onClick = {
-                                    performHaptic()
-                                    onSelectInlineLimitPeriod(period)
+                    if (isCreditCard) {
+                        Surface(
+                            shape = RoundedCornerShape(14.dp),
+                            color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.65f),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("inline_limit_cycle_link_$safeTag")
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Link,
+                                    contentDescription = "Billing Cycle Linked to Limit",
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Text(
+                                    text = "Limit tracks spend across Billing Cycle Day $parsedCycleDay ($cycleRangePreview)",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                            }
+                        }
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("inline_billing_cycle_section_$safeTag")
+                        ) {
+                            BillingCycleCalendarGrid(
+                                selectedDay = parsedCycleDay,
+                                onSelectDay = { day ->
+                                    onInlineBillingCycleDayChange(day.toString())
                                 },
-                                label = {
-                                    val labelText = if (period == AccountLimitPeriod.CUSTOM &&
-                                        inlineCustomStartMillis > 0L && inlineCustomEndMillis > 0L
-                                    ) {
-                                        "${formatShortDate(inlineCustomStartMillis)} – ${formatShortDate(inlineCustomEndMillis)}"
-                                    } else {
-                                        period.label
-                                    }
-                                    Text(labelText, style = MaterialTheme.typography.labelSmall)
-                                },
-                                shape = RoundedCornerShape(50),
-                                modifier = Modifier.testTag("inline_limit_period_${safeTag}_${period.name.lowercase()}")
+                                tagPrefix = "inline_billing_cycle_calendar_$safeTag"
                             )
                         }
                     }
                 }
             }
 
-            // Spend Limit Progress Tracker (scoped to account's configured Limit Period)
+            // Spend Limit Progress Tracker (scoped to account's configured Billing Cycle / Monthly period)
             if (summary.limit > 0.0) {
                 Spacer(modifier = Modifier.height(10.dp))
                 LinearProgressIndicator(
@@ -1236,7 +1265,11 @@ private fun AccountCardWithTransactions(
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
                     Text(
-                        text = "${summary.percentage}% used • ${summary.limitPeriodLabel}",
+                        text = if (summary.section == AccountSectionType.CREDIT_CARD) {
+                            "${summary.percentage}% of cycle limit • ${summary.limitPeriodLabel}"
+                        } else {
+                            "${summary.percentage}% used • ${summary.limitPeriodLabel}"
+                        },
                         style = MaterialTheme.typography.labelSmall.copy(fontFamily = ReceiptMonoFontFamily),
                         color = barColor,
                         fontWeight = FontWeight.SemiBold
@@ -1255,17 +1288,12 @@ private fun AccountCardWithTransactions(
                 }
             }
 
-            // Per-Account Transactions Header & List
-            ReceiptDashedDividerLine()
+            // Compact Click-Through Footer (no transactions displayed on Accounts list)
+            Spacer(modifier = Modifier.height(8.dp))
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clip(RoundedCornerShape(12.dp))
-                    .clickable(enabled = summary.transactions.isNotEmpty()) {
-                        onToggleTransactionsExpanded()
-                    }
-                    .padding(vertical = 4.dp)
-                    .testTag("toggle_account_transactions_$safeTag"),
+                    .testTag("account_card_open_detail_hint_$safeTag"),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
@@ -1273,128 +1301,43 @@ private fun AccountCardWithTransactions(
                     Icon(
                         imageVector = Icons.AutoMirrored.Filled.ReceiptLong,
                         contentDescription = null,
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.size(16.dp)
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(15.dp)
                     )
                     Spacer(modifier = Modifier.width(6.dp))
                     Text(
-                        text = if (summary.transactions.isEmpty()) {
-                            "No receipts in $periodLabel"
-                        } else {
-                            "${summary.transactions.size} transactions in $periodLabel"
+                        text = buildString {
+                            val count = summary.transactions.size
+                            append(if (count == 1) "1 transaction" else "$count transactions")
+                            if (summary.section == AccountSectionType.CREDIT_CARD) {
+                                append(" • Cycle Day ${account.billingCycleDay.coerceIn(1, 31)}")
+                            } else {
+                                append(" in $periodLabel")
+                            }
                         },
-                        style = MaterialTheme.typography.labelLarge,
+                        style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontWeight = FontWeight.Medium
+                    )
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = "Graph & Txns",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.primary,
                         fontWeight = FontWeight.SemiBold
                     )
-                }
-                if (summary.transactions.isNotEmpty()) {
                     Icon(
-                        imageVector = if (isTransactionsExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
-                        contentDescription = "Toggle Account Transactions",
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                        contentDescription = "Open ${account.name} details",
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(18.dp)
                     )
-                }
-            }
-
-            AnimatedVisibility(visible = isTransactionsExpanded && summary.transactions.isNotEmpty()) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(top = 6.dp),
-                    verticalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    summary.transactions.forEach { tx ->
-                        val catColor = categoryAccentColor(tx.category)
-                        val isIncome = tx.type.equals("INCOME", ignoreCase = true) ||
-                            ExpenseCategories.isIncomeCategory(tx.category)
-                        Surface(
-                            shape = RoundedCornerShape(16.dp),
-                            color = MaterialTheme.colorScheme.surfaceContainerLowest,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(16.dp))
-                                .clickable {
-                                    performHaptic()
-                                    onEditTransaction(tx)
-                                }
-                                .testTag("account_tx_row_${tx.id}")
-                        ) {
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(horizontal = 12.dp, vertical = 10.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                val catEmoji = customEmojis[tx.category.trim().lowercase()]
-                                Box(
-                                    modifier = Modifier
-                                        .clip(RoundedCornerShape(12.dp))
-                                        .categoryWheelLongPressGesture(
-                                            transaction = tx,
-                                            availableCategories = availableCategories,
-                                            onTap = { onEditTransaction(tx) },
-                                            onFallbackQuickChange = { onQuickChangeCategory(tx) }
-                                        )
-                                        .testTag("account_tx_category_icon_${tx.id}")
-                                ) {
-                                    SquircleIconBadge(
-                                        icon = categoryIcon(tx.category),
-                                        tint = catColor,
-                                        containerColor = catColor.copy(alpha = 0.14f),
-                                        size = 34.dp,
-                                        iconSize = 18.dp,
-                                        emoji = catEmoji,
-                                        contentDescription = tx.category
-                                    )
-                                }
-                                Spacer(modifier = Modifier.width(10.dp))
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                        Text(
-                                            text = tx.title,
-                                            style = MaterialTheme.typography.titleSmall,
-                                            fontWeight = FontWeight.SemiBold,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis,
-                                            modifier = Modifier.weight(1f, fill = false)
-                                        )
-                                        if (tx.isExcludedFromExpense) {
-                                            Spacer(modifier = Modifier.width(6.dp))
-                                            Text(
-                                                text = "Excluded",
-                                                style = MaterialTheme.typography.labelSmall,
-                                                color = MaterialTheme.colorScheme.error,
-                                                fontWeight = FontWeight.Bold,
-                                                modifier = Modifier.testTag("account_tx_excluded_badge_${tx.id}")
-                                            )
-                                        }
-                                    }
-                                    Text(
-                                        text = "${formatShortDate(tx.transactionDateMillis)} • ${tx.category} • ${tx.paymentMode}",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
-                                }
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Text(
-                                    text = if (isIncome) {
-                                        "+${formatCurrency(tx.amount, currency)}"
-                                    } else {
-                                        "-${formatCurrency(tx.amount, currency)}"
-                                    },
-                                    style = MaterialTheme.typography.titleSmall.copy(fontFamily = ReceiptMonoFontFamily),
-                                    fontWeight = FontWeight.Bold,
-                                    color = if (isIncome) BudgetSafeGreen else MaterialTheme.colorScheme.onSurface
-                                )
-                            }
-                        }
-                    }
                 }
             }
         }
+        }
     }
 }
+
 

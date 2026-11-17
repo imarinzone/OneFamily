@@ -2569,6 +2569,20 @@ fun AddAccountDialog(
             spendLimitStartMillis: Long,
             spendLimitEndMillis: Long
         ) -> Unit
+    )? = null,
+    onSaveWithBillingCycle: (
+        (
+            name: String,
+            bankName: String,
+            accountType: String,
+            lastFour: String,
+            balance: Double,
+            creditLimit: Double,
+            linkedBankAccountId: String,
+            linkedBankAccountName: String,
+            monthlySpendLimit: Double,
+            billingCycleDay: Int
+        ) -> Unit
     )? = null
 ) {
     val dimens = LocalAppDimens.current
@@ -2587,9 +2601,7 @@ fun AddAccountDialog(
     var balanceText by remember { mutableStateOf("") }
     var creditLimitText by remember { mutableStateOf("") }
     var spendLimitText by remember { mutableStateOf("") }
-    var selectedLimitPeriod by remember { mutableStateOf(AccountLimitPeriod.MONTHLY) }
-    var customLimitRange by remember { mutableStateOf<Pair<Long, Long>?>(null) }
-    var showCustomLimitRangePicker by remember { mutableStateOf(false) }
+    var billingCycleDayText by remember { mutableStateOf("1") }
     var attemptedSave by remember { mutableStateOf(false) }
 
     val selectedLinkedBank = remember(bankAccounts, selectedLinkedBankId) {
@@ -2844,17 +2856,46 @@ fun AddAccountDialog(
                                 .testTag("add_account_credit_limit_input")
                         )
                     }
+                    val parsedCycleDay = billingCycleDayText.trim().toIntOrNull()?.coerceIn(1, 31) ?: 1
+                    val cycleRangePreview = remember(accountType, parsedCycleDay) {
+                        if (accountType == "CREDIT_CARD") {
+                            com.example.ui.viewmodel.AccountLimitPeriodUtils.formatBillingCycleRange(
+                                billingCycleDay = parsedCycleDay,
+                                cycleOffset = 0,
+                                includeYear = false
+                            )
+                        } else {
+                            ""
+                        }
+                    }
                     OutlinedTextField(
                         value = spendLimitText,
                         onValueChange = { spendLimitText = sanitizeDecimalInput(it, maxIntegerDigits = 9) },
-                        label = { Text("Spend Limit ($currencySymbol, Optional)") },
+                        label = {
+                            Text(
+                                if (accountType == "CREDIT_CARD") {
+                                    "Billing Cycle Spend Limit ($currencySymbol, Optional)"
+                                } else {
+                                    "Spend Limit ($currencySymbol, Optional)"
+                                }
+                            )
+                        },
                         placeholder = { Text("Leave blank for no spend limit") },
                         textStyle = MaterialTheme.typography.bodyLarge.copy(
                             fontFamily = ReceiptMonoFontFamily,
                             fontWeight = FontWeight.SemiBold
                         ),
                         isError = spendLimitError != null,
-                        supportingText = spendLimitError?.let { err -> { Text(err) } },
+                        supportingText = spendLimitError?.let { err -> { Text(err) } } ?: if (accountType == "CREDIT_CARD") {
+                            {
+                                Text(
+                                    text = "Linked to billing cycle: Day $parsedCycleDay ($cycleRangePreview)",
+                                    modifier = Modifier.testTag("add_account_limit_cycle_link")
+                                )
+                            }
+                        } else {
+                            null
+                        },
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                         singleLine = true,
                         shape = RoundedCornerShape(16.dp),
@@ -2863,58 +2904,46 @@ fun AddAccountDialog(
                             .testTag("add_account_spend_limit_input")
                     )
 
-                    if (accountType == "CREDIT_CARD" || spendLimitText.isNotBlank()) {
+                    if (accountType == "CREDIT_CARD") {
                         Column(
-                            modifier = Modifier.fillMaxWidth(),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("add_account_billing_cycle_section"),
                             verticalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
-                            Text(
-                                text = "Limit Period",
-                                style = MaterialTheme.typography.labelLarge,
-                                fontWeight = FontWeight.SemiBold,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                            Row(
+                            Surface(
+                                shape = RoundedCornerShape(14.dp),
+                                color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.65f),
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .horizontalScroll(rememberScrollState()),
-                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                    .testTag("add_account_cycle_limit_banner")
                             ) {
-                                AccountLimitPeriod.entries.forEach { period ->
-                                    val selected = selectedLimitPeriod == period
-                                    FilterChip(
-                                        selected = selected,
-                                        onClick = {
-                                            performHaptic()
-                                            selectedLimitPeriod = period
-                                            if (period == AccountLimitPeriod.CUSTOM) {
-                                                showCustomLimitRangePicker = true
-                                            }
-                                        },
-                                        leadingIcon = if (selected) {
-                                            {
-                                                Icon(
-                                                    imageVector = Icons.Default.Check,
-                                                    contentDescription = null,
-                                                    modifier = Modifier.size(14.dp)
-                                                )
-                                            }
-                                        } else {
-                                            null
-                                        },
-                                        label = {
-                                            val labelText = if (period == AccountLimitPeriod.CUSTOM && customLimitRange != null) {
-                                                "${formatExactDate(customLimitRange!!.first)} – ${formatExactDate(customLimitRange!!.second)}"
-                                            } else {
-                                                period.label
-                                            }
-                                            Text(labelText, style = MaterialTheme.typography.labelSmall)
-                                        },
-                                        shape = RoundedCornerShape(50),
-                                        modifier = Modifier.testTag("add_account_limit_period_${period.name.lowercase()}")
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Link,
+                                        contentDescription = "Billing Cycle Linked to Limit",
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                    Text(
+                                        text = "Spend limit resets monthly on Day $parsedCycleDay ($cycleRangePreview)",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = MaterialTheme.colorScheme.onSurface
                                     )
                                 }
                             }
+                            com.example.ui.components.BillingCycleCalendarGrid(
+                                selectedDay = parsedCycleDay,
+                                onSelectDay = { day ->
+                                    billingCycleDayText = day.toString()
+                                },
+                                tagPrefix = "billing_cycle_calendar"
+                            )
                         }
                     }
 
@@ -2975,44 +3004,55 @@ fun AddAccountDialog(
                                     val lnkId = if (accountType == "DEBIT_CARD") selectedLinkedBank?.id.orEmpty() else ""
                                     val lnkName = if (accountType == "DEBIT_CARD") selectedLinkedBank?.name.orEmpty() else ""
                                     val spendLimVal = spendLimitText.trim().toDoubleOrNull() ?: 0.0
-                                    val periodName = selectedLimitPeriod.name
-                                    val startMs = if (selectedLimitPeriod == AccountLimitPeriod.CUSTOM) {
-                                        customLimitRange?.first ?: 0L
+                                    val cycleDayVal = if (accountType == "CREDIT_CARD") {
+                                        (billingCycleDayText.trim().toIntOrNull() ?: 1).coerceIn(1, 31)
                                     } else {
-                                        0L
+                                        1
                                     }
-                                    val endMs = if (selectedLimitPeriod == AccountLimitPeriod.CUSTOM) {
-                                        customLimitRange?.second ?: 0L
-                                    } else {
-                                        0L
-                                    }
-                                    if (onSaveWithPeriod != null) {
-                                        onSaveWithPeriod(
-                                            displayName,
-                                            cleanBank,
-                                            accountType,
-                                            lastFour,
-                                            balVal,
-                                            credVal,
-                                            lnkId,
-                                            lnkName,
-                                            spendLimVal,
-                                            periodName,
-                                            startMs,
-                                            endMs
-                                        )
-                                    } else {
-                                        onSave(
-                                            displayName,
-                                            cleanBank,
-                                            accountType,
-                                            lastFour,
-                                            balVal,
-                                            credVal,
-                                            lnkId,
-                                            lnkName,
-                                            spendLimVal
-                                        )
+                                    when {
+                                        onSaveWithBillingCycle != null -> {
+                                            onSaveWithBillingCycle(
+                                                displayName,
+                                                cleanBank,
+                                                accountType,
+                                                lastFour,
+                                                balVal,
+                                                credVal,
+                                                lnkId,
+                                                lnkName,
+                                                spendLimVal,
+                                                cycleDayVal
+                                            )
+                                        }
+                                        onSaveWithPeriod != null -> {
+                                            onSaveWithPeriod(
+                                                displayName,
+                                                cleanBank,
+                                                accountType,
+                                                lastFour,
+                                                balVal,
+                                                credVal,
+                                                lnkId,
+                                                lnkName,
+                                                spendLimVal,
+                                                AccountLimitPeriod.MONTHLY.name,
+                                                0L,
+                                                0L
+                                            )
+                                        }
+                                        else -> {
+                                            onSave(
+                                                displayName,
+                                                cleanBank,
+                                                accountType,
+                                                lastFour,
+                                                balVal,
+                                                credVal,
+                                                lnkId,
+                                                lnkName,
+                                                spendLimVal
+                                            )
+                                        }
                                     }
                                 }
                             },
@@ -3026,19 +3066,6 @@ fun AddAccountDialog(
                 }
             }
         }
-    }
-
-    if (showCustomLimitRangePicker) {
-        val nowMs = System.currentTimeMillis()
-        CustomDateRangePickerModal(
-            initialStartMillis = customLimitRange?.first ?: (nowMs - 30L * 86_400_000L),
-            initialEndMillis = customLimitRange?.second ?: nowMs,
-            onDismiss = { showCustomLimitRangePicker = false },
-            onApplyRange = { startMs, endMs ->
-                customLimitRange = startMs to endMs
-                selectedLimitPeriod = AccountLimitPeriod.CUSTOM
-            }
-        )
     }
 }
 
@@ -3060,12 +3087,26 @@ fun FirstTimeSmsSyncScreen(
     onSelectPeriodOption: (SmsSyncPeriodOption) -> Unit = {},
     onSelectCustomDateRange: (Long, Long) -> Unit = { _, _ -> }
 ) {
+    val context = LocalContext.current
     val dimens = LocalAppDimens.current
     val density = LocalDensity.current
     val performHaptic = rememberAppHapticPerformer()
     val hasStartedOrFinished = syncState.isSyncing || syncState.isCompleted
     var topControlsHeightPx by remember { mutableIntStateOf(0) }
     var showCustomRangePicker by remember { mutableStateOf(false) }
+    var backPressBlockedWarning by remember { mutableStateOf(false) }
+    val initialIgnoringBatteryOpt = remember(context) {
+        runCatching {
+            val pm = context.getSystemService(android.content.Context.POWER_SERVICE) as? android.os.PowerManager
+            pm?.isIgnoringBatteryOptimizations(context.packageName) == true
+        }.getOrDefault(false)
+    }
+    var backgroundSyncAllowed by remember { mutableStateOf(initialIgnoringBatteryOpt) }
+
+    androidx.activity.compose.BackHandler(enabled = syncState.isSyncing) {
+        performHaptic()
+        backPressBlockedWarning = true
+    }
 
     if (showCustomRangePicker) {
         CustomDateRangePickerModal(
@@ -3339,7 +3380,21 @@ fun FirstTimeSmsSyncScreen(
                                             fontWeight = FontWeight.Bold
                                         )
                                     }
-                                    val pct = (syncState.progressFraction * 100f).roundToInt().coerceIn(0, 100)
+                                    val isRobolectric = remember { Build.FINGERPRINT.equals("robolectric", ignoreCase = true) }
+                                    val animatedProgress by animateFloatAsState(
+                                        targetValue = syncState.progressFraction.coerceIn(0f, 1f),
+                                        animationSpec = spring(
+                                            dampingRatio = Spring.DampingRatioNoBouncy,
+                                            stiffness = Spring.StiffnessLow
+                                        ),
+                                        label = "sms_sync_smooth_progress_fraction"
+                                    )
+                                    val displayFraction = if (isRobolectric) {
+                                        syncState.progressFraction.coerceIn(0f, 1f)
+                                    } else {
+                                        animatedProgress
+                                    }
+                                    val pct = (displayFraction * 100f).roundToInt().coerceIn(0, 100)
                                     Text(
                                         text = "$pct%",
                                         style = MaterialTheme.typography.titleMedium.copy(fontFamily = ReceiptMonoFontFamily),
@@ -3349,8 +3404,17 @@ fun FirstTimeSmsSyncScreen(
                                     )
                                 }
 
+                                val isRobolectricBar = remember { Build.FINGERPRINT.equals("robolectric", ignoreCase = true) }
+                                val smoothBarProgress by animateFloatAsState(
+                                    targetValue = syncState.progressFraction.coerceIn(0f, 1f),
+                                    animationSpec = spring(
+                                        dampingRatio = Spring.DampingRatioNoBouncy,
+                                        stiffness = Spring.StiffnessLow
+                                    ),
+                                    label = "sms_sync_smooth_progress_bar"
+                                )
                                 LinearProgressIndicator(
-                                    progress = { syncState.progressFraction },
+                                    progress = { if (isRobolectricBar) syncState.progressFraction else smoothBarProgress },
                                     color = MaterialTheme.colorScheme.primary,
                                     trackColor = MaterialTheme.colorScheme.surfaceContainerHighest,
                                     modifier = Modifier
@@ -3440,6 +3504,105 @@ fun FirstTimeSmsSyncScreen(
                                         }
                                     }
                                 }
+                            }
+                        }
+                    }
+
+                    // Stay-in-App / Allow Background Sync Guidance Notice
+                    if (!syncState.isCompleted) {
+                        Surface(
+                            shape = RoundedCornerShape(18.dp),
+                            color = if (backPressBlockedWarning) {
+                                MaterialTheme.colorScheme.errorContainer
+                            } else {
+                                MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.72f)
+                            },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("sms_sync_stay_open_notice")
+                        ) {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 14.dp, vertical = 10.dp),
+                                verticalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                        modifier = Modifier.weight(1f)
+                                    ) {
+                                        Icon(
+                                            imageVector = if (backgroundSyncAllowed) Icons.Default.Check else Icons.Default.Sync,
+                                            contentDescription = "Sync Background Guidance",
+                                            tint = if (backPressBlockedWarning) {
+                                                MaterialTheme.colorScheme.onErrorContainer
+                                            } else {
+                                                MaterialTheme.colorScheme.primary
+                                            },
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                        Text(
+                                            text = if (backPressBlockedWarning) {
+                                                "Do Not Go Back or Minimize While Scanning"
+                                            } else if (backgroundSyncAllowed) {
+                                                "Background Sync Enabled • Keep App Active"
+                                            } else {
+                                                "Please Do Not Go Back or Minimize"
+                                            },
+                                            style = MaterialTheme.typography.labelLarge,
+                                            fontWeight = FontWeight.Bold,
+                                            color = if (backPressBlockedWarning) {
+                                                MaterialTheme.colorScheme.onErrorContainer
+                                            } else {
+                                                MaterialTheme.colorScheme.onSecondaryContainer
+                                            }
+                                        )
+                                    }
+                                    FilterChip(
+                                        selected = backgroundSyncAllowed,
+                                        onClick = {
+                                            performHaptic()
+                                            backgroundSyncAllowed = true
+                                            backPressBlockedWarning = false
+                                            runCatching {
+                                                val intent = android.content.Intent(
+                                                    android.provider.Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS
+                                                ).apply {
+                                                    addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                                                }
+                                                context.startActivity(intent)
+                                            }
+                                        },
+                                        label = {
+                                            Text(
+                                                text = if (backgroundSyncAllowed) "Background Allowed" else "Allow Background",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                        },
+                                        shape = RoundedCornerShape(50),
+                                        modifier = Modifier.testTag("sms_sync_allow_background_button")
+                                    )
+                                }
+                                Text(
+                                    text = if (backgroundSyncAllowed) {
+                                        "Background sync permission requested. If your device restricts background apps, please stay on this screen and do not go back or minimize until scanning finishes."
+                                    } else {
+                                        "Allow OneFamily to run in the background, or stay on this screen and do not press Back or minimize while SMS scanning is in progress."
+                                    },
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = if (backPressBlockedWarning) {
+                                        MaterialTheme.colorScheme.onErrorContainer
+                                    } else {
+                                        MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.88f)
+                                    }
+                                )
                             }
                         }
                     }
@@ -3560,7 +3723,7 @@ private fun TransactionReadingAnimationCard(
         targetValue = deterministicTargetPhase,
         animationSpec = spring(
             dampingRatio = Spring.DampingRatioNoBouncy,
-            stiffness = Spring.StiffnessMediumLow
+            stiffness = Spring.StiffnessLow
         ),
         label = "sms_scan_beam_deterministic_phase"
     )
@@ -3568,14 +3731,14 @@ private fun TransactionReadingAnimationCard(
     val animatedScanPhase = if (!isRobolectric && !syncState.isCompleted) {
         val infiniteTransition = rememberInfiniteTransition(label = "sms_downward_scanner_transition")
         val sweepingDownPhase by infiniteTransition.animateFloat(
-            initialValue = 0.06f,
-            targetValue = 0.94f,
+            initialValue = 0.08f,
+            targetValue = 0.92f,
             animationSpec = infiniteRepeatable(
                 animation = tween(
-                    durationMillis = if (syncState.isSyncing) 1450 else 2100,
-                    easing = LinearEasing
+                    durationMillis = if (syncState.isSyncing) 3800 else 4800,
+                    easing = androidx.compose.animation.core.FastOutSlowInEasing
                 ),
-                repeatMode = RepeatMode.Restart
+                repeatMode = RepeatMode.Reverse
             ),
             label = "sms_downward_laser_phase"
         )

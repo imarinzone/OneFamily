@@ -89,9 +89,8 @@ abstract class BankParser {
 
         val expenseKeywords = listOf(
             "debited", "spent", "paid", "withdrawn", "sent", "charged",
-            "purchase", "billed", "deducted", "used at", "transferred to",
-            "dr ", "dr.", "debit", "autopay", "auto-debit", "emi ", "trf to",
-            "payment of", "txn of", "transaction of", "towards"
+            "purchase", "deducted", "used at", "transferred to",
+            "dr ", "dr.", "trf to"
         )
         val incomeKeywords = listOf(
             "credited", "received", "deposited", "refund", "cashback",
@@ -275,37 +274,78 @@ abstract class BankParser {
     }
 
     protected open fun isTransactionMessage(message: String): Boolean {
-        val lowerMessage = message.lowercase()
+        if (isMandateOrBillReminderOrNonTransaction(message)) {
+            return false
+        }
 
-        // Only reject true OTP/verification messages, NOT bank debit alerts that end with "Do not share OTP"
-        val pureOtpPatterns = listOf(
+        // Strip "ignore if already paid" / "if already paid" before checking transaction indicators
+        val cleanedLower = message.lowercase()
+            .replace("ignore if already paid", "")
+            .replace("ignore if paid", "")
+            .replace("if already paid", "")
+
+        val transactionIndicators = listOf(
+            "debited", "credited", "spent", "paid", "withdrawn",
+            "received", "deposited", "sent",
+            "purchase", "refund", "deducted", "transferred", "trf to",
+            "charged", "used at", "cashback"
+        )
+        return transactionIndicators.any { cleanedLower.contains(it) }
+    }
+
+    companion object {
+        private val PURE_OTP_PATTERNS = listOf(
             Regex("""\botp\s+(?:is|for|to)\b"""),
             Regex("""\bis\s+your\s+(?:otp|one\s+time\s+password|verification\s+code)\b"""),
             Regex("""\b(?:one\s+time\s+password|verification\s+code|auth\s+code)\s+(?:is|for)\b"""),
             Regex("""\buse\s+otp\b""")
         )
-        if (pureOtpPatterns.any { it.containsMatchIn(lowerMessage) }) {
-            return false
-        }
 
-        // Ignore collect requests, failed transactions, and statement due reminders (unless actual debit/credit occurred)
-        val nonTransactionPhrases = listOf(
+        private val MANDATE_AND_PREDEBIT_PHRASES = listOf(
+            "mandate", "e-mandate", "emandate", "umn:", "umn ",
+            "nach ", "e-nach", "enach", "standing instruction",
+            "si registration", "si created", "autopay setup",
+            "autopay registered", "autopay registration", "autopay created",
+            "autopay active", "autopay cancelled", "autopay revoked",
+            "auto-debit setup", "auto-debit registered", "auto debit setup",
+            "pre-debit", "pre debit", "will be debited", "shall be debited",
+            "scheduled for debit", "going to be debited", "upcoming debit",
+            "upcoming autopay", "upcoming emi", "approve mandate",
+            "create mandate", "modify mandate", "revoke mandate",
+            "recurring payment setup", "recurring mandate"
+        )
+
+        private val BILL_REMINDER_AND_NON_TXN_PHRASES = listOf(
             "requested money", "collect request", "has requested",
-            "bill is generated", "statement is ready", "minimum amount due",
-            "total amount due", "is due on", "will be debited on",
-            "failed", "declined", "could not be processed", "was unsuccessful"
+            "bill is generated", "bill generated", "statement is ready",
+            "statement is generated", "statement generated", "statement for",
+            "stmt for", "e-statement", "estatement",
+            "minimum amount due", "min amount due", "min amt due", "min due",
+            "minimum due", "total amount due", "total amt due", "total due",
+            "bill is due", "bill due", "payment due", "payment is due",
+            "amount due", "amt due", "is due on", "due on ", "due date",
+            "due by ", "pay by ", "pay before", "payable by",
+            "bill of rs", "bill for rs", "reminder", "kindly pay",
+            "please pay", "to avoid late", "late payment",
+            "ignore if already paid", "ignore if paid",
+            "ensure sufficient balance", "maintain sufficient balance",
+            "emi due", "overdue", "failed", "declined",
+            "could not be processed", "was unsuccessful"
         )
-        if (nonTransactionPhrases.any { lowerMessage.contains(it) }) {
+
+        fun isMandateOrBillReminderOrNonTransaction(message: String): Boolean {
+            val lowerMessage = message.lowercase()
+            if (PURE_OTP_PATTERNS.any { it.containsMatchIn(lowerMessage) }) {
+                return true
+            }
+            if (MANDATE_AND_PREDEBIT_PHRASES.any { lowerMessage.contains(it) }) {
+                return true
+            }
+            if (BILL_REMINDER_AND_NON_TXN_PHRASES.any { lowerMessage.contains(it) }) {
+                return true
+            }
             return false
         }
-
-        val transactionIndicators = listOf(
-            "debited", "credited", "spent", "paid", "withdrawn",
-            "received", "deposited", "sent", "txn", "transaction",
-            "purchase", "refund", "deducted", "transferred", "trf to",
-            "autopay", "charged", "billed"
-        )
-        return transactionIndicators.any { lowerMessage.contains(it) }
     }
 
     protected open fun detectIsCard(message: String): Boolean {

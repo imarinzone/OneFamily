@@ -136,11 +136,36 @@ fun attemptAutoSignIn(
     scope: CoroutineScope
 ) {
     LocalAccountSessionManager.ensureInitialized(context)
-    val firebaseUser = runCatching { Firebase.auth.currentUser }.getOrNull()
-    if (firebaseUser != null || LocalAccountSessionManager.getCurrentUser(context) != null) {
+    val localUser = LocalAccountSessionManager.getCurrentUser(context)
+    if (localUser != null) {
+        LocalAccountSessionManager.prepareUserLoginAfterAuth(context, localUser.uid, localUser.email)
         onAuthSuccess()
         return
     }
+
+    val firebaseUser = runCatching { Firebase.auth.currentUser }.getOrNull()
+    if (firebaseUser != null) {
+        scope.launch {
+            val reloadResult = runCatching { firebaseUser.reload().await() }
+            val refreshedUser = runCatching { Firebase.auth.currentUser }.getOrNull()
+            if (reloadResult.isFailure && refreshedUser == null) {
+                runCatching { credentialManager.clearCredentialState(ClearCredentialStateRequest()) }
+                runCatching { Firebase.auth.signOut() }
+                onUnauthenticated()
+            } else if (refreshedUser != null) {
+                LocalAccountSessionManager.prepareUserLoginAfterAuth(
+                    context = context,
+                    uid = refreshedUser.uid,
+                    email = refreshedUser.email.orEmpty()
+                )
+                onAuthSuccess()
+            } else {
+                onUnauthenticated()
+            }
+        }
+        return
+    }
+
     val clientId = resolveDefaultWebClientId(context)
     if (clientId == null) {
         onUnauthenticated()
@@ -166,6 +191,14 @@ fun attemptAutoSignIn(
                 val googleIdToken = GoogleIdTokenCredential.createFrom(credential.data).idToken
                 val authCredential = GoogleAuthProvider.getCredential(googleIdToken, null)
                 Firebase.auth.signInWithCredential(authCredential).await()
+                val signedIn = runCatching { Firebase.auth.currentUser }.getOrNull()
+                if (signedIn != null) {
+                    LocalAccountSessionManager.prepareUserLoginAfterAuth(
+                        context = context,
+                        uid = signedIn.uid,
+                        email = signedIn.email.orEmpty()
+                    )
+                }
                 onAuthSuccess()
             } else {
                 onUnauthenticated()
@@ -191,20 +224,42 @@ fun onGoogleSignInClicked(
     }
 
     val signInOption = GetSignInWithGoogleOption.Builder(serverClientId = clientId).build()
-    val request = GetCredentialRequest.Builder()
+    val primaryRequest = GetCredentialRequest.Builder()
         .addCredentialOption(signInOption)
         .build()
 
     scope.launch {
         try {
             val activityContext = context.findActivity() ?: context
-            val result = credentialManager.getCredential(activityContext, request)
+            val result = try {
+                credentialManager.getCredential(activityContext, primaryRequest)
+            } catch (primaryErr: Exception) {
+                if (primaryErr is GetCredentialCancellationException) throw primaryErr
+                runCatching { credentialManager.clearCredentialState(ClearCredentialStateRequest()) }
+                val fallbackGoogleIdOption = GetGoogleIdOption.Builder()
+                    .setFilterByAuthorizedAccounts(false)
+                    .setServerClientId(clientId)
+                    .setAutoSelectEnabled(false)
+                    .build()
+                val fallbackRequest = GetCredentialRequest.Builder()
+                    .addCredentialOption(fallbackGoogleIdOption)
+                    .build()
+                credentialManager.getCredential(activityContext, fallbackRequest)
+            }
             val credential = result.credential
             if (credential is CustomCredential && credential.type == TYPE_GOOGLE_ID_TOKEN_CREDENTIAL) {
                 val googleIdToken = GoogleIdTokenCredential.createFrom(credential.data).idToken
                 val authCredential = GoogleAuthProvider.getCredential(googleIdToken, null)
                 LocalAccountSessionManager.signOut(context)
                 Firebase.auth.signInWithCredential(authCredential).await()
+                val signedIn = runCatching { Firebase.auth.currentUser }.getOrNull()
+                if (signedIn != null) {
+                    LocalAccountSessionManager.prepareUserLoginAfterAuth(
+                        context = context,
+                        uid = signedIn.uid,
+                        email = signedIn.email.orEmpty()
+                    )
+                }
                 onAuthSuccess()
             } else {
                 onAuthError("Unexpected credential type returned.")
@@ -213,7 +268,7 @@ fun onGoogleSignInClicked(
             val msg = e.message.orEmpty()
             Log.w(TAG, "Google Sign-In cancelled or dismissed: $msg", e)
             if (msg.contains("28444") || msg.contains("Developer console", ignoreCase = true) || msg.contains("10:")) {
-                onAuthError("Google Sign-In failed ($msg). Use Login as Mock User above.")
+                onAuthError("Google Sign-In failed ($msg). You can also sign in with your email/username above.")
             } else {
                 onAuthCancelled()
             }

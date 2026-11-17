@@ -58,6 +58,7 @@ object LocalAccountSessionManager {
     private const val KEY_HAPTIC_FEEDBACK_ENABLED = "haptic_feedback_enabled"
     private const val KEY_HIDDEN_VIRTUAL_ACCOUNTS = "hidden_virtual_accounts_json"
     private const val KEY_UNTRACKED_VIRTUAL_ACCOUNTS = "untracked_virtual_accounts_json"
+    private const val KEY_DELETED_RESET_KEYS = "deleted_account_reset_keys_json"
 
     const val DEFAULT_TEST_USERNAME = "test"
     const val DEFAULT_TEST_PASSWORD = "pass"
@@ -348,8 +349,18 @@ object LocalAccountSessionManager {
 
     fun setFcmPushSettings(context: Context, settings: FcmPushSettings) {
         ensureInitialized(context)
+        val dailyH = settings.dailySummaryHour.coerceIn(0, 23)
+        val dailyM = settings.dailySummaryMinute.coerceIn(0, 59)
         val clamped = settings.copy(
-            creditCardAlertThresholdPercent = settings.creditCardAlertThresholdPercent.coerceIn(1, 100)
+            creditCardAlertThresholdPercent = settings.creditCardAlertThresholdPercent.coerceIn(1, 100),
+            dailySummaryHour = dailyH,
+            dailySummaryMinute = dailyM,
+            weeklySummaryHour = settings.weeklySummaryHour.coerceIn(0, 23),
+            weeklySummaryMinute = settings.weeklySummaryMinute.coerceIn(0, 59),
+            monthlySummaryHour = settings.monthlySummaryHour.coerceIn(0, 23),
+            monthlySummaryMinute = settings.monthlySummaryMinute.coerceIn(0, 59),
+            summaryNotificationHour = dailyH,
+            summaryNotificationMinute = dailyM
         )
         _fcmPushSettings.value = clamped
         val obj = JSONObject().apply {
@@ -359,9 +370,23 @@ object LocalAccountSessionManager {
             put("budgetThresholdAlertsEnabled", clamped.budgetThresholdAlertsEnabled)
             put("creditCardLimitAlertsEnabled", clamped.creditCardLimitAlertsEnabled)
             put("creditCardAlertThresholdPercent", clamped.creditCardAlertThresholdPercent)
+            put("dailySummaryEnabled", clamped.dailySummaryEnabled)
+            put("weeklySummaryEnabled", clamped.weeklySummaryEnabled)
+            put("monthlySummaryEnabled", clamped.monthlySummaryEnabled)
+            put("dailySummaryHour", clamped.dailySummaryHour)
+            put("dailySummaryMinute", clamped.dailySummaryMinute)
+            put("weeklySummaryHour", clamped.weeklySummaryHour)
+            put("weeklySummaryMinute", clamped.weeklySummaryMinute)
+            put("monthlySummaryHour", clamped.monthlySummaryHour)
+            put("monthlySummaryMinute", clamped.monthlySummaryMinute)
+            put("summaryNotificationHour", clamped.summaryNotificationHour)
+            put("summaryNotificationMinute", clamped.summaryNotificationMinute)
             put("subscribedTopic", clamped.subscribedTopic)
         }
         prefs(context).edit().putString(KEY_FCM_SETTINGS, obj.toString()).apply()
+        runCatching {
+            com.example.data.sms.SpendSummaryAlarmScheduler.scheduleNextSummaryAlarms(context.applicationContext)
+        }
     }
 
     fun updateFcmPushSettings(context: Context, newSettings: FcmPushSettings) {
@@ -462,6 +487,10 @@ object LocalAccountSessionManager {
         if (raw.isNullOrBlank()) return FcmPushSettings()
         return runCatching {
             val o = JSONObject(raw)
+            val legacyHour = o.optInt("summaryNotificationHour", 20).coerceIn(0, 23)
+            val legacyMinute = o.optInt("summaryNotificationMinute", 0).coerceIn(0, 59)
+            val dailyHour = o.optInt("dailySummaryHour", legacyHour).coerceIn(0, 23)
+            val dailyMinute = o.optInt("dailySummaryMinute", legacyMinute).coerceIn(0, 59)
             FcmPushSettings(
                 expenseAlertsEnabled = o.optBoolean("expenseAlertsEnabled", true),
                 incomeAlertsEnabled = o.optBoolean("incomeAlertsEnabled", true),
@@ -469,6 +498,29 @@ object LocalAccountSessionManager {
                 budgetThresholdAlertsEnabled = o.optBoolean("budgetThresholdAlertsEnabled", true),
                 creditCardLimitAlertsEnabled = o.optBoolean("creditCardLimitAlertsEnabled", true),
                 creditCardAlertThresholdPercent = o.optInt("creditCardAlertThresholdPercent", 80).coerceIn(1, 100),
+                dailySummaryEnabled = o.optBoolean("dailySummaryEnabled", true),
+                weeklySummaryEnabled = o.optBoolean("weeklySummaryEnabled", true),
+                monthlySummaryEnabled = o.optBoolean("monthlySummaryEnabled", true),
+                dailySummaryHour = dailyHour,
+                dailySummaryMinute = dailyMinute,
+                weeklySummaryHour = o.optInt(
+                    "weeklySummaryHour",
+                    if (o.has("summaryNotificationHour")) legacyHour else 10
+                ).coerceIn(0, 23),
+                weeklySummaryMinute = o.optInt(
+                    "weeklySummaryMinute",
+                    if (o.has("summaryNotificationMinute")) legacyMinute else 0
+                ).coerceIn(0, 59),
+                monthlySummaryHour = o.optInt(
+                    "monthlySummaryHour",
+                    if (o.has("summaryNotificationHour")) legacyHour else 9
+                ).coerceIn(0, 23),
+                monthlySummaryMinute = o.optInt(
+                    "monthlySummaryMinute",
+                    if (o.has("summaryNotificationMinute")) legacyMinute else 0
+                ).coerceIn(0, 59),
+                summaryNotificationHour = dailyHour,
+                summaryNotificationMinute = dailyMinute,
                 subscribedTopic = o.optString("subscribedTopic", "household_shared")
             )
         }.getOrDefault(FcmPushSettings())
@@ -559,6 +611,17 @@ object LocalAccountSessionManager {
         return _activeUser.value
     }
 
+    fun buildCleanLocalUid(rawUsername: String): String {
+        val normalized = rawUsername.trim().lowercase()
+        if (normalized == DEFAULT_TEST_USERNAME) return DEFAULT_TEST_UID
+        val sanitized = normalized
+            .replace(Regex("[^a-z0-9_\\-]"), "_")
+            .replace(Regex("_+"), "_")
+            .trim('_')
+            .ifBlank { "user" }
+        return "local_user_$sanitized"
+    }
+
     fun hasCompletedInitialSmsSync(context: Context, userId: String): Boolean {
         if (userId.isBlank()) return false
         ensureInitialized(context)
@@ -569,6 +632,45 @@ object LocalAccountSessionManager {
         if (userId.isBlank()) return
         ensureInitialized(context)
         prefs(context).edit().putBoolean("initial_sms_sync_done_$userId", completed).apply()
+    }
+
+    /**
+     * Checks whether [uid] or [email] was previously deleted by the user. If so, consumes the
+     * deletion marker, wipes any residual local state, and resets `initial_sms_sync_done_$uid`
+     * to `false` so re-logging in is treated as a brand-new account creation.
+     */
+    fun prepareUserLoginAfterAuth(
+        context: Context,
+        uid: String,
+        email: String = ""
+    ): Boolean {
+        if (uid.isBlank()) return false
+        ensureInitialized(context)
+        val p = prefs(context)
+        val deletedKeys = decodeStringSet(p.getString(KEY_DELETED_RESET_KEYS, null)).toMutableSet()
+        val cleanEmail = email.trim().lowercase()
+        val legacyLocalUid = if (cleanEmail.isNotBlank()) "local_user_$cleanEmail" else ""
+        val cleanLocalUid = if (cleanEmail.isNotBlank()) buildCleanLocalUid(cleanEmail) else ""
+
+        val wasDeleted = uid in deletedKeys ||
+            (cleanEmail.isNotBlank() && cleanEmail in deletedKeys) ||
+            (legacyLocalUid.isNotBlank() && legacyLocalUid in deletedKeys) ||
+            (cleanLocalUid.isNotBlank() && cleanLocalUid in deletedKeys)
+
+        if (wasDeleted) {
+            deletedKeys.remove(uid)
+            if (cleanEmail.isNotBlank()) deletedKeys.remove(cleanEmail)
+            if (legacyLocalUid.isNotBlank()) deletedKeys.remove(legacyLocalUid)
+            if (cleanLocalUid.isNotBlank()) deletedKeys.remove(cleanLocalUid)
+            saveStringSet(context, KEY_DELETED_RESET_KEYS, deletedKeys)
+
+            LocalAccountDataStore.deleteAllUserData(uid, cleanEmail)
+            p.edit()
+                .putBoolean("initial_sms_sync_done_$uid", false)
+                .apply()
+            return true
+        }
+        return false
     }
 
     fun signInWithUsernamePassword(
@@ -587,24 +689,76 @@ object LocalAccountSessionManager {
         val prefs = prefs(context)
         val accountsObj = getCredentialsMap(prefs)
         val record = accountsObj.optJSONObject(username)
-            ?: return Result.failure(
+
+        // If the account was deleted earlier or does not exist yet (e.g., relogin after account deletion),
+        // treat sign-in as a fresh account creation automatically.
+        val deletedKeys = decodeStringSet(prefs.getString(KEY_DELETED_RESET_KEYS, null))
+        val cleanUidCandidate = buildCleanLocalUid(username)
+        val wasDeletedAccount = username != DEFAULT_TEST_USERNAME && (
+            username in deletedKeys ||
+                cleanUidCandidate in deletedKeys ||
+                "local_user_$username" in deletedKeys
+            )
+
+        if (record == null || wasDeletedAccount) {
+            if (username != DEFAULT_TEST_USERNAME) {
+                val inferredName = username.substringBefore("@")
+                    .replace(Regex("[._\\-]+"), " ")
+                    .trim()
+                    .split(" ")
+                    .filter { it.isNotBlank() }
+                    .joinToString(" ") { part -> part.replaceFirstChar { it.uppercase() } }
+                return registerUsernamePassword(
+                    context = context,
+                    rawUsername = rawUsername,
+                    rawPassword = rawPassword,
+                    rawDisplayName = inferredName
+                )
+            }
+            return Result.failure(
                 IllegalArgumentException("Username '$username' not found. Try 'test' / 'pass' or tap Create Account.")
             )
+        }
 
         val storedPassword = record.optString("password", "")
         if (storedPassword != password) {
             return Result.failure(IllegalArgumentException("Incorrect password for '$username'."))
         }
 
-        val defaultName = if (username == DEFAULT_TEST_USERNAME) "Mock User" else username.replaceFirstChar { it.uppercase() }
+        val defaultName = if (username == DEFAULT_TEST_USERNAME) {
+            "Mock User"
+        } else {
+            username.substringBefore("@").replaceFirstChar { it.uppercase() }
+        }
         val storedName = record.optString("displayName", defaultName)
         val finalDisplayName = if (username == DEFAULT_TEST_USERNAME && (storedName == "Test User" || storedName.isBlank())) "Mock User" else storedName
+        val resolvedUid = if (username == DEFAULT_TEST_USERNAME) {
+            DEFAULT_TEST_UID
+        } else {
+            val rawStoredUid = record.optString("uid", "").trim()
+            if (rawStoredUid.isBlank() || rawStoredUid.contains("@") || rawStoredUid.contains(".")) {
+                cleanUidCandidate
+            } else {
+                rawStoredUid
+            }
+        }
+        val resolvedEmail = record.optString("email", "").takeIf { it.isNotBlank() }
+            ?: if (username.contains("@")) username else "$username@onefamily.local"
+
+        if (record.optString("uid") != resolvedUid || record.optString("email") != resolvedEmail) {
+            record.put("uid", resolvedUid)
+            record.put("email", resolvedEmail)
+            accountsObj.put(username, record)
+            prefs.edit().putString(KEY_CREDENTIALS_MAP, accountsObj.toString()).apply()
+        }
+
         val user = LocalAuthUser(
-            uid = record.optString("uid", "local_user_$username"),
+            uid = resolvedUid,
             username = username,
             displayName = finalDisplayName,
-            email = record.optString("email", "$username@onefamily.local")
+            email = resolvedEmail
         )
+        prepareUserLoginAfterAuth(context, user.uid, user.email)
         setActiveUser(prefs, user)
         LocalAccountDataStore.ensureDefaultDataForUser(context, user)
         return Result.success(user)
@@ -629,11 +783,39 @@ object LocalAccountSessionManager {
 
         val prefs = prefs(context)
         val accountsObj = getCredentialsMap(prefs)
-        val uid = if (username == DEFAULT_TEST_USERNAME) DEFAULT_TEST_UID else "local_user_$username"
+        val uid = buildCleanLocalUid(username)
         val displayName = rawDisplayName.trim().ifBlank {
-            if (username == DEFAULT_TEST_USERNAME) "Mock User" else username.replaceFirstChar { it.uppercase() }
+            if (username == DEFAULT_TEST_USERNAME) {
+                "Mock User"
+            } else {
+                username.substringBefore("@")
+                    .replace(Regex("[._\\-]+"), " ")
+                    .trim()
+                    .replaceFirstChar { it.uppercase() }
+                    .ifBlank { username.replaceFirstChar { it.uppercase() } }
+            }
         }
-        val email = "$username@onefamily.local"
+        val email = if (username.contains("@")) username else "$username@onefamily.local"
+
+        // If this is a non-test user registering (or re-registering after deleting their account),
+        // guarantee a clean slate with initial SMS sync reset to false.
+        if (username != DEFAULT_TEST_USERNAME) {
+            val deletedKeys = decodeStringSet(prefs.getString(KEY_DELETED_RESET_KEYS, null)).toMutableSet()
+            deletedKeys.remove(uid)
+            deletedKeys.remove("local_user_$username")
+            deletedKeys.remove(username)
+            deletedKeys.remove(email)
+            saveStringSet(context, KEY_DELETED_RESET_KEYS, deletedKeys)
+
+            LocalAccountDataStore.deleteAllUserData(uid, email)
+            if ("local_user_$username" != uid) {
+                LocalAccountDataStore.deleteAllUserData("local_user_$username", email)
+            }
+            prefs.edit()
+                .putBoolean("initial_sms_sync_done_$uid", false)
+                .remove("initial_sms_sync_done_local_user_$username")
+                .apply()
+        }
 
         val record = JSONObject().apply {
             put("uid", uid)
@@ -680,32 +862,69 @@ object LocalAccountSessionManager {
         }
     }
 
-    fun deleteLocalUserAccount(context: Context, uid: String) {
+    fun deleteLocalUserAccount(context: Context, uid: String, email: String = "") {
         ensureInitialized(context)
         val p = prefs(context)
+        val cleanEmail = email.trim().lowercase()
+            .ifBlank { _activeUser.value?.takeIf { it.uid == uid }?.email?.trim()?.lowercase().orEmpty() }
         val accountsObj = getCredentialsMap(p)
         val keysToRemove = mutableListOf<String>()
+        val relatedUids = mutableSetOf(uid)
+        if (cleanEmail.isNotBlank()) {
+            relatedUids.add("local_user_$cleanEmail")
+            relatedUids.add(buildCleanLocalUid(cleanEmail))
+        }
+
         val iter = accountsObj.keys()
         while (iter.hasNext()) {
             val key = iter.next()
+            if (key == DEFAULT_TEST_USERNAME) continue
             val rec = accountsObj.optJSONObject(key)
-            if (rec?.optString("uid") == uid && key != DEFAULT_TEST_USERNAME) {
+            val recUid = rec?.optString("uid").orEmpty()
+            val recEmail = rec?.optString("email").orEmpty().trim().lowercase()
+            if (recUid in relatedUids ||
+                key.equals(cleanEmail, ignoreCase = true) ||
+                (cleanEmail.isNotBlank() && recEmail == cleanEmail) ||
+                key.equals(uid.removePrefix("local_user_"), ignoreCase = true)
+            ) {
                 keysToRemove.add(key)
+                if (recUid.isNotBlank()) relatedUids.add(recUid)
             }
         }
         keysToRemove.forEach { accountsObj.remove(it) }
+
+        val deletedKeys = decodeStringSet(p.getString(KEY_DELETED_RESET_KEYS, null)).toMutableSet()
+        deletedKeys.addAll(relatedUids.filter { it.isNotBlank() && it != DEFAULT_TEST_UID })
+        if (cleanEmail.isNotBlank()) deletedKeys.add(cleanEmail)
+        keysToRemove.forEach { deletedKeys.add(it.lowercase()) }
+        saveStringSet(context, KEY_DELETED_RESET_KEYS, deletedKeys)
+
         val editor = p.edit()
             .putString(KEY_CREDENTIALS_MAP, accountsObj.toString())
-            .remove("initial_sms_sync_done_$uid")
-        if (_activeUser.value?.uid == uid) {
+        relatedUids.forEach { rUid ->
+            if (rUid.isNotBlank()) {
+                editor.remove("initial_sms_sync_done_$rUid")
+            }
+        }
+        if (cleanEmail.isNotBlank()) {
+            editor.remove("initial_sms_sync_done_$cleanEmail")
+        }
+
+        if (_activeUser.value == null || _activeUser.value?.uid in relatedUids) {
             _activeUser.value = null
             _customCategories.value = emptyList()
             _customCategoryEmojis.value = emptyMap()
+            _hiddenVirtualAccountIds.value = emptySet()
+            _untrackedVirtualAccountIds.value = emptySet()
             editor.remove(KEY_ACTIVE_USER)
                 .remove(KEY_CUSTOM_CATEGORIES)
                 .remove(KEY_CUSTOM_CATEGORY_EMOJIS)
+                .remove(KEY_HIDDEN_VIRTUAL_ACCOUNTS)
+                .remove(KEY_UNTRACKED_VIRTUAL_ACCOUNTS)
         }
         editor.apply()
+
+        LocalAccountDataStore.deleteAllUserData(uid, cleanEmail)
     }
 
     private fun seedBuiltInTestAccount(prefs: SharedPreferences) {
@@ -804,7 +1023,8 @@ object LocalAccountDataStore {
             val cleanedSmsMap = rawSmsMap.filterValues { rec ->
                 rec.body.isNotBlank() &&
                     !rec.sender.equals("Cash", ignoreCase = true) &&
-                    !com.example.data.sms.SmsInboxReader.isSyntheticAutoParsedText(rec.body)
+                    !com.example.data.sms.SmsInboxReader.isSyntheticAutoParsedText(rec.body) &&
+                    !com.ritesh.parser.core.bank.BankParser.isMandateOrBillReminderOrNonTransaction(rec.body)
             }
             smsRawMapFlow.value = cleanedSmsMap
             if (cleanedSmsMap.size != rawSmsMap.size) {
@@ -914,9 +1134,23 @@ object LocalAccountDataStore {
         val seenSlidingBodyTimestamps = mutableMapOf<String, MutableList<Long>>()
 
         // Synthetic mock entries are preserved only for the demo Test User; real users never get synthetic entries
-        val cleaned = sanitizedList.filter {
-            it.userId == LocalAccountSessionManager.DEFAULT_TEST_UID ||
-                (!it.id.startsWith("mock_tx_") && !it.id.startsWith("demo_"))
+        // Also filter out any SMS-backed entry whose raw SMS body is a mandate, bill reminder, or non-Cashiro SMS
+        val cleaned = sanitizedList.filter { tx ->
+            if (tx.userId == LocalAccountSessionManager.DEFAULT_TEST_UID) {
+                true
+            } else if (tx.id.startsWith("mock_tx_") || tx.id.startsWith("demo_")) {
+                false
+            } else if (tx.smsSignature.isNotBlank() || tx.id.startsWith("sms_")) {
+                val rawBody = com.example.data.sms.SmsInboxReader.extractRawSmsBodyFromNotes(tx.notes)
+                    .ifBlank { getSmsRecordBySignature(tx.smsSignature.ifBlank { tx.id })?.body.orEmpty() }
+                if (rawBody.isNotBlank()) {
+                    !com.ritesh.parser.core.bank.BankParser.isMandateOrBillReminderOrNonTransaction(rawSmsBodyForCheck(rawBody))
+                } else {
+                    true
+                }
+            } else {
+                true
+            }
         }
 
         // Pre-seed all linkedSmsSignatures from kept primary transactions so linked duplicates never resurface
@@ -955,6 +1189,8 @@ object LocalAccountDataStore {
         }
         return result
     }
+
+    private fun rawSmsBodyForCheck(raw: String): String = raw.trim()
 
     fun cacheSmsMessage(
         signature: String,
@@ -2091,6 +2327,7 @@ object LocalAccountDataStore {
         linkedBankAccountId: String? = null,
         linkedBankAccountName: String? = null,
         monthlySpendLimit: Double? = null,
+        billingCycleDay: Int? = null,
         spendLimitPeriod: String? = null,
         spendLimitStartMillis: Long? = null,
         spendLimitEndMillis: Long? = null,
@@ -2116,6 +2353,7 @@ object LocalAccountDataStore {
         val resolvedPeriod = com.example.data.model.AccountLimitPeriod.fromRaw(
             spendLimitPeriod ?: existing?.spendLimitPeriod
         ).name
+        val resolvedCycleDay = (billingCycleDay ?: existing?.billingCycleDay ?: 1).coerceIn(1, 31)
 
         val acc = FinancialAccount(
             id = docKey,
@@ -2129,6 +2367,7 @@ object LocalAccountDataStore {
             linkedBankAccountId = (linkedBankAccountId ?: existing?.linkedBankAccountId ?: "").trim().take(128),
             linkedBankAccountName = (linkedBankAccountName ?: existing?.linkedBankAccountName ?: "").trim().take(100),
             monthlySpendLimit = (monthlySpendLimit ?: existing?.monthlySpendLimit ?: 0.0).coerceAtLeast(0.0),
+            billingCycleDay = resolvedCycleDay,
             spendLimitPeriod = resolvedPeriod,
             spendLimitStartMillis = (spendLimitStartMillis ?: existing?.spendLimitStartMillis ?: 0L).coerceAtLeast(0L),
             spendLimitEndMillis = (spendLimitEndMillis ?: existing?.spendLimitEndMillis ?: 0L).coerceAtLeast(0L),
@@ -2150,6 +2389,7 @@ object LocalAccountDataStore {
         account: FinancialAccount,
         monthlySpendLimit: Double,
         alertThresholdPercent: Int = 80,
+        billingCycleDay: Int = account.billingCycleDay,
         spendLimitPeriod: String = account.spendLimitPeriod,
         spendLimitStartMillis: Long = account.spendLimitStartMillis,
         spendLimitEndMillis: Long = account.spendLimitEndMillis
@@ -2157,12 +2397,14 @@ object LocalAccountDataStore {
         val existing = accountsFlow.value.firstOrNull { it.id == account.id }
         val sanitizedLimit = monthlySpendLimit.coerceAtLeast(0.0)
         val sanitizedThreshold = alertThresholdPercent.toLong().coerceIn(1L, 100L)
+        val sanitizedCycleDay = billingCycleDay.coerceIn(1, 31)
         val normalizedPeriod = com.example.data.model.AccountLimitPeriod.fromRaw(spendLimitPeriod).name
         val cleanStart = spendLimitStartMillis.coerceAtLeast(0L)
         val cleanEnd = spendLimitEndMillis.coerceAtLeast(0L)
         if (existing != null) {
             val updatedAccount = existing.copy(
                 monthlySpendLimit = sanitizedLimit,
+                billingCycleDay = sanitizedCycleDay,
                 spendLimitPeriod = normalizedPeriod,
                 spendLimitStartMillis = cleanStart,
                 spendLimitEndMillis = cleanEnd,
@@ -2185,6 +2427,7 @@ object LocalAccountDataStore {
                 linkedBankAccountId = account.linkedBankAccountId,
                 linkedBankAccountName = account.linkedBankAccountName,
                 monthlySpendLimit = sanitizedLimit,
+                billingCycleDay = sanitizedCycleDay,
                 spendLimitPeriod = normalizedPeriod,
                 spendLimitStartMillis = cleanStart,
                 spendLimitEndMillis = cleanEnd,
@@ -2219,6 +2462,7 @@ object LocalAccountDataStore {
                 linkedBankAccountId = account.linkedBankAccountId,
                 linkedBankAccountName = account.linkedBankAccountName,
                 monthlySpendLimit = account.monthlySpendLimit,
+                billingCycleDay = account.billingCycleDay,
                 spendLimitPeriod = account.spendLimitPeriod,
                 spendLimitStartMillis = account.spendLimitStartMillis,
                 spendLimitEndMillis = account.spendLimitEndMillis,
@@ -2237,36 +2481,48 @@ object LocalAccountDataStore {
     }
 
     /**
-     * Permanently hard-deletes all local records owned by [uid] (profile, personal & authored shared
-     * expenses, budgets, accounts, cached SMS signatures, and sole-member households, or removes
-     * [uid] from multi-member households).
+     * Permanently hard-deletes all local records owned by [uid] or matching [email] (profile,
+     * personal & authored shared expenses, budgets, accounts, cached SMS signatures, and sole-member
+     * households, or removes [uid] from multi-member households).
      */
-    fun deleteAllUserData(uid: String) = synchronized(storeLock) {
-        if (uid.isBlank()) return@synchronized
+    fun deleteAllUserData(uid: String, email: String = "") = synchronized(storeLock) {
+        if (uid.isBlank() && email.isBlank()) return@synchronized
+        val cleanEmail = email.trim().lowercase()
+        val targetUids = buildSet {
+            if (uid.isNotBlank()) add(uid)
+            if (cleanEmail.isNotBlank()) {
+                add("local_user_$cleanEmail")
+                add(LocalAccountSessionManager.buildCleanLocalUid(cleanEmail))
+                profilesFlow.value.values
+                    .filter { it.email.equals(cleanEmail, ignoreCase = true) }
+                    .forEach { add(it.uid) }
+            }
+        }.filter { it != LocalAccountSessionManager.DEFAULT_TEST_UID }.toSet()
+        if (targetUids.isEmpty()) return@synchronized
 
         // 1. Collect signatures of user's deleted expenses so we purge their local SMS raw cache entries too
-        val userExpenses = expensesFlow.value.filter { it.userId == uid }
+        val userExpenses = expensesFlow.value.filter { it.userId in targetUids }
         val sigsToPurge = userExpenses.flatMap { tx ->
             listOf(tx.smsSignature, tx.smsSignature.removePrefix("sms_"), tx.id, tx.id.removePrefix("sms_")) +
                 tx.linkedSmsSignatures.flatMap { listOf(it, it.removePrefix("sms_")) }
         }.filter { it.isNotBlank() }.toSet()
 
-        // 2. Households: hard-delete sole-member households; remove uid from multi-member households
+        // 2. Households: hard-delete sole-member households; remove targetUids from multi-member households
         val hMap = householdsFlow.value.toMutableMap()
         val deletedHouseholdIds = mutableSetOf<String>()
         for ((hid, hh) in householdsFlow.value) {
-            if (uid in hh.memberUids || hh.ownerUid == uid) {
-                val remaining = hh.memberUids.filter { it.isNotBlank() && it != uid }
+            if (hh.memberUids.any { it in targetUids } || hh.ownerUid in targetUids) {
+                val remaining = hh.memberUids.filter { it.isNotBlank() && it !in targetUids }
                 if (remaining.isEmpty()) {
                     hMap.remove(hid)
                     deletedHouseholdIds.add(hid)
                 } else {
-                    val nextOwner = if (hh.ownerUid == uid) remaining.first() else hh.ownerUid
+                    val nextOwner = if (hh.ownerUid in targetUids) remaining.first() else hh.ownerUid
                     hMap[hid] = hh.copy(
                         ownerUid = nextOwner,
                         memberUids = remaining,
-                        memberNames = hh.memberNames - uid,
-                        memberEmails = hh.memberEmails - uid,
+                        memberNames = hh.memberNames.filterKeys { it !in targetUids },
+                        memberEmails = hh.memberEmails.filterKeys { it !in targetUids },
                         updatedAt = Timestamp.now()
                     )
                 }
@@ -2277,25 +2533,25 @@ object LocalAccountDataStore {
 
         // 3. Hard-delete expenses, budgets, accounts, profile, and SMS cache
         val remainingExpenses = expensesFlow.value.filterNot {
-            it.userId == uid || (it.householdId.isNotBlank() && it.householdId in deletedHouseholdIds)
+            it.userId in targetUids || (it.householdId.isNotBlank() && it.householdId in deletedHouseholdIds)
         }
         expensesFlow.value = remainingExpenses
         saveExpenses(remainingExpenses)
 
         val remainingBudgets = budgetsFlow.value.filterNot {
-            it.userId == uid || (it.householdId.isNotBlank() && it.householdId in deletedHouseholdIds)
+            it.userId in targetUids || (it.householdId.isNotBlank() && it.householdId in deletedHouseholdIds)
         }
         budgetsFlow.value = remainingBudgets
         saveBudgets(remainingBudgets)
 
-        val removedAccountIds = accountsFlow.value.filter { it.userId == uid }.map { it.id }.toSet()
+        val removedAccountIds = accountsFlow.value.filter { it.userId in targetUids }.map { it.id }.toSet()
         removedAccountIds.forEach { accountTimestampMap.remove(it) }
-        val remainingAccounts = accountsFlow.value.filterNot { it.userId == uid }
+        val remainingAccounts = accountsFlow.value.filterNot { it.userId in targetUids }
         accountsFlow.value = remainingAccounts
         saveAccounts(remainingAccounts)
 
         val pMap = profilesFlow.value.toMutableMap()
-        pMap.remove(uid)
+        targetUids.forEach { pMap.remove(it) }
         profilesFlow.value = pMap
         saveProfiles(pMap)
 
@@ -2570,6 +2826,7 @@ object LocalAccountDataStore {
                     put("linkedBankAccountId", a.linkedBankAccountId)
                     put("linkedBankAccountName", a.linkedBankAccountName)
                     put("monthlySpendLimit", a.monthlySpendLimit)
+                    put("billingCycleDay", a.billingCycleDay.coerceIn(1, 31))
                     put("spendLimitPeriod", a.spendLimitPeriod)
                     put("spendLimitStartMillis", a.spendLimitStartMillis)
                     put("spendLimitEndMillis", a.spendLimitEndMillis)
@@ -2602,6 +2859,7 @@ object LocalAccountDataStore {
                         linkedBankAccountId = o.optString("linkedBankAccountId", ""),
                         linkedBankAccountName = o.optString("linkedBankAccountName", ""),
                         monthlySpendLimit = o.optDouble("monthlySpendLimit", 0.0),
+                        billingCycleDay = o.optInt("billingCycleDay", 1).coerceIn(1, 31),
                         spendLimitPeriod = com.example.data.model.AccountLimitPeriod.fromRaw(
                             o.optString("spendLimitPeriod", "MONTHLY")
                         ).name,

@@ -14,6 +14,8 @@ import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -60,6 +62,7 @@ import androidx.compose.material.icons.filled.MarkEmailUnread
 import androidx.compose.material.icons.filled.NotificationsActive
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.PersonAdd
+import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.filled.Sync
@@ -130,8 +133,11 @@ import com.example.data.model.WallpaperColorAccent
 import com.example.data.model.WallpaperDensity
 import com.example.data.model.WallpaperPatternStyle
 import com.example.ui.components.AccountsCarouselStrip
+import com.example.ui.components.AxioMonthlySpendBarStrip
 import com.example.ui.components.CategoryBadgeGlyph
 import com.example.ui.components.CategoryDonutChart
+import com.example.ui.components.CategorySubTabItem
+import com.example.ui.components.CircularSpendBudgetRingGauge
 import com.example.ui.components.CircularTonalIconButton
 import com.example.ui.components.CustomDateRangePickerModal
 import com.example.ui.components.EditorialScreenHeader
@@ -140,6 +146,7 @@ import com.example.ui.components.ExpressiveCutoutAppearanceHeroCard
 import com.example.ui.components.FinanceWallpaperPreviewBanner
 import com.example.ui.components.M3CheckmarkSwitch
 import com.example.ui.components.MasterFeatureToggleBanner
+import com.example.ui.components.MerchantSubTabItem
 import com.example.ui.components.MonthlyBarGraph
 import com.example.ui.components.MonthlyBudgetPulseCard
 import com.example.ui.components.PerforatedSectionHeader
@@ -149,6 +156,10 @@ import com.example.ui.components.ReceiptTicketCard
 import com.example.ui.components.ScopeSwitcherBar
 import com.example.ui.components.SquircleIconBadge
 import com.example.ui.components.ThemeModeSelectorBar
+import com.example.ui.components.TransactionCategoriesSubTabContent
+import com.example.ui.components.TransactionMerchantsSubTabContent
+import com.example.ui.components.TransactionPageSubTab
+import com.example.ui.components.TransactionPageSubTabBar
 import com.example.ui.components.categoryIcon
 import com.example.ui.components.categoryWheelLongPressGesture
 import com.example.ui.components.formatCurrency
@@ -171,13 +182,264 @@ import com.example.ui.viewmodel.YearMonthPeriod
 import kotlin.math.roundToInt
 import kotlinx.coroutines.delay
 
+@Composable
+private fun buildCategorySubTabItems(uiState: OneFamilyDashboardUiState): List<CategorySubTabItem> {
+    return remember(uiState.activeExpenses, uiState.categoryProgressList) {
+        val expenseTxs = uiState.activeExpenses.filter {
+            !it.type.equals("INCOME", ignoreCase = true) &&
+                !ExpenseCategories.isIncomeCategory(it.category) &&
+                !it.isExcludedFromExpense
+        }
+        val countByCategory = expenseTxs.groupBy {
+            ExpenseCategories.normalizeCategory(it.category).lowercase()
+        }.mapValues { it.value.size }
+
+        val fromProgress = uiState.categoryProgressList
+            .filter { it.spent > 0.0 || it.limit > 0.0 }
+            .map { prog ->
+                val normKey = ExpenseCategories.normalizeCategory(prog.category).lowercase()
+                CategorySubTabItem(
+                    category = prog.category,
+                    spent = prog.spent,
+                    spendCount = countByCategory[normKey] ?: if (prog.spent > 0.0) 1 else 0,
+                    budgetLimit = prog.limit
+                )
+            }
+
+        if (fromProgress.isNotEmpty()) {
+            fromProgress.sortedByDescending { it.spent }
+        } else {
+            expenseTxs.groupBy { ExpenseCategories.normalizeCategory(it.category) }
+                .map { (cat, list) ->
+                    CategorySubTabItem(
+                        category = cat,
+                        spent = list.sumOf { it.amount },
+                        spendCount = list.size,
+                        budgetLimit = 0.0
+                    )
+                }
+                .sortedByDescending { it.spent }
+        }
+    }
+}
+
+@Composable
+private fun buildMerchantSubTabItems(uiState: OneFamilyDashboardUiState): List<MerchantSubTabItem> {
+    return remember(uiState.activeExpenses) {
+        val expenseTxs = uiState.activeExpenses.filter { !it.isExcludedFromExpense }
+        expenseTxs
+            .groupBy { it.title.trim().ifBlank { "Unknown Merchant" } }
+            .map { (merchantName, list) ->
+                MerchantSubTabItem(
+                    merchantName = merchantName,
+                    totalAmount = list.sumOf { it.amount },
+                    transactionCount = list.size,
+                    primaryCategory = list.firstOrNull()?.category ?: "Shopping"
+                )
+            }
+            .sortedByDescending { it.totalAmount }
+    }
+}
+
+@Composable
+private fun ActiveDrilldownFilterPillsRow(
+    selectedCategory: String,
+    selectedTag: String,
+    selectedMerchant: String,
+    customEmojis: Map<String, String>,
+    onClearCategory: () -> Unit,
+    onClearTag: () -> Unit,
+    onClearMerchant: () -> Unit,
+    categoryPillTag: String = "active_category_filter_pill",
+    tagPillTag: String = "active_tag_filter_pill",
+    merchantPillTag: String = "active_merchant_filter_pill"
+) {
+    val performHaptic = rememberAppHapticPerformer()
+    if (selectedCategory == "All" && selectedTag == "All" && selectedMerchant == "All") return
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .horizontalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        if (selectedCategory != "All") {
+            val catAccent = categoryAccentColor(selectedCategory)
+            Surface(
+                shape = RoundedCornerShape(50),
+                color = catAccent.copy(alpha = 0.16f),
+                modifier = Modifier
+                    .clip(RoundedCornerShape(50))
+                    .clickable {
+                        performHaptic()
+                        onClearCategory()
+                    }
+                    .testTag(categoryPillTag)
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 7.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    CategoryBadgeGlyph(
+                        category = selectedCategory,
+                        tint = catAccent,
+                        iconSize = 16.dp,
+                        customEmoji = customEmojis[selectedCategory.trim().lowercase()]
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = selectedCategory,
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.Bold,
+                        color = catAccent
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Icon(
+                        imageVector = Icons.Default.Close,
+                        contentDescription = "Clear Category Filter",
+                        tint = catAccent,
+                        modifier = Modifier.size(16.dp)
+                    )
+                }
+            }
+        }
+
+        if (selectedTag != "All") {
+            val cleanTag = selectedTag.trim().removePrefix("#")
+            Surface(
+                shape = RoundedCornerShape(50),
+                color = Color(0xFF8AB4F8).copy(alpha = 0.22f),
+                modifier = Modifier
+                    .clip(RoundedCornerShape(50))
+                    .clickable {
+                        performHaptic()
+                        onClearTag()
+                    }
+                    .testTag(tagPillTag)
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 7.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "#$cleanTag",
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFF8AB4F8)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Icon(
+                        imageVector = Icons.Default.Close,
+                        contentDescription = "Clear Tag Filter",
+                        tint = Color(0xFF8AB4F8),
+                        modifier = Modifier.size(16.dp)
+                    )
+                }
+            }
+        }
+
+        if (selectedMerchant != "All") {
+            Surface(
+                shape = RoundedCornerShape(50),
+                color = BudgetSafeGreen.copy(alpha = 0.18f),
+                modifier = Modifier
+                    .clip(RoundedCornerShape(50))
+                    .clickable {
+                        performHaptic()
+                        onClearMerchant()
+                    }
+                    .testTag(merchantPillTag)
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 7.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = selectedMerchant,
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.Bold,
+                        color = BudgetSafeGreen,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Icon(
+                        imageVector = Icons.Default.Close,
+                        contentDescription = "Clear Merchant Filter",
+                        tint = BudgetSafeGreen,
+                        modifier = Modifier.size(16.dp)
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun InlineCategoryBudgetDialog(
+    category: String,
+    currentLimit: Double,
+    currencySymbol: String,
+    onDismiss: () -> Unit,
+    onSaveLimit: (Double) -> Unit
+) {
+    var inputText by rememberSaveable(category) {
+        mutableStateOf(if (currentLimit > 0.0) currentLimit.roundToInt().toString() else "")
+    }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Budget for $category", fontWeight = FontWeight.Bold) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    text = "Set a monthly spend limit for $category ($currencySymbol).",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                OutlinedTextField(
+                    value = inputText,
+                    onValueChange = { inputText = it.filter { ch -> ch.isDigit() || ch == '.' } },
+                    label = { Text("Monthly Limit ($currencySymbol)") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(
+                        keyboardType = KeyboardType.Number,
+                        imeAction = ImeAction.Done
+                    ),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("inline_category_budget_input")
+                )
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    val parsed = inputText.toDoubleOrNull() ?: 0.0
+                    if (parsed > 0.0) {
+                        onSaveLimit(parsed)
+                    }
+                    onDismiss()
+                },
+                modifier = Modifier.testTag("inline_category_budget_save_button")
+            ) {
+                Text("Save")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel")
+            }
+        }
+    )
+}
+
 /**
  * Home Screen (`HomeTabScreen`):
  * - Oversized M3 Expressive Editorial Header with circular tonal Filter & CSV actions.
  * - Personal & Family section switcher (`ScopeSwitcherBar`) when Household mode is enabled.
  * - Serrated Thermal Paper Receipt Budget Pulse Card + M3 pill search & filter drawer.
- * - Prominent "All Transactions" navigation card to open the dedicated `AllTransactionsScreen` page,
- *   plus a compact Recent Receipts preview stack.
+ * - Transactions | Categories | Merchants sub-tabs and clickable Tag, Category, and Merchant filtering.
  */
 @Composable
 fun HomeTabScreen(
@@ -192,6 +454,7 @@ fun HomeTabScreen(
     onSelectPaymentMode: (String) -> Unit = {},
     @Suppress("UNUSED_PARAMETER") onSelectAccount: (String) -> Unit = {},
     onSelectTag: (String) -> Unit = {},
+    onSelectMerchant: (String) -> Unit = {},
     @Suppress("UNUSED_PARAMETER") onSelectMember: (String) -> Unit = {},
     onSelectSortOrder: (String) -> Unit = {},
     onClearFilters: () -> Unit = {},
@@ -206,7 +469,8 @@ fun HomeTabScreen(
     onLinkDuplicateTransaction: (ExpenseTransaction) -> Unit = {},
     onDeleteTransaction: (ExpenseTransaction) -> Unit = {},
     onUndoLastSwipeAction: () -> Unit = {},
-    onOpenAllTransactionsPage: () -> Unit = {}
+    onOpenAllTransactionsPage: () -> Unit = {},
+    onSaveCategoryBudgetInline: (String, Double) -> Unit = { _, _ -> }
 ) {
     val dimens = LocalAppDimens.current
     val currency = uiState.activeCurrencySymbol
@@ -214,6 +478,8 @@ fun HomeTabScreen(
 
     var filtersExpanded by rememberSaveable { mutableStateOf(false) }
     var showDrawerCustomRangePicker by rememberSaveable { mutableStateOf(false) }
+    var selectedSubTab by rememberSaveable { mutableStateOf(TransactionPageSubTab.TRANSACTIONS) }
+    var editingBudgetForCategory by remember { mutableStateOf<Pair<String, Double>?>(null) }
 
     val hasActiveFilter = uiState.searchQuery.isNotBlank() ||
         uiState.selectedDateRangePreset != DateRangePreset.MONTH ||
@@ -222,10 +488,13 @@ fun HomeTabScreen(
         uiState.selectedPaymentModeFilter != "All" ||
         uiState.selectedAccountFilter != "All" ||
         uiState.selectedTagFilter != "All" ||
+        uiState.selectedMerchantFilter != "All" ||
         uiState.selectedMemberFilter != "All" ||
         uiState.selectedSortOrder != "NEWEST"
 
     val customEmojis = rememberCustomCategoryEmojis()
+    val categoryItems = buildCategorySubTabItems(uiState)
+    val merchantItems = buildMerchantSubTabItems(uiState)
 
     LazyColumn(
         modifier = Modifier
@@ -382,7 +651,7 @@ fun HomeTabScreen(
             }
         }
 
-        // 5. Transactions Section Header + Inline Search, Filter & Export Controls
+        // 5. Transactions Section Header + Inline Search, Filter & Export Controls + Sub-Tabs
         item {
             Column(
                 modifier = Modifier
@@ -393,37 +662,53 @@ fun HomeTabScreen(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = dimens.horizontalPadding, vertical = 4.dp),
+                        .padding(horizontal = dimens.horizontalPadding, vertical = 2.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        modifier = Modifier.weight(1f)
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        modifier = Modifier
+                            .weight(1f)
+                            .horizontalScroll(rememberScrollState())
+                            .testTag("tx_subtab_bar")
                     ) {
-                        Text(
-                            text = if (uiState.selectedTypeFilter.equals("EXCLUDED", ignoreCase = true)) {
-                                "EXCLUDED"
-                            } else {
-                                "TRANSACTIONS"
-                            },
-                            style = MaterialTheme.typography.labelMedium,
-                            fontWeight = FontWeight.Bold,
-                            letterSpacing = 1.1.sp,
-                            color = MaterialTheme.colorScheme.primary
-                        )
-                        Surface(
-                            shape = RoundedCornerShape(50),
-                            color = MaterialTheme.colorScheme.surfaceContainerHighest
-                        ) {
-                            Text(
-                                text = "${uiState.filteredExpenses.size}",
-                                style = MaterialTheme.typography.labelSmall.copy(fontFamily = ReceiptMonoFontFamily),
-                                fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 3.dp)
-                            )
+                        TransactionPageSubTab.entries.forEach { tab ->
+                            val isSelected = selectedSubTab == tab
+                            Column(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .clickable {
+                                        performHaptic()
+                                        selectedSubTab = tab
+                                    }
+                                    .padding(horizontal = 4.dp, vertical = 2.dp)
+                                    .testTag("tx_subtab_${tab.name.lowercase()}"),
+                                horizontalAlignment = Alignment.CenterHorizontally
+                            ) {
+                                Text(
+                                    text = tab.label,
+                                    style = MaterialTheme.typography.labelLarge,
+                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                    color = if (isSelected) {
+                                        BudgetSafeGreen
+                                    } else {
+                                        MaterialTheme.colorScheme.onSurfaceVariant
+                                    },
+                                    maxLines = 1
+                                )
+                                Spacer(modifier = Modifier.height(3.dp))
+                                Box(
+                                    modifier = Modifier
+                                        .width(42.dp)
+                                        .height(2.5.dp)
+                                        .clip(RoundedCornerShape(50))
+                                        .background(
+                                            if (isSelected) BudgetSafeGreen else Color.Transparent
+                                        )
+                                )
+                            }
                         }
                     }
 
@@ -526,8 +811,13 @@ fun HomeTabScreen(
             }
         }
 
-        // 5B. Expandable M3 Search & Filter Drawer down with Transactions
-        if (uiState.selectedCategoryFilter != "All" || filtersExpanded || hasActiveFilter) {
+        // 5B. Expandable M3 Search & Filter Drawer + Active Drilldown Filter Pills
+        if (uiState.selectedCategoryFilter != "All" ||
+            uiState.selectedTagFilter != "All" ||
+            uiState.selectedMerchantFilter != "All" ||
+            filtersExpanded ||
+            hasActiveFilter
+        ) {
             item {
                 Column(
                     modifier = Modifier
@@ -537,46 +827,18 @@ fun HomeTabScreen(
                         .animateContentSize(spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessMediumLow)),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    if (uiState.selectedCategoryFilter != "All") {
-                        val catAccent = categoryAccentColor(uiState.selectedCategoryFilter)
-                        Surface(
-                            shape = RoundedCornerShape(50),
-                            color = catAccent.copy(alpha = 0.16f),
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(50))
-                                .clickable {
-                                    performHaptic()
-                                    onSelectCategory("All")
-                                }
-                                .testTag("active_category_filter_pill")
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 7.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                CategoryBadgeGlyph(
-                                    category = uiState.selectedCategoryFilter,
-                                    tint = catAccent,
-                                    iconSize = 16.dp,
-                                    customEmoji = customEmojis[uiState.selectedCategoryFilter.trim().lowercase()]
-                                )
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text(
-                                    text = uiState.selectedCategoryFilter,
-                                    style = MaterialTheme.typography.labelLarge,
-                                    fontWeight = FontWeight.Bold,
-                                    color = catAccent
-                                )
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Icon(
-                                    imageVector = Icons.Default.Close,
-                                    contentDescription = "Clear Category Filter",
-                                    tint = catAccent,
-                                    modifier = Modifier.size(16.dp)
-                                )
-                            }
-                        }
-                    }
+                    ActiveDrilldownFilterPillsRow(
+                        selectedCategory = uiState.selectedCategoryFilter,
+                        selectedTag = uiState.selectedTagFilter,
+                        selectedMerchant = uiState.selectedMerchantFilter,
+                        customEmojis = customEmojis,
+                        onClearCategory = { onSelectCategory("All") },
+                        onClearTag = { onSelectTag("All") },
+                        onClearMerchant = { onSelectMerchant("All") },
+                        categoryPillTag = "active_category_filter_pill",
+                        tagPillTag = "active_tag_filter_pill",
+                        merchantPillTag = "active_merchant_filter_pill"
+                    )
 
                     AnimatedVisibility(visible = filtersExpanded || hasActiveFilter) {
                         Card(
@@ -758,141 +1020,195 @@ fun HomeTabScreen(
             }
         }
 
-        // 6. Connected 24dp/6dp Transactions Stack (or Tactile Empty Receipt State)
-        if (uiState.filteredExpenses.isEmpty()) {
-            item {
-                Surface(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = dimens.horizontalPadding, vertical = 4.dp),
-                    shape = RoundedCornerShape(24.dp),
-                    color = MaterialTheme.colorScheme.surfaceContainerLow
-                ) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(dimens.cardPadding),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(12.dp),
-                            modifier = Modifier.weight(1f)
-                        ) {
-                            SquircleIconBadge(
-                                icon = Icons.AutoMirrored.Filled.ReceiptLong,
-                                tint = MaterialTheme.colorScheme.primary,
-                                containerColor = MaterialTheme.colorScheme.primaryContainer
-                            )
-                            Text(
-                                text = "No receipts in period",
-                                style = MaterialTheme.typography.titleSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                        }
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            if (uiState.allScopedExpenses.isNotEmpty()) {
-                                FilledTonalButton(
-                                    onClick = { onSelectDateRangePreset(DateRangePreset.ALL_TIME) },
-                                    shape = RoundedCornerShape(50),
-                                    modifier = Modifier.testTag("empty_state_all_time_button")
-                                ) {
-                                    Text("All Time")
-                                }
-                            } else {
-                                OutlinedButton(
-                                    onClick = onScanSmsClick,
-                                    shape = RoundedCornerShape(50),
-                                    modifier = Modifier.testTag("empty_state_sms_parser_button")
-                                ) {
-                                    Icon(Icons.Default.Sync, contentDescription = null, modifier = Modifier.size(16.dp))
-                                    Spacer(modifier = Modifier.width(6.dp))
-                                    Text("Sync")
-                                }
-                            }
-                            Button(
-                                onClick = onAddTransactionClick,
-                                shape = RoundedCornerShape(50),
-                                modifier = Modifier.testTag("empty_state_add_expense_button")
-                            ) {
-                                Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text("Add")
-                            }
-                        }
-                    }
-                }
-            }
-        } else {
-            val displayedHomeTransactions = if (filtersExpanded || hasActiveFilter) {
-                uiState.filteredExpenses
-            } else {
-                uiState.filteredExpenses.take(8)
-            }
-            itemsIndexed(
-                items = displayedHomeTransactions,
-                key = { _, tx -> "${tx.visibility}_${tx.id}" }
-            ) { idx, expense ->
-                Box(
-                    modifier = Modifier.padding(
-                        horizontal = dimens.horizontalPadding,
-                        vertical = 1.5.dp
-                    )
-                ) {
-                    ExpenseTransactionItemCard(
-                        expense = expense,
+        // 6. Sub-Tab Content: Categories | Merchants | Transactions
+        when (selectedSubTab) {
+            TransactionPageSubTab.CATEGORIES -> {
+                item {
+                    TransactionCategoriesSubTabContent(
+                        categories = categoryItems,
+                        totalSpent = uiState.totalMonthlySpent,
+                        monthlyBudget = uiState.activeMonthlyBudget,
                         currencySymbol = currency,
-                        canTogglePrivacy = uiState.householdFeatureEnabled && uiState.household != null,
-                        onTogglePrivacy = { onToggleTransactionPrivacy(expense) },
-                        onToggleExcludeTransaction = { onToggleExcludeTransaction(expense) },
-                        onLinkDuplicate = { onLinkDuplicateTransaction(expense) },
-                        onDelete = { onDeleteTransaction(expense) },
-                        onEditTransaction = { onEditTransaction(expense) },
-                        onQuickChangeCategory = { onQuickChangeCategory(expense) },
-                        availableCategories = uiState.availableCategories,
-                        onTagClick = { clickedTag -> onSelectTag(clickedTag) },
-                        shape = groupedCardShape(index = idx, count = displayedHomeTransactions.size),
-                        containerColor = MaterialTheme.colorScheme.surfaceContainerLow
+                        selectedCategory = uiState.selectedCategoryFilter,
+                        onCategoryClick = { clickedCat ->
+                            onSelectCategory(clickedCat)
+                            selectedSubTab = TransactionPageSubTab.TRANSACTIONS
+                        },
+                        onSetCategoryBudgetClick = { cat, curLimit ->
+                            editingBudgetForCategory = cat to curLimit
+                        },
+                        onEditMonthlyBudgetClick = onEditMonthlyBudget
                     )
                 }
             }
 
-            if (uiState.filteredExpenses.size > displayedHomeTransactions.size) {
+            TransactionPageSubTab.MERCHANTS -> {
                 item {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = dimens.horizontalPadding, vertical = 8.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        FilledTonalButton(
-                            onClick = {
-                                performHaptic()
-                                onOpenAllTransactionsPage()
-                            },
-                            shape = RoundedCornerShape(50),
+                    TransactionMerchantsSubTabContent(
+                        merchants = merchantItems,
+                        currencySymbol = currency,
+                        selectedMerchant = uiState.selectedMerchantFilter,
+                        onMerchantClick = { clickedMerchant ->
+                            onSelectMerchant(clickedMerchant)
+                            selectedSubTab = TransactionPageSubTab.TRANSACTIONS
+                        }
+                    )
+                }
+            }
+
+            TransactionPageSubTab.TRANSACTIONS -> {
+                if (uiState.filteredExpenses.isEmpty()) {
+                    item {
+                        Surface(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .testTag("view_all_transactions_footer_button")
+                                .padding(horizontal = dimens.horizontalPadding, vertical = 4.dp),
+                            shape = RoundedCornerShape(24.dp),
+                            color = MaterialTheme.colorScheme.surfaceContainerLow
                         ) {
-                            Icon(
-                                imageVector = Icons.AutoMirrored.Filled.ReceiptLong,
-                                contentDescription = null,
-                                modifier = Modifier.size(18.dp)
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(dimens.cardPadding),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    SquircleIconBadge(
+                                        icon = Icons.AutoMirrored.Filled.ReceiptLong,
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        containerColor = MaterialTheme.colorScheme.primaryContainer
+                                    )
+                                    Text(
+                                        text = "No receipts in period",
+                                        style = MaterialTheme.typography.titleSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    if (uiState.allScopedExpenses.isNotEmpty()) {
+                                        FilledTonalButton(
+                                            onClick = { onSelectDateRangePreset(DateRangePreset.ALL_TIME) },
+                                            shape = RoundedCornerShape(50),
+                                            modifier = Modifier.testTag("empty_state_all_time_button")
+                                        ) {
+                                            Text("All Time")
+                                        }
+                                    } else {
+                                        OutlinedButton(
+                                            onClick = onScanSmsClick,
+                                            shape = RoundedCornerShape(50),
+                                            modifier = Modifier.testTag("empty_state_sms_parser_button")
+                                        ) {
+                                            Icon(Icons.Default.Sync, contentDescription = null, modifier = Modifier.size(16.dp))
+                                            Spacer(modifier = Modifier.width(6.dp))
+                                            Text("Sync")
+                                        }
+                                    }
+                                    Button(
+                                        onClick = onAddTransactionClick,
+                                        shape = RoundedCornerShape(50),
+                                        modifier = Modifier.testTag("empty_state_add_expense_button")
+                                    ) {
+                                        Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Text("Add")
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    val displayedHomeTransactions = if (filtersExpanded || hasActiveFilter) {
+                        uiState.filteredExpenses
+                    } else {
+                        uiState.filteredExpenses.take(8)
+                    }
+                    itemsIndexed(
+                        items = displayedHomeTransactions,
+                        key = { _, tx -> "${tx.visibility}_${tx.id}" }
+                    ) { idx, expense ->
+                        Box(
+                            modifier = Modifier.padding(
+                                horizontal = dimens.horizontalPadding,
+                                vertical = 1.5.dp
                             )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text(
-                                text = "View All Transactions (${uiState.filteredExpenses.size})",
-                                fontWeight = FontWeight.Bold
+                        ) {
+                            ExpenseTransactionItemCard(
+                                expense = expense,
+                                currencySymbol = currency,
+                                canTogglePrivacy = uiState.householdFeatureEnabled && uiState.household != null,
+                                onTogglePrivacy = { onToggleTransactionPrivacy(expense) },
+                                onToggleExcludeTransaction = { onToggleExcludeTransaction(expense) },
+                                onLinkDuplicate = { onLinkDuplicateTransaction(expense) },
+                                onDelete = { onDeleteTransaction(expense) },
+                                onEditTransaction = { onEditTransaction(expense) },
+                                onQuickChangeCategory = { onQuickChangeCategory(expense) },
+                                availableCategories = uiState.availableCategories,
+                                onTagClick = { clickedTag -> onSelectTag(clickedTag) },
+                                onCategoryClick = { clickedCat -> onSelectCategory(clickedCat) },
+                                onMerchantClick = { clickedMerchant -> onSelectMerchant(clickedMerchant) },
+                                onTypeClick = { clickedType -> onSelectType(clickedType) },
+                                shape = groupedCardShape(index = idx, count = displayedHomeTransactions.size),
+                                containerColor = MaterialTheme.colorScheme.surfaceContainerLow
                             )
+                        }
+                    }
+
+                    if (uiState.filteredExpenses.size > displayedHomeTransactions.size) {
+                        item {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = dimens.horizontalPadding, vertical = 8.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                FilledTonalButton(
+                                    onClick = {
+                                        performHaptic()
+                                        onOpenAllTransactionsPage()
+                                    },
+                                    shape = RoundedCornerShape(50),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .testTag("view_all_transactions_footer_button")
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.AutoMirrored.Filled.ReceiptLong,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text(
+                                        text = "View All Transactions (${uiState.filteredExpenses.size})",
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                            }
                         }
                     }
                 }
             }
         }
+    }
+
+    if (editingBudgetForCategory != null) {
+        val (catName, currentLim) = editingBudgetForCategory!!
+        InlineCategoryBudgetDialog(
+            category = catName,
+            currentLimit = currentLim,
+            currencySymbol = currency,
+            onDismiss = { editingBudgetForCategory = null },
+            onSaveLimit = { newLimit ->
+                onSaveCategoryBudgetInline(catName, newLimit)
+            }
+        )
     }
 
     if (showDrawerCustomRangePicker) {
@@ -909,27 +1225,35 @@ fun HomeTabScreen(
 
 /**
  * Dedicated All Transactions Page (`AllTransactionsScreen`):
- * - Houses the full list of receipts/transactions in its own dedicated screen.
- * - Includes Back navigation, full Search & Filter controls, and an "Excluded" filter chip
- *   to inspect transactions excluded from expenses.
- * - Supports long-pressing any transaction's category icon to open the 360° Circular Scroll Wheel category editor.
+ * Matches the reference screenshots:
+ * - Header (`All transactions` + period dropdown + Accounts, Filter, Export, Add buttons).
+ * - Horizontally scrollable Monthly Spend Bar Strip (`May`, `Jun`, `Jul`, `Aug`, `Sep`, `Oct`, `Nov`).
+ * - 3 Sub-Tabs (`Transactions` | `Categories` | `Merchants`) with glowing green indicator.
+ * - `Transactions` sub-tab: Circular Spend/Budget Ring Gauge + clickable `Income | Budget` columns + clickable `#Tag`, Category, Merchant, and Direction badges on every transaction.
+ * - `Categories` sub-tab: Multi-Segment Donut Chart + clickable percentage legend + `Spends | Budget` summary + Category Cards with `"N Spends"` and `"Set budget >"` / `"of ₹X >"`.
+ * - `Merchants` sub-tab: Merchant Cards with green storefront icon, Merchant Name, `"N Spends"`, and total spend.
  */
 @Composable
 fun AllTransactionsScreen(
     uiState: OneFamilyDashboardUiState,
     onBackClick: () -> Unit = {},
     onScopeSelected: (BudgetScope) -> Unit = {},
+    onSelectPeriod: (YearMonthPeriod?) -> Unit = {},
     onSelectDateRangePreset: (DateRangePreset) -> Unit = {},
     onSelectCustomDateRange: (Long, Long) -> Unit = { _, _ -> },
     onSearchQueryChange: (String) -> Unit = {},
     onSelectType: (String) -> Unit = {},
     onSelectCategory: (String) -> Unit = {},
     onSelectPaymentMode: (String) -> Unit = {},
+    onSelectAccount: (String) -> Unit = {},
     onSelectTag: (String) -> Unit = {},
+    onSelectMerchant: (String) -> Unit = {},
     onSelectSortOrder: (String) -> Unit = {},
     onClearFilters: () -> Unit = {},
     onExportCsvClick: () -> Unit = {},
     onAddTransactionClick: () -> Unit = {},
+    onEditMonthlyBudget: () -> Unit = {},
+    onSaveCategoryBudgetInline: (String, Double) -> Unit = { _, _ -> },
     onEditTransaction: (ExpenseTransaction) -> Unit = {},
     onQuickChangeCategory: (ExpenseTransaction) -> Unit = {},
     onToggleTransactionPrivacy: (ExpenseTransaction) -> Unit = {},
@@ -943,7 +1267,10 @@ fun AllTransactionsScreen(
     val performHaptic = rememberAppHapticPerformer()
 
     var filtersExpanded by rememberSaveable { mutableStateOf(false) }
+    var monthStripVisible by rememberSaveable { mutableStateOf(true) }
     var showCustomRangePicker by rememberSaveable { mutableStateOf(false) }
+    var selectedSubTab by rememberSaveable { mutableStateOf(TransactionPageSubTab.TRANSACTIONS) }
+    var editingBudgetForCategory by remember { mutableStateOf<Pair<String, Double>?>(null) }
 
     val hasActiveFilter = uiState.searchQuery.isNotBlank() ||
         uiState.selectedDateRangePreset != DateRangePreset.MONTH ||
@@ -952,8 +1279,13 @@ fun AllTransactionsScreen(
         uiState.selectedPaymentModeFilter != "All" ||
         uiState.selectedAccountFilter != "All" ||
         uiState.selectedTagFilter != "All" ||
+        uiState.selectedMerchantFilter != "All" ||
         uiState.selectedMemberFilter != "All" ||
         uiState.selectedSortOrder != "NEWEST"
+
+    val customEmojis = rememberCustomCategoryEmojis()
+    val categoryItems = buildCategorySubTabItems(uiState)
+    val merchantItems = buildMerchantSubTabItems(uiState)
 
     LazyColumn(
         modifier = Modifier
@@ -962,31 +1294,64 @@ fun AllTransactionsScreen(
         contentPadding = PaddingValues(top = 6.dp, bottom = 88.dp),
         verticalArrangement = Arrangement.spacedBy(0.dp)
     ) {
-        // 0. Editorial Header with Back Button + Actions
+        // 0. Header with Back Button + "All transactions" + Period Dropdown + Action Icons
         item {
             Column(modifier = Modifier.fillMaxWidth()) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = dimens.horizontalPadding, vertical = 4.dp),
+                        .padding(horizontal = dimens.horizontalPadding, vertical = 6.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
-                    FilledTonalButton(
-                        onClick = {
-                            performHaptic()
-                            onBackClick()
-                        },
-                        shape = RoundedCornerShape(50),
-                        modifier = Modifier.testTag("all_transactions_back_button")
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.weight(1f)
                     ) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                        CircularTonalIconButton(
+                            icon = Icons.AutoMirrored.Filled.ArrowBack,
                             contentDescription = "Back",
-                            modifier = Modifier.size(18.dp)
+                            onClick = {
+                                performHaptic()
+                                onBackClick()
+                            },
+                            modifier = Modifier.testTag("all_transactions_back_button")
                         )
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text("Back", fontWeight = FontWeight.Bold)
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Column(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(10.dp))
+                                .clickable {
+                                    performHaptic()
+                                    monthStripVisible = !monthStripVisible
+                                }
+                                .padding(horizontal = 4.dp, vertical = 2.dp)
+                                .testTag("all_transactions_period_dropdown_button")
+                        ) {
+                            Text(
+                                text = "All transactions",
+                                style = MaterialTheme.typography.titleLarge,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    text = uiState.periodLabel,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                Icon(
+                                    imageVector = if (monthStripVisible) {
+                                        Icons.Default.ExpandLess
+                                    } else {
+                                        Icons.Default.ExpandMore
+                                    },
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            }
+                        }
                     }
 
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -1021,10 +1386,19 @@ fun AllTransactionsScreen(
                     }
                 }
 
-                EditorialScreenHeader(
-                    title = "All Transactions",
-                    countPillText = "${uiState.filteredExpenses.size} receipts",
-                    subtitle = uiState.periodLabel,
+                // 0B. Horizontally Scrollable Monthly Spend Bar Strip (Screenshot 1)
+                AnimatedVisibility(visible = monthStripVisible && uiState.monthlyTrendBars.isNotEmpty()) {
+                    AxioMonthlySpendBarStrip(
+                        bars = uiState.monthlyTrendBars,
+                        currencySymbol = currency,
+                        onSelectMonth = { onSelectPeriod(it) }
+                    )
+                }
+
+                // 0C. 3 Sub-Tabs: Transactions | Categories | Merchants
+                TransactionPageSubTabBar(
+                    selectedTab = selectedSubTab,
+                    onSelectTab = { selectedSubTab = it },
                     modifier = Modifier.padding(bottom = 6.dp)
                 )
             }
@@ -1044,7 +1418,7 @@ fun AllTransactionsScreen(
             }
         }
 
-        // 2. Always-Visible Type Filter Strip (All, Expenses, Income, Excluded) + Search Bar
+        // 2. Always-Visible Type Filter Strip + Search Bar + Active Drilldown Filter Pills
         item {
             Column(
                 modifier = Modifier
@@ -1112,47 +1486,19 @@ fun AllTransactionsScreen(
                     }
                 }
 
-                // Active Category Filter Pill
-                if (uiState.selectedCategoryFilter != "All") {
-                    val catAccent = categoryAccentColor(uiState.selectedCategoryFilter)
-                    Surface(
-                        shape = RoundedCornerShape(50),
-                        color = catAccent.copy(alpha = 0.16f),
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(50))
-                            .clickable {
-                                performHaptic()
-                                onSelectCategory("All")
-                            }
-                            .testTag("all_tx_active_category_pill")
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 7.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Icon(
-                                imageVector = categoryIcon(uiState.selectedCategoryFilter),
-                                contentDescription = null,
-                                tint = catAccent,
-                                modifier = Modifier.size(16.dp)
-                            )
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text(
-                                text = uiState.selectedCategoryFilter,
-                                style = MaterialTheme.typography.labelLarge,
-                                fontWeight = FontWeight.Bold,
-                                color = catAccent
-                            )
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Icon(
-                                imageVector = Icons.Default.Close,
-                                contentDescription = "Clear Category Filter",
-                                tint = catAccent,
-                                modifier = Modifier.size(16.dp)
-                            )
-                        }
-                    }
-                }
+                // Active Category / Tag / Merchant Filter Pills
+                ActiveDrilldownFilterPillsRow(
+                    selectedCategory = uiState.selectedCategoryFilter,
+                    selectedTag = uiState.selectedTagFilter,
+                    selectedMerchant = uiState.selectedMerchantFilter,
+                    customEmojis = customEmojis,
+                    onClearCategory = { onSelectCategory("All") },
+                    onClearTag = { onSelectTag("All") },
+                    onClearMerchant = { onSelectMerchant("All") },
+                    categoryPillTag = "all_tx_active_category_pill",
+                    tagPillTag = "all_tx_active_tag_pill",
+                    merchantPillTag = "all_tx_active_merchant_pill"
+                )
 
                 AnimatedVisibility(visible = filtersExpanded) {
                     Card(
@@ -1305,84 +1651,164 @@ fun AllTransactionsScreen(
             }
         }
 
-        // 4. Full Filtered Transactions Stack
-        item {
-            PerforatedSectionHeader(
-                title = if (uiState.selectedTypeFilter.equals("EXCLUDED", ignoreCase = true)) {
-                    "Excluded Transactions"
-                } else {
-                    "Receipts Ledger"
-                },
-                countBadge = "${uiState.filteredExpenses.size}",
-                modifier = Modifier.padding(bottom = 4.dp)
-            )
-        }
+        // 4. Sub-Tab Content: Transactions | Categories | Merchants
+        when (selectedSubTab) {
+            TransactionPageSubTab.CATEGORIES -> {
+                item {
+                    TransactionCategoriesSubTabContent(
+                        categories = categoryItems,
+                        totalSpent = uiState.totalMonthlySpent,
+                        monthlyBudget = uiState.activeMonthlyBudget,
+                        currencySymbol = currency,
+                        selectedCategory = uiState.selectedCategoryFilter,
+                        onCategoryClick = { clickedCat ->
+                            onSelectCategory(clickedCat)
+                            selectedSubTab = TransactionPageSubTab.TRANSACTIONS
+                        },
+                        onSetCategoryBudgetClick = { cat, curLimit ->
+                            editingBudgetForCategory = cat to curLimit
+                        },
+                        onEditMonthlyBudgetClick = onEditMonthlyBudget
+                    )
+                }
+            }
 
-        if (uiState.filteredExpenses.isEmpty()) {
-            item {
-                Surface(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = dimens.horizontalPadding, vertical = 6.dp),
-                    shape = RoundedCornerShape(24.dp),
-                    color = MaterialTheme.colorScheme.surfaceContainerLow
-                ) {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(20.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        Text(
-                            text = if (uiState.selectedTypeFilter.equals("EXCLUDED", ignoreCase = true)) {
-                                "No excluded transactions in ${uiState.periodLabel}"
+            TransactionPageSubTab.MERCHANTS -> {
+                item {
+                    TransactionMerchantsSubTabContent(
+                        merchants = merchantItems,
+                        currencySymbol = currency,
+                        selectedMerchant = uiState.selectedMerchantFilter,
+                        onMerchantClick = { clickedMerchant ->
+                            onSelectMerchant(clickedMerchant)
+                            selectedSubTab = TransactionPageSubTab.TRANSACTIONS
+                        }
+                    )
+                }
+            }
+
+            TransactionPageSubTab.TRANSACTIONS -> {
+                // Circular Spend / Budget Ring Gauge + Clickable Income | Budget Summary
+                item {
+                    CircularSpendBudgetRingGauge(
+                        totalSpent = uiState.totalMonthlySpent,
+                        totalIncome = uiState.totalMonthlyIncome,
+                        monthlyBudget = uiState.activeMonthlyBudget,
+                        currencySymbol = currency,
+                        selectedTypeFilter = uiState.selectedTypeFilter,
+                        onSpendRingClick = {
+                            if (uiState.selectedTypeFilter.equals("EXPENSE", ignoreCase = true)) {
+                                onSelectType("All")
                             } else {
-                                "No matching transactions in ${uiState.periodLabel}"
-                            },
-                            style = MaterialTheme.typography.titleSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        if (hasActiveFilter) {
-                            FilledTonalButton(
-                                onClick = onClearFilters,
-                                shape = RoundedCornerShape(50)
-                            ) {
-                                Text("Reset Filters")
+                                onSelectType("EXPENSE")
                             }
+                        },
+                        onIncomeClick = {
+                            if (uiState.selectedTypeFilter.equals("INCOME", ignoreCase = true)) {
+                                onSelectType("All")
+                            } else {
+                                onSelectType("INCOME")
+                            }
+                        },
+                        onBudgetClick = onEditMonthlyBudget
+                    )
+                }
+
+                item {
+                    PerforatedSectionHeader(
+                        title = if (uiState.selectedTypeFilter.equals("EXCLUDED", ignoreCase = true)) {
+                            "Excluded Transactions"
+                        } else {
+                            "Receipts Ledger"
+                        },
+                        countBadge = "${uiState.filteredExpenses.size}",
+                        modifier = Modifier.padding(bottom = 4.dp)
+                    )
+                }
+
+                if (uiState.filteredExpenses.isEmpty()) {
+                    item {
+                        Surface(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = dimens.horizontalPadding, vertical = 6.dp),
+                            shape = RoundedCornerShape(24.dp),
+                            color = MaterialTheme.colorScheme.surfaceContainerLow
+                        ) {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(20.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Text(
+                                    text = if (uiState.selectedTypeFilter.equals("EXCLUDED", ignoreCase = true)) {
+                                        "No excluded transactions in ${uiState.periodLabel}"
+                                    } else {
+                                        "No matching transactions in ${uiState.periodLabel}"
+                                    },
+                                    style = MaterialTheme.typography.titleSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                if (hasActiveFilter) {
+                                    FilledTonalButton(
+                                        onClick = onClearFilters,
+                                        shape = RoundedCornerShape(50)
+                                    ) {
+                                        Text("Reset Filters")
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    itemsIndexed(
+                        items = uiState.filteredExpenses,
+                        key = { _, tx -> "all_page_${tx.visibility}_${tx.id}" }
+                    ) { idx, expense ->
+                        Box(
+                            modifier = Modifier.padding(
+                                horizontal = dimens.horizontalPadding,
+                                vertical = 1.5.dp
+                            )
+                        ) {
+                            ExpenseTransactionItemCard(
+                                expense = expense,
+                                currencySymbol = currency,
+                                canTogglePrivacy = uiState.householdFeatureEnabled && uiState.household != null,
+                                onTogglePrivacy = { onToggleTransactionPrivacy(expense) },
+                                onToggleExcludeTransaction = { onToggleExcludeTransaction(expense) },
+                                onLinkDuplicate = { onLinkDuplicateTransaction(expense) },
+                                onDelete = { onDeleteTransaction(expense) },
+                                onEditTransaction = { onEditTransaction(expense) },
+                                onQuickChangeCategory = { onQuickChangeCategory(expense) },
+                                availableCategories = uiState.availableCategories,
+                                onTagClick = { clickedTag -> onSelectTag(clickedTag) },
+                                onCategoryClick = { clickedCat -> onSelectCategory(clickedCat) },
+                                onMerchantClick = { clickedMerchant -> onSelectMerchant(clickedMerchant) },
+                                onTypeClick = { clickedType -> onSelectType(clickedType) },
+                                shape = groupedCardShape(index = idx, count = uiState.filteredExpenses.size),
+                                containerColor = MaterialTheme.colorScheme.surfaceContainerLow
+                            )
                         }
                     }
                 }
             }
-        } else {
-            itemsIndexed(
-                items = uiState.filteredExpenses,
-                key = { _, tx -> "all_page_${tx.visibility}_${tx.id}" }
-            ) { idx, expense ->
-                Box(
-                    modifier = Modifier.padding(
-                        horizontal = dimens.horizontalPadding,
-                        vertical = 1.5.dp
-                    )
-                ) {
-                    ExpenseTransactionItemCard(
-                        expense = expense,
-                        currencySymbol = currency,
-                        canTogglePrivacy = uiState.householdFeatureEnabled && uiState.household != null,
-                        onTogglePrivacy = { onToggleTransactionPrivacy(expense) },
-                        onToggleExcludeTransaction = { onToggleExcludeTransaction(expense) },
-                        onLinkDuplicate = { onLinkDuplicateTransaction(expense) },
-                        onDelete = { onDeleteTransaction(expense) },
-                        onEditTransaction = { onEditTransaction(expense) },
-                        onQuickChangeCategory = { onQuickChangeCategory(expense) },
-                        availableCategories = uiState.availableCategories,
-                        onTagClick = { clickedTag -> onSelectTag(clickedTag) },
-                        shape = groupedCardShape(index = idx, count = uiState.filteredExpenses.size),
-                        containerColor = MaterialTheme.colorScheme.surfaceContainerLow
-                    )
-                }
-            }
         }
+    }
+
+    if (editingBudgetForCategory != null) {
+        val (catName, currentLim) = editingBudgetForCategory!!
+        InlineCategoryBudgetDialog(
+            category = catName,
+            currentLimit = currentLim,
+            currencySymbol = currency,
+            onDismiss = { editingBudgetForCategory = null },
+            onSaveLimit = { newLimit ->
+                onSaveCategoryBudgetInline(catName, newLimit)
+            }
+        )
     }
 
     if (showCustomRangePicker) {
@@ -3964,7 +4390,7 @@ fun HouseholdTabScreen(
             }
         }
 
-        // 4. Account, Currency, SMS, CSV & Diagnostics Connected 6-Card Stack
+        // 4. Account, Currency, Notifications, SMS, CSV & Diagnostics Connected 7-Card Stack
         item {
             PerforatedSectionHeader(
                 title = "Account & Data",
@@ -4192,58 +4618,14 @@ fun HouseholdTabScreen(
             }
         }
 
-        // Account Stack Card 3 of 7: Financial Accounts
-        item {
-            Card(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = dimens.horizontalPadding, vertical = 1.5.dp),
-                shape = groupedCardShape(index = 2, count = 7),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
-                elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
-            ) {
-                Column(
-                    modifier = Modifier.padding(dimens.cardPadding),
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        SquircleIconBadge(
-                            icon = Icons.Outlined.AccountBalance,
-                            tint = MaterialTheme.colorScheme.tertiary,
-                            containerColor = MaterialTheme.colorScheme.tertiaryContainer
-                        )
-                        Spacer(modifier = Modifier.width(12.dp))
-                        Column {
-                            Text(
-                                text = "Accounts",
-                                style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.Bold
-                            )
-                            Text(
-                                text = "Bank accounts, debit & credit cards & wallets",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                    }
-
-                    AccountsCarouselStrip(
-                        accounts = uiState.accounts,
-                        currencySymbol = currency,
-                        onAddAccountClick = onAddAccountClick
-                    )
-                }
-            }
-        }
-
-        // Account Stack Card 4 of 7: Notifications (Toggleable Sub-Categories)
+        // Account Stack Card 3 of 7: Notifications (Toggleable Sub-Categories & Per-Category Timings)
         item {
             Card(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = dimens.horizontalPadding, vertical = 1.5.dp)
                     .testTag("notification_preferences_card"),
-                shape = groupedCardShape(index = 3, count = 7),
+                shape = groupedCardShape(index = 2, count = 7),
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
                 elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
             ) {
@@ -4283,65 +4665,242 @@ fun HouseholdTabScreen(
 
                     NotificationSubCategory.entries.forEach { subCategory ->
                         val isEnabled = fcmPushSettings.isSubCategoryEnabled(subCategory)
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(14.dp))
-                                .clickable {
-                                    performHaptic()
-                                    LocalAccountSessionManager.updateFcmPushSettings(
-                                        context = context,
-                                        newSettings = fcmPushSettings.withSubCategoryEnabled(subCategory, !isEnabled)
+                        val subTag = subCategory.name.lowercase()
+                        Column(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(14.dp))
+                                    .clickable {
+                                        performHaptic()
+                                        LocalAccountSessionManager.updateFcmPushSettings(
+                                            context = context,
+                                            newSettings = fcmPushSettings.withSubCategoryEnabled(subCategory, !isEnabled)
+                                        )
+                                    }
+                                    .padding(horizontal = 4.dp, vertical = 4.dp)
+                                    .testTag("notif_subcategory_row_$subTag"),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Column(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .padding(end = 8.dp),
+                                    verticalArrangement = Arrangement.spacedBy(1.dp)
+                                ) {
+                                    Text(
+                                        text = subCategory.shortName,
+                                        style = MaterialTheme.typography.titleSmall,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = MaterialTheme.colorScheme.onSurface
+                                    )
+                                    Text(
+                                        text = subCategory.description,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
                                 }
-                                .padding(horizontal = 4.dp, vertical = 4.dp)
-                                .testTag("notif_subcategory_row_${subCategory.name.lowercase()}"),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Column(
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .padding(end = 8.dp),
-                                verticalArrangement = Arrangement.spacedBy(1.dp)
-                            ) {
-                                Text(
-                                    text = subCategory.shortName,
-                                    style = MaterialTheme.typography.titleSmall,
-                                    fontWeight = FontWeight.SemiBold,
-                                    color = MaterialTheme.colorScheme.onSurface
-                                )
-                                Text(
-                                    text = subCategory.description,
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                M3CheckmarkSwitch(
+                                    checked = isEnabled,
+                                    onCheckedChange = { checked ->
+                                        performHaptic()
+                                        LocalAccountSessionManager.updateFcmPushSettings(
+                                            context = context,
+                                            newSettings = fcmPushSettings.withSubCategoryEnabled(subCategory, checked)
+                                        )
+                                    },
+                                    modifier = Modifier.testTag("notif_subcategory_switch_$subTag")
                                 )
                             }
-                            M3CheckmarkSwitch(
-                                checked = isEnabled,
-                                onCheckedChange = { checked ->
-                                    performHaptic()
-                                    LocalAccountSessionManager.updateFcmPushSettings(
-                                        context = context,
-                                        newSettings = fcmPushSettings.withSubCategoryEnabled(subCategory, checked)
-                                    )
-                                },
-                                modifier = Modifier.testTag("notif_subcategory_switch_${subCategory.name.lowercase()}")
-                            )
+
+                            if (subCategory.isSpendSummaryCategory()) {
+                                val (curHour, curMinute) = fcmPushSettings.getSummaryTime(subCategory)
+                                var showCustomCategoryTimeEditor by rememberSaveable(subCategory.name) { mutableStateOf(false) }
+                                var customHourInput by remember(subCategory, curHour) {
+                                    mutableStateOf(curHour.toString())
+                                }
+                                var customMinuteInput by remember(subCategory, curMinute) {
+                                    mutableStateOf(String.format(java.util.Locale.US, "%02d", curMinute))
+                                }
+
+                                Surface(
+                                    shape = RoundedCornerShape(16.dp),
+                                    color = MaterialTheme.colorScheme.surfaceContainer,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(start = 6.dp, end = 4.dp, bottom = 4.dp)
+                                        .testTag("notif_category_timing_panel_$subTag")
+                                ) {
+                                    Column(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(horizontal = 12.dp, vertical = 10.dp),
+                                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.Schedule,
+                                                contentDescription = "Scheduled notification time",
+                                                tint = MaterialTheme.colorScheme.primary,
+                                                modifier = Modifier.size(16.dp)
+                                            )
+                                            Text(
+                                                text = "Scheduled Time:",
+                                                style = MaterialTheme.typography.labelMedium,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                            Surface(
+                                                shape = RoundedCornerShape(50),
+                                                color = MaterialTheme.colorScheme.primaryContainer
+                                            ) {
+                                                Text(
+                                                    text = fcmPushSettings.formatSummaryTime(subCategory),
+                                                    style = MaterialTheme.typography.labelSmall.copy(
+                                                        fontFamily = ReceiptMonoFontFamily
+                                                    ),
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                                    modifier = Modifier
+                                                        .padding(horizontal = 8.dp, vertical = 3.dp)
+                                                        .testTag("notif_category_time_value_$subTag")
+                                                )
+                                            }
+                                        }
+
+                                        @OptIn(ExperimentalLayoutApi::class)
+                                        FlowRow(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                            verticalArrangement = Arrangement.spacedBy(4.dp)
+                                        ) {
+                                            val timePresets = listOf(
+                                                Triple(9, 0, "09:00 AM"),
+                                                Triple(10, 0, "10:00 AM"),
+                                                Triple(13, 0, "01:00 PM"),
+                                                Triple(20, 0, "08:00 PM"),
+                                                Triple(22, 0, "10:00 PM")
+                                            )
+                                            timePresets.forEach { (hr, min, label) ->
+                                                val selected = !showCustomCategoryTimeEditor &&
+                                                    curHour == hr && curMinute == min
+                                                FilterChip(
+                                                    selected = selected,
+                                                    onClick = {
+                                                        performHaptic()
+                                                        showCustomCategoryTimeEditor = false
+                                                        LocalAccountSessionManager.updateFcmPushSettings(
+                                                            context = context,
+                                                            newSettings = fcmPushSettings.withSummaryTime(
+                                                                subCategory = subCategory,
+                                                                hour = hr,
+                                                                minute = min
+                                                            )
+                                                        )
+                                                    },
+                                                    label = { Text(label) },
+                                                    shape = RoundedCornerShape(50),
+                                                    modifier = Modifier.testTag("notif_category_time_chip_${subTag}_${hr}_$min")
+                                                )
+                                            }
+                                            FilterChip(
+                                                selected = showCustomCategoryTimeEditor,
+                                                onClick = {
+                                                    performHaptic()
+                                                    showCustomCategoryTimeEditor = !showCustomCategoryTimeEditor
+                                                },
+                                                label = { Text("Custom") },
+                                                shape = RoundedCornerShape(50),
+                                                modifier = Modifier.testTag("notif_category_custom_time_button_$subTag")
+                                            )
+                                        }
+
+                                        if (showCustomCategoryTimeEditor) {
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                OutlinedTextField(
+                                                    value = customHourInput,
+                                                    onValueChange = { raw: String ->
+                                                        val digits = raw.filter { it.isDigit() }.take(2)
+                                                        val num = digits.toIntOrNull()
+                                                        if (digits.isEmpty() || (num != null && num in 0..23)) {
+                                                            customHourInput = digits
+                                                        }
+                                                    },
+                                                    label = { Text("Hour (0–23)") },
+                                                    singleLine = true,
+                                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                                    shape = RoundedCornerShape(12.dp),
+                                                    modifier = Modifier
+                                                        .weight(1f)
+                                                        .testTag("notif_category_hour_input_$subTag")
+                                                )
+                                                OutlinedTextField(
+                                                    value = customMinuteInput,
+                                                    onValueChange = { raw: String ->
+                                                        val digits = raw.filter { it.isDigit() }.take(2)
+                                                        val num = digits.toIntOrNull()
+                                                        if (digits.isEmpty() || (num != null && num in 0..59)) {
+                                                            customMinuteInput = digits
+                                                        }
+                                                    },
+                                                    label = { Text("Min (0–59)") },
+                                                    singleLine = true,
+                                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                                    shape = RoundedCornerShape(12.dp),
+                                                    modifier = Modifier
+                                                        .weight(1f)
+                                                        .testTag("notif_category_minute_input_$subTag")
+                                                )
+                                                Button(
+                                                    onClick = {
+                                                        performHaptic()
+                                                        val hr = (customHourInput.toIntOrNull() ?: curHour).coerceIn(0, 23)
+                                                        val min = (customMinuteInput.toIntOrNull() ?: curMinute).coerceIn(0, 59)
+                                                        LocalAccountSessionManager.updateFcmPushSettings(
+                                                            context = context,
+                                                            newSettings = fcmPushSettings.withSummaryTime(
+                                                                subCategory = subCategory,
+                                                                hour = hr,
+                                                                minute = min
+                                                            )
+                                                        )
+                                                        showCustomCategoryTimeEditor = false
+                                                    },
+                                                    shape = RoundedCornerShape(12.dp),
+                                                    modifier = Modifier.testTag("notif_category_save_time_button_$subTag")
+                                                ) {
+                                                    Text("Save")
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
                 }
             }
         }
 
-        // Account Stack Card: Card Limit Alert Threshold
+        // Account Stack Card 4 of 7: Card Limit Alert Threshold
         item {
             Card(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = dimens.horizontalPadding, vertical = 1.5.dp)
                     .testTag("notif_credit_threshold_card"),
-                shape = groupedCardShape(index = 4, count = 8),
+                shape = groupedCardShape(index = 3, count = 7),
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
                 elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
             ) {
@@ -4385,30 +4944,6 @@ fun HouseholdTabScreen(
                         }
                     }
 
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .horizontalScroll(rememberScrollState()),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        listOf(70, 80, 90, 100).forEach { pct ->
-                            val selected = fcmPushSettings.creditCardAlertThresholdPercent == pct
-                            FilterChip(
-                                selected = selected,
-                                onClick = {
-                                    performHaptic()
-                                    LocalAccountSessionManager.updateFcmPushSettings(
-                                        context = context,
-                                        newSettings = fcmPushSettings.copy(creditCardAlertThresholdPercent = pct)
-                                    )
-                                },
-                                label = { Text("$pct%") },
-                                shape = RoundedCornerShape(50),
-                                modifier = Modifier.testTag("notif_credit_threshold_chip_$pct")
-                            )
-                        }
-                    }
-
                     Slider(
                         value = fcmPushSettings.creditCardAlertThresholdPercent.toFloat().coerceIn(50f, 100f),
                         onValueChange = { raw ->
@@ -4428,13 +4963,13 @@ fun HouseholdTabScreen(
             }
         }
 
-        // Account Stack Card: SMS Inbox Sync
+        // Account Stack Card 5 of 7: SMS Inbox Sync
         item {
             Card(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = dimens.horizontalPadding, vertical = 1.5.dp),
-                shape = groupedCardShape(index = 5, count = 8),
+                shape = groupedCardShape(index = 4, count = 7),
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
                 elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
             ) {
@@ -4501,14 +5036,14 @@ fun HouseholdTabScreen(
             }
         }
 
-        // Account Stack Card 7 of 8: Export Transactions (CSV)
+        // Account Stack Card 6 of 7: Export Transactions (CSV)
         item {
             Card(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = dimens.horizontalPadding, vertical = 1.5.dp)
                     .testTag("export_csv_settings_card"),
-                shape = groupedCardShape(index = 6, count = 8),
+                shape = groupedCardShape(index = 5, count = 7),
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
                 elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
             ) {
@@ -4566,7 +5101,7 @@ fun HouseholdTabScreen(
             }
         }
 
-        // Account Stack Card 8 of 8: Advanced Settings & Diagnostics
+        // Account Stack Card 7 of 7: Advanced Settings & Diagnostics
         item {
             Card(
                 modifier = Modifier
@@ -4575,7 +5110,7 @@ fun HouseholdTabScreen(
                     .padding(bottom = 14.dp)
                     .animateContentSize(spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessMediumLow))
                     .testTag("expert_feature_flag_card"),
-                shape = groupedCardShape(index = 7, count = 8),
+                shape = groupedCardShape(index = 6, count = 7),
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
                 elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
             ) {
@@ -4632,139 +5167,35 @@ fun HouseholdTabScreen(
                         ) {
                             ReceiptDashedDividerLine()
 
-                            Text(
-                                text = "Experimental Feature Flags",
-                                style = MaterialTheme.typography.labelMedium,
-                                fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-
-                            Row(
+                            Surface(
+                                shape = RoundedCornerShape(18.dp),
+                                color = MaterialTheme.colorScheme.surfaceContainer,
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .testTag("expert_subflags_row"),
-                                horizontalArrangement = Arrangement.SpaceEvenly,
-                                verticalAlignment = Alignment.CenterVertically
+                                    .testTag("fcm_push_settings_card")
                             ) {
-                                FilterChip(
-                                    selected = expertFeatureFlags.crashAnalyticsFeatureEnabled,
-                                    onClick = {
-                                        performHaptic()
-                                        LocalAccountSessionManager.updateExpertFeatureFlags(
-                                            context = context,
-                                            newSettings = expertFeatureFlags.copy(
-                                                crashAnalyticsFeatureEnabled = !expertFeatureFlags.crashAnalyticsFeatureEnabled
-                                            )
-                                        )
-                                    },
-                                    label = {
-                                        Row(
-                                            verticalAlignment = Alignment.CenterVertically,
-                                            horizontalArrangement = Arrangement.spacedBy(4.dp)
-                                        ) {
-                                            Icon(
-                                                imageVector = Icons.Default.Shield,
-                                                contentDescription = "Crash Analytics",
-                                                modifier = Modifier.size(16.dp)
-                                            )
-                                            Text("Crashlytics", style = MaterialTheme.typography.labelSmall)
-                                        }
-                                    },
-                                    modifier = Modifier.testTag("expert_flag_crashlytics_chip")
-                                )
-
-                                FilterChip(
-                                    selected = expertFeatureFlags.fcmPushDiagnosticsEnabled,
-                                    onClick = {
-                                        performHaptic()
-                                        LocalAccountSessionManager.updateExpertFeatureFlags(
-                                            context = context,
-                                            newSettings = expertFeatureFlags.copy(
-                                                fcmPushDiagnosticsEnabled = !expertFeatureFlags.fcmPushDiagnosticsEnabled
-                                            )
-                                        )
-                                    },
-                                    label = {
-                                        Row(
-                                            verticalAlignment = Alignment.CenterVertically,
-                                            horizontalArrangement = Arrangement.spacedBy(4.dp)
-                                        ) {
-                                            Icon(
-                                                imageVector = Icons.Default.NotificationsActive,
-                                                contentDescription = "FCM Push",
-                                                modifier = Modifier.size(16.dp)
-                                            )
-                                            Text("FCM", style = MaterialTheme.typography.labelSmall)
-                                        }
-                                    },
-                                    modifier = Modifier.testTag("expert_flag_fcm_chip")
-                                )
-                            }
-
-                            AnimatedVisibility(visible = expertFeatureFlags.fcmPushDiagnosticsEnabled) {
-                                Surface(
-                                    shape = RoundedCornerShape(18.dp),
-                                    color = MaterialTheme.colorScheme.surfaceContainer,
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .testTag("fcm_push_settings_card")
+                                Column(
+                                    modifier = Modifier.padding(14.dp),
+                                    verticalArrangement = Arrangement.spacedBy(8.dp)
                                 ) {
-                                    Column(
-                                        modifier = Modifier.padding(14.dp),
-                                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
                                     ) {
-                                        Row(
-                                            verticalAlignment = Alignment.CenterVertically,
-                                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                        ) {
-                                            Icon(
-                                                imageVector = Icons.Default.NotificationsActive,
-                                                contentDescription = null,
-                                                tint = MaterialTheme.colorScheme.primary,
-                                                modifier = Modifier.size(18.dp)
-                                            )
-                                            Text(
-                                                text = "FCM Push Notifications",
-                                                style = MaterialTheme.typography.titleSmall,
-                                                fontWeight = FontWeight.Bold
-                                            )
-                                        }
+                                        Icon(
+                                            imageVector = Icons.Default.NotificationsActive,
+                                            contentDescription = null,
+                                            tint = MaterialTheme.colorScheme.primary,
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                        Text(
+                                            text = "FCM Push Notifications",
+                                            style = MaterialTheme.typography.titleSmall,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                    }
 
-                                        if (householdFeatureEnabled) {
-                                            Row(
-                                                modifier = Modifier.fillMaxWidth(),
-                                                verticalAlignment = Alignment.CenterVertically,
-                                                horizontalArrangement = Arrangement.SpaceBetween
-                                            ) {
-                                                Row(
-                                                    verticalAlignment = Alignment.CenterVertically,
-                                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                                    modifier = Modifier.weight(1f)
-                                                ) {
-                                                    Icon(
-                                                        imageVector = Icons.Default.Groups,
-                                                        contentDescription = "Family Push Alerts",
-                                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                                        modifier = Modifier.size(18.dp)
-                                                    )
-                                                    Text(
-                                                        text = "Family Transaction Alerts",
-                                                        style = MaterialTheme.typography.bodySmall
-                                                    )
-                                                }
-                                                M3CheckmarkSwitch(
-                                                    checked = fcmPushSettings.familyTransactionAlertsEnabled,
-                                                    onCheckedChange = { enabled ->
-                                                        LocalAccountSessionManager.updateFcmPushSettings(
-                                                            context = context,
-                                                            newSettings = fcmPushSettings.copy(familyTransactionAlertsEnabled = enabled)
-                                                        )
-                                                    },
-                                                    modifier = Modifier.testTag("fcm_family_tx_alerts_switch")
-                                                )
-                                            }
-                                        }
-
+                                    if (householdFeatureEnabled) {
                                         Row(
                                             modifier = Modifier.fillMaxWidth(),
                                             verticalAlignment = Alignment.CenterVertically,
@@ -4776,181 +5207,123 @@ fun HouseholdTabScreen(
                                                 modifier = Modifier.weight(1f)
                                             ) {
                                                 Icon(
-                                                    imageVector = Icons.AutoMirrored.Filled.ReceiptLong,
-                                                    contentDescription = "Budget Threshold Push Alerts",
+                                                    imageVector = Icons.Default.Groups,
+                                                    contentDescription = "Family Push Alerts",
                                                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
                                                     modifier = Modifier.size(18.dp)
                                                 )
                                                 Text(
-                                                    text = "Budget Threshold Alerts",
+                                                    text = "Family Transaction Alerts",
                                                     style = MaterialTheme.typography.bodySmall
                                                 )
                                             }
                                             M3CheckmarkSwitch(
-                                                checked = fcmPushSettings.budgetThresholdAlertsEnabled,
+                                                checked = fcmPushSettings.familyTransactionAlertsEnabled,
                                                 onCheckedChange = { enabled ->
                                                     LocalAccountSessionManager.updateFcmPushSettings(
                                                         context = context,
-                                                        newSettings = fcmPushSettings.copy(budgetThresholdAlertsEnabled = enabled)
+                                                        newSettings = fcmPushSettings.copy(familyTransactionAlertsEnabled = enabled)
                                                     )
                                                 },
-                                                modifier = Modifier.testTag("fcm_budget_threshold_alerts_switch")
+                                                modifier = Modifier.testTag("fcm_family_tx_alerts_switch")
                                             )
                                         }
+                                    }
 
-                                        OutlinedButton(
-                                            onClick = onSendTestFcmAlertClick,
-                                            shape = RoundedCornerShape(50),
-                                            modifier = Modifier
-                                                .fillMaxWidth()
-                                                .testTag("fcm_test_push_button")
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.SpaceBetween
+                                    ) {
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                            modifier = Modifier.weight(1f)
                                         ) {
                                             Icon(
-                                                imageVector = Icons.Default.NotificationsActive,
-                                                contentDescription = "Test Push Alert",
-                                                modifier = Modifier.size(16.dp)
+                                                imageVector = Icons.AutoMirrored.Filled.ReceiptLong,
+                                                contentDescription = "Budget Threshold Push Alerts",
+                                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                modifier = Modifier.size(18.dp)
                                             )
-                                            Spacer(modifier = Modifier.width(6.dp))
                                             Text(
-                                                text = "Send Test Push Alert",
-                                                style = MaterialTheme.typography.labelLarge,
-                                                fontWeight = FontWeight.SemiBold
+                                                text = "Budget Threshold Alerts",
+                                                style = MaterialTheme.typography.bodySmall
                                             )
                                         }
+                                        M3CheckmarkSwitch(
+                                            checked = fcmPushSettings.budgetThresholdAlertsEnabled,
+                                            onCheckedChange = { enabled ->
+                                                LocalAccountSessionManager.updateFcmPushSettings(
+                                                    context = context,
+                                                    newSettings = fcmPushSettings.copy(budgetThresholdAlertsEnabled = enabled)
+                                                )
+                                            },
+                                            modifier = Modifier.testTag("fcm_budget_threshold_alerts_switch")
+                                        )
                                     }
                                 }
                             }
 
-                            AnimatedVisibility(visible = expertFeatureFlags.crashAnalyticsFeatureEnabled) {
-                                Surface(
-                                    shape = RoundedCornerShape(18.dp),
-                                    color = MaterialTheme.colorScheme.surfaceContainer,
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .testTag("crashlytics_settings_card")
+                            Surface(
+                                shape = RoundedCornerShape(18.dp),
+                                color = MaterialTheme.colorScheme.surfaceContainer,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .testTag("crashlytics_settings_card")
+                            ) {
+                                Column(
+                                    modifier = Modifier.padding(14.dp),
+                                    verticalArrangement = Arrangement.spacedBy(8.dp)
                                 ) {
-                                    Column(
-                                        modifier = Modifier.padding(14.dp),
-                                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Shield,
+                                            contentDescription = "Crashlytics Reporting",
+                                            tint = MaterialTheme.colorScheme.tertiary,
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                        Text(
+                                            text = "Crash Analytics",
+                                            style = MaterialTheme.typography.titleSmall,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                    }
+
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.SpaceBetween
                                     ) {
                                         Row(
                                             verticalAlignment = Alignment.CenterVertically,
-                                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                            modifier = Modifier.weight(1f)
                                         ) {
                                             Icon(
-                                                imageVector = Icons.Default.Shield,
-                                                contentDescription = "Crashlytics Reporting",
-                                                tint = MaterialTheme.colorScheme.tertiary,
+                                                imageVector = Icons.Default.BugReport,
+                                                contentDescription = null,
+                                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
                                                 modifier = Modifier.size(18.dp)
                                             )
                                             Text(
-                                                text = "Crash Analytics & Diagnostics",
-                                                style = MaterialTheme.typography.titleSmall,
-                                                fontWeight = FontWeight.Bold
+                                                text = "Crashlytics Crash Reporting",
+                                                style = MaterialTheme.typography.bodySmall
                                             )
                                         }
-
-                                        Row(
-                                            modifier = Modifier.fillMaxWidth(),
-                                            verticalAlignment = Alignment.CenterVertically,
-                                            horizontalArrangement = Arrangement.SpaceBetween
-                                        ) {
-                                            Row(
-                                                verticalAlignment = Alignment.CenterVertically,
-                                                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                                modifier = Modifier.weight(1f)
-                                            ) {
-                                                Icon(
-                                                    imageVector = Icons.Default.BugReport,
-                                                    contentDescription = null,
-                                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                                    modifier = Modifier.size(18.dp)
+                                        M3CheckmarkSwitch(
+                                            checked = crashlyticsSettings.crashReportingEnabled,
+                                            onCheckedChange = { enabled ->
+                                                LocalAccountSessionManager.updateCrashlyticsSettings(
+                                                    context = context,
+                                                    newSettings = crashlyticsSettings.copy(crashReportingEnabled = enabled)
                                                 )
-                                                Text(
-                                                    text = "Crashlytics Crash Reporting",
-                                                    style = MaterialTheme.typography.bodySmall
-                                                )
-                                            }
-                                            M3CheckmarkSwitch(
-                                                checked = crashlyticsSettings.crashReportingEnabled,
-                                                onCheckedChange = { enabled ->
-                                                    LocalAccountSessionManager.updateCrashlyticsSettings(
-                                                        context = context,
-                                                        newSettings = crashlyticsSettings.copy(crashReportingEnabled = enabled)
-                                                    )
-                                                },
-                                                modifier = Modifier.testTag("crashlytics_enabled_switch")
-                                            )
-                                        }
-
-                                        if (stabilityDiagnostics.isNotEmpty()) {
-                                            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                                                Text(
-                                                    text = "Stability Diagnostics Log",
-                                                    style = MaterialTheme.typography.labelSmall,
-                                                    fontWeight = FontWeight.Bold,
-                                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                                )
-                                                Surface(
-                                                    shape = RoundedCornerShape(14.dp),
-                                                    color = MaterialTheme.colorScheme.surfaceContainerLowest,
-                                                    modifier = Modifier
-                                                        .fillMaxWidth()
-                                                        .testTag("crashlytics_diagnostics_list")
-                                                ) {
-                                                    Column(
-                                                        modifier = Modifier.padding(10.dp),
-                                                        verticalArrangement = Arrangement.spacedBy(4.dp)
-                                                    ) {
-                                                        stabilityDiagnostics.take(3).forEach { entry ->
-                                                            Text(
-                                                                text = "⚡ [${entry.subsystem}] ${entry.message}",
-                                                                style = MaterialTheme.typography.labelSmall.copy(fontFamily = ReceiptMonoFontFamily),
-                                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                                                maxLines = 1,
-                                                                overflow = TextOverflow.Ellipsis
-                                                            )
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
-
-                                        Row(
-                                            modifier = Modifier.fillMaxWidth(),
-                                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                        ) {
-                                            OutlinedButton(
-                                                onClick = onRunStabilityCheckClick,
-                                                shape = RoundedCornerShape(50),
-                                                modifier = Modifier
-                                                    .weight(1f)
-                                                    .testTag("crashlytics_run_check_button")
-                                            ) {
-                                                Icon(
-                                                    imageVector = Icons.Default.BugReport,
-                                                    contentDescription = "Verify Stability",
-                                                    modifier = Modifier.size(16.dp)
-                                                )
-                                                Spacer(modifier = Modifier.width(6.dp))
-                                                Text(
-                                                    text = "Run Stability Diagnostic Check",
-                                                    style = MaterialTheme.typography.labelSmall,
-                                                    fontWeight = FontWeight.SemiBold
-                                                )
-                                            }
-                                            if (stabilityDiagnostics.isNotEmpty()) {
-                                                IconButton(
-                                                    onClick = { LocalAccountSessionManager.clearStabilityDiagnostics(context) },
-                                                    modifier = Modifier.testTag("crashlytics_clear_logs_button")
-                                                ) {
-                                                    Icon(
-                                                        imageVector = Icons.Default.Clear,
-                                                        contentDescription = "Clear Logs"
-                                                    )
-                                                }
-                                            }
-                                        }
+                                            },
+                                            modifier = Modifier.testTag("crashlytics_enabled_switch")
+                                        )
                                     }
                                 }
                             }

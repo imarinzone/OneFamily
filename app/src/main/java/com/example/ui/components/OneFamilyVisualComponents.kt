@@ -2280,6 +2280,21 @@ private fun AccountSummaryCard(
  * Supports `shape` (for 24dp outer / 6dp inner connected M3 card stacks) and two-way
  * progressive swipe physics with threshold icon bounce and haptic ticks.
  */
+fun deriveTransactionDisplayTags(expense: ExpenseTransaction): List<String> {
+    val explicit = expense.tags.map { it.trim().removePrefix("#") }.filter { it.isNotBlank() }
+    if (explicit.isNotEmpty()) return explicit
+    val mode = expense.paymentMode.trim().uppercase()
+    val titleLower = expense.title.lowercase()
+    val derived = when {
+        mode == "UPI" || titleLower.contains("upi") -> "Online"
+        mode == "CARD" -> "Card"
+        mode == "CASH" -> "Cash"
+        mode == "WALLET" -> "Wallet"
+        else -> "Online"
+    }
+    return listOf(derived)
+}
+
 @Composable
 fun ExpenseTransactionItemCard(
     expense: ExpenseTransaction,
@@ -2292,7 +2307,10 @@ fun ExpenseTransactionItemCard(
     onEditTransaction: () -> Unit = {},
     onQuickChangeCategory: () -> Unit = {},
     availableCategories: List<String> = ExpenseCategories.ALL,
-    @Suppress("UNUSED_PARAMETER") onTagClick: (String) -> Unit = {},
+    onTagClick: (String) -> Unit = {},
+    onCategoryClick: ((String) -> Unit)? = null,
+    onMerchantClick: ((String) -> Unit)? = null,
+    onTypeClick: ((String) -> Unit)? = null,
     shape: Shape? = null,
     containerColor: Color? = null
 ) {
@@ -2306,6 +2324,9 @@ fun ExpenseTransactionItemCard(
     val isIncome = expense.type.equals("INCOME", ignoreCase = true) ||
         com.example.data.model.ExpenseCategories.isIncomeCategory(expense.category)
     val catColor = categoryAccentColor(expense.category)
+    val displayTags = remember(expense.tags, expense.paymentMode, expense.title) {
+        deriveTransactionDisplayTags(expense)
+    }
     var dragOffsetX by remember { mutableFloatStateOf(0f) }
     var cardWidthPx by remember { mutableFloatStateOf(1f) }
     var thresholdCrossed by remember { mutableStateOf(false) }
@@ -2437,7 +2458,7 @@ fun ExpenseTransactionItemCard(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 13.dp),
+                    .padding(horizontal = 16.dp, vertical = 10.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 SquircleIconBadge(
@@ -2447,12 +2468,18 @@ fun ExpenseTransactionItemCard(
                     size = dimens.rowIconBoxSize,
                     iconSize = dimens.rowIconSize,
                     emoji = customEmoji,
-                    contentDescription = "${expense.category} (Long press and slide to change category)",
+                    contentDescription = "${expense.category} (Tap to filter category, long press and slide to change category)",
                     modifier = Modifier
                         .categoryWheelLongPressGesture(
                             transaction = expense,
                             availableCategories = availableCategories,
-                            onTap = onEditTransaction,
+                            onTap = {
+                                if (onCategoryClick != null) {
+                                    onCategoryClick(expense.category)
+                                } else {
+                                    onEditTransaction()
+                                }
+                            },
                             onFallbackQuickChange = onQuickChangeCategory
                         )
                         .testTag("category_pill_${expense.id}")
@@ -2467,19 +2494,88 @@ fun ExpenseTransactionItemCard(
                         fontWeight = FontWeight.SemiBold,
                         color = MaterialTheme.colorScheme.onSurface,
                         maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = if (onMerchantClick != null) {
+                            Modifier
+                                .clip(RoundedCornerShape(6.dp))
+                                .clickable {
+                                    performHaptic()
+                                    onMerchantClick(expense.title)
+                                }
+                                .testTag("tx_merchant_chip_${expense.id}")
+                        } else {
+                            Modifier.testTag("tx_merchant_chip_${expense.id}")
+                        }
                     )
-                    val metaParts = buildList {
-                        add(expense.category)
-                        if (expense.accountName.isNotBlank()) add(expense.accountName)
+
+                    Spacer(modifier = Modifier.height(2.dp))
+
+                    // Clickable #Tag pills + Category pill + Account label (Axio style)
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.horizontalScroll(rememberScrollState())
+                    ) {
+                        displayTags.forEach { rawTag ->
+                            val cleanTag = rawTag.trim().removePrefix("#")
+                            val safeTagId = cleanTag.lowercase().replace(Regex("[^a-z0-9]+"), "_")
+                            Surface(
+                                shape = RoundedCornerShape(50),
+                                color = Color(0xFF8AB4F8).copy(alpha = 0.24f),
+                                border = BorderStroke(0.8.dp, Color(0xFF8AB4F8).copy(alpha = 0.45f)),
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(50))
+                                    .clickable {
+                                        performHaptic()
+                                        onTagClick(cleanTag)
+                                    }
+                                    .testTag("tx_tag_pill_${expense.id}_$safeTagId")
+                            ) {
+                                Text(
+                                    text = "#$cleanTag",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color(0xFF8AB4F8),
+                                    modifier = Modifier.padding(horizontal = 9.dp, vertical = 2.5.dp)
+                                )
+                            }
+                        }
+
+                        Surface(
+                            shape = RoundedCornerShape(50),
+                            color = catColor.copy(alpha = 0.14f),
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(50))
+                                .clickable {
+                                    performHaptic()
+                                    if (onCategoryClick != null) {
+                                        onCategoryClick(expense.category)
+                                    } else {
+                                        onEditTransaction()
+                                    }
+                                }
+                                .testTag("tx_category_chip_${expense.id}")
+                        ) {
+                            Text(
+                                text = expense.category,
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.SemiBold,
+                                color = catColor,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.5.dp)
+                            )
+                        }
+
+                        if (expense.accountName.isNotBlank()) {
+                            Text(
+                                text = "• ${expense.accountName}",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
                     }
-                    Text(
-                        text = metaParts.joinToString(" • "),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
+
                     if (expense.isExcludedFromExpense || expense.linkedSmsSignatures.isNotEmpty()) {
                         Spacer(modifier = Modifier.height(3.dp))
                         Row(
@@ -2544,65 +2640,105 @@ fun ExpenseTransactionItemCard(
 
                 Spacer(modifier = Modifier.width(8.dp))
 
-                Text(
-                    text = "${if (isIncome) "+" else "-"}${formatCurrency(expense.amount, currencySymbol)}",
-                    style = MaterialTheme.typography.titleMedium.copy(fontFamily = ReceiptMonoFontFamily),
-                    fontWeight = FontWeight.Bold,
-                    color = when {
-                        expense.isExcludedFromExpense -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.65f)
-                        isIncome -> BudgetSafeGreen
-                        else -> MaterialTheme.colorScheme.onSurface
-                    }
-                )
-
-                Spacer(modifier = Modifier.width(2.dp))
-
-                if (!isIncome) {
-                    IconButton(
-                        onClick = {
-                            performHaptic()
-                            onToggleExcludeTransaction()
-                        },
-                        modifier = Modifier
-                            .size(34.dp)
-                            .testTag("exclude_tx_button_${expense.id}")
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.MoneyOff,
-                            contentDescription = if (expense.isExcludedFromExpense) {
-                                "Include in Expenses"
-                            } else {
-                                "Exclude from Expenses"
-                            },
-                            tint = if (expense.isExcludedFromExpense) {
-                                BudgetWarnAmber
-                            } else {
-                                MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f)
-                            },
-                            modifier = Modifier.size(17.dp)
-                        )
-                    }
-                }
-
-                IconButton(
-                    onClick = {
-                        performHaptic()
-                        onLinkDuplicate()
-                    },
-                    modifier = Modifier
-                        .size(34.dp)
-                        .testTag("link_duplicate_button_${expense.id}")
+                Column(
+                    horizontalAlignment = Alignment.End,
+                    verticalArrangement = Arrangement.spacedBy(2.dp)
                 ) {
-                    Icon(
-                        imageVector = Icons.Default.Link,
-                        contentDescription = "Link Duplicate SMS / Transaction",
-                        tint = if (expense.linkedSmsSignatures.isNotEmpty()) {
-                            MaterialTheme.colorScheme.primary
-                        } else {
-                            MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.65f)
-                        },
-                        modifier = Modifier.size(17.dp)
-                    )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(5.dp)
+                    ) {
+                        Text(
+                            text = "${if (isIncome) "+" else "-"}${formatCurrency(expense.amount, currencySymbol)}",
+                            style = MaterialTheme.typography.titleMedium.copy(fontFamily = ReceiptMonoFontFamily),
+                            fontWeight = FontWeight.Bold,
+                            color = when {
+                                expense.isExcludedFromExpense -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.65f)
+                                isIncome -> BudgetSafeGreen
+                                else -> MaterialTheme.colorScheme.onSurface
+                            }
+                        )
+                        Surface(
+                            shape = CircleShape,
+                            color = MaterialTheme.colorScheme.surfaceContainerHighest,
+                            modifier = Modifier
+                                .size(22.dp)
+                                .clip(CircleShape)
+                                .clickable {
+                                    performHaptic()
+                                    onTypeClick?.invoke(if (isIncome) "INCOME" else "EXPENSE")
+                                }
+                                .testTag("tx_direction_badge_${expense.id}")
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Text(
+                                    text = if (isIncome) "↙" else "↗",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = if (isIncome) BudgetSafeGreen else MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                    }
+
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(2.dp)
+                    ) {
+                        Text(
+                            text = formatDayMonthLabel(expense.transactionDateMillis),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+
+                        if (!isIncome) {
+                            IconButton(
+                                onClick = {
+                                    performHaptic()
+                                    onToggleExcludeTransaction()
+                                },
+                                modifier = Modifier
+                                    .size(28.dp)
+                                    .testTag("exclude_tx_button_${expense.id}")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.MoneyOff,
+                                    contentDescription = if (expense.isExcludedFromExpense) {
+                                        "Include in Expenses"
+                                    } else {
+                                        "Exclude from Expenses"
+                                    },
+                                    tint = if (expense.isExcludedFromExpense) {
+                                        BudgetWarnAmber
+                                    } else {
+                                        MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f)
+                                    },
+                                    modifier = Modifier.size(15.dp)
+                                )
+                            }
+                        }
+
+                        IconButton(
+                            onClick = {
+                                performHaptic()
+                                onLinkDuplicate()
+                            },
+                            modifier = Modifier
+                                .size(28.dp)
+                                .testTag("link_duplicate_button_${expense.id}")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Link,
+                                contentDescription = "Link Duplicate SMS / Transaction",
+                                tint = if (expense.linkedSmsSignatures.isNotEmpty()) {
+                                    MaterialTheme.colorScheme.primary
+                                } else {
+                                    MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.65f)
+                                },
+                                modifier = Modifier.size(15.dp)
+                            )
+                        }
+                    }
                 }
             }
         }
@@ -3977,5 +4113,896 @@ fun FinanceWallpaperPreviewBanner(
         }
     }
 }
+
+fun formatDayMonthLabel(millis: Long): String {
+    return SimpleDateFormat("dd MMM", Locale.getDefault()).format(Date(millis))
+}
+
+enum class TransactionPageSubTab(val label: String) {
+    TRANSACTIONS("Transactions"),
+    CATEGORIES("Categories"),
+    MERCHANTS("Merchants")
+}
+
+/**
+ * 3-Tab Sub-Navigation Bar (`Transactions` | `Categories` | `Merchants`) with a glowing
+ * green underline indicator on the selected tab, matching the reference design.
+ */
+@Composable
+fun TransactionPageSubTabBar(
+    selectedTab: TransactionPageSubTab,
+    onSelectTab: (TransactionPageSubTab) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val performHaptic = rememberAppHapticPerformer()
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .testTag("tx_subtab_bar")
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 8.dp),
+            horizontalArrangement = Arrangement.SpaceEvenly,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            TransactionPageSubTab.entries.forEach { tab ->
+                val isSelected = selectedTab == tab
+                val textColor by animateColorAsState(
+                    targetValue = if (isSelected) {
+                        BudgetSafeGreen
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    },
+                    label = "subtab_text_color"
+                )
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .clip(RoundedCornerShape(topStart = 12.dp, topEnd = 12.dp))
+                        .clickable {
+                            performHaptic()
+                            onSelectTab(tab)
+                        }
+                        .padding(top = 10.dp)
+                        .testTag("tx_subtab_${tab.name.lowercase()}"),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Text(
+                        text = tab.label,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                        color = textColor,
+                        maxLines = 1
+                    )
+                    Spacer(modifier = Modifier.height(10.dp))
+                    if (isSelected) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth(0.82f)
+                                .height(3.dp)
+                                .clip(RoundedCornerShape(50))
+                                .background(
+                                    Brush.horizontalGradient(
+                                        colors = listOf(
+                                            Color.Transparent,
+                                            BudgetSafeGreen,
+                                            BudgetSafeGreen,
+                                            Color.Transparent
+                                        )
+                                    )
+                                )
+                        )
+                    } else {
+                        Spacer(modifier = Modifier.height(3.dp))
+                    }
+                }
+            }
+        }
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(1.dp)
+                .background(MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f))
+        )
+    }
+}
+
+/**
+ * Horizontally scrollable monthly spend bar strip (e.g. May, Jun 2.20L, Jul 1.67L, Aug 2.58L, Sep 2.09L, Oct 2.41L, Nov 40.9K)
+ * where the selected month is highlighted in a tall dark rounded card and clicking any month bar selects that month.
+ */
+@Composable
+fun AxioMonthlySpendBarStrip(
+    bars: List<MonthlySpendBar>,
+    currencySymbol: String,
+    onSelectMonth: (YearMonthPeriod) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    if (bars.isEmpty()) return
+    val performHaptic = rememberAppHapticPerformer()
+    val scrollState = rememberScrollState()
+    val density = LocalDensity.current
+    val maxExpense = remember(bars) {
+        (bars.maxOfOrNull { it.expenseTotal } ?: 1.0).coerceAtLeast(1.0)
+    }
+
+    LaunchedEffect(bars.size) {
+        val selectedIdx = bars.indexOfFirst { it.isSelected }.takeIf { it >= 0 } ?: (bars.size - 1)
+        val scrollPx = with(density) { ((selectedIdx - 2).coerceAtLeast(0) * 62).dp.roundToPx() }
+        scrollState.scrollTo(scrollPx)
+    }
+
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .horizontalScroll(scrollState)
+            .padding(horizontal = 12.dp, vertical = 6.dp)
+            .testTag("axio_monthly_spend_bar_strip"),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.Bottom
+    ) {
+        bars.forEach { bar ->
+            val fraction = (bar.expenseTotal / maxExpense).toFloat().coerceIn(0.10f, 1f)
+            val barHeight = (74.dp * fraction).coerceAtLeast(10.dp)
+            val amountCompact = if (bar.expenseTotal > 0.0) {
+                formatCompactCurrency(bar.expenseTotal, "").trim()
+            } else {
+                "0"
+            }
+            val selectedBg = if (bar.isSelected) {
+                MaterialTheme.colorScheme.surfaceContainerHigh
+            } else {
+                Color.Transparent
+            }
+            Column(
+                modifier = Modifier
+                    .width(56.dp)
+                    .height(132.dp)
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(selectedBg)
+                    .clickable {
+                        performHaptic()
+                        onSelectMonth(bar.period)
+                    }
+                    .padding(horizontal = 4.dp, vertical = 8.dp)
+                    .testTag("axio_month_bar_${bar.period.year}_${bar.period.month}"),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Bottom
+            ) {
+                Text(
+                    text = amountCompact,
+                    style = MaterialTheme.typography.labelSmall.copy(fontFamily = ReceiptMonoFontFamily),
+                    fontWeight = if (bar.isSelected) FontWeight.Bold else FontWeight.Medium,
+                    color = if (bar.isSelected) {
+                        MaterialTheme.colorScheme.onSurface
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    },
+                    maxLines = 1
+                )
+                Spacer(modifier = Modifier.height(6.dp))
+                Box(
+                    modifier = Modifier
+                        .width(16.dp)
+                        .height(barHeight)
+                        .clip(RoundedCornerShape(50))
+                        .background(
+                            if (bar.isSelected) {
+                                Color(0xFF4C6EF5)
+                            } else {
+                                Color(0xFF4C6EF5).copy(alpha = 0.82f)
+                            }
+                        )
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = bar.label,
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = if (bar.isSelected) FontWeight.Bold else FontWeight.Medium,
+                    color = if (bar.isSelected) {
+                        MaterialTheme.colorScheme.onSurface
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    },
+                    maxLines = 1
+                )
+            }
+        }
+    }
+}
+
+/**
+ * Circular Spend & Budget Ring Gauge + Clickable Income | Budget 2-Column Summary Row
+ * matching Screenshot 1 (`Screenshot_20261115_000840_axio_a1d8c879.jpg`).
+ */
+@Composable
+fun CircularSpendBudgetRingGauge(
+    totalSpent: Double,
+    totalIncome: Double,
+    monthlyBudget: Double,
+    currencySymbol: String,
+    selectedTypeFilter: String = "All",
+    onSpendRingClick: () -> Unit = {},
+    onIncomeClick: () -> Unit = {},
+    onBudgetClick: () -> Unit = {},
+    modifier: Modifier = Modifier
+) {
+    val performHaptic = rememberAppHapticPerformer()
+    val hasBudget = monthlyBudget > 0.0
+    val budgetRatio = if (hasBudget) (totalSpent / monthlyBudget).toFloat().coerceAtLeast(0f) else 0.72f
+    val budgetPercent = if (hasBudget) ((totalSpent / monthlyBudget) * 100.0).roundToInt() else 0
+    val isOverBudget = hasBudget && totalSpent > monthlyBudget
+    val blueRingColor = Color(0xFF4C6EF5)
+    val coralOverflowColor = Color(0xFFFF8787)
+    val trackColor = MaterialTheme.colorScheme.surfaceContainerHighest.copy(alpha = 0.55f)
+    val surfaceBg = MaterialTheme.colorScheme.surface
+
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(vertical = 8.dp)
+            .testTag("tx_page_spend_ring_gauge"),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Box(
+            modifier = Modifier
+                .size(214.dp)
+                .clip(CircleShape)
+                .clickable {
+                    performHaptic()
+                    onSpendRingClick()
+                }
+                .testTag("tx_ring_spend_toggle_button"),
+            contentAlignment = Alignment.Center
+        ) {
+            Canvas(modifier = Modifier.fillMaxSize().padding(14.dp)) {
+                val strokePx = 14.dp.toPx()
+                val arcSize = Size(size.width - strokePx, size.height - strokePx)
+                val topLeft = Offset(strokePx / 2f, strokePx / 2f)
+                val center = Offset(size.width / 2f, size.height / 2f)
+                val radius = (size.minDimension - strokePx) / 2f
+
+                // Background ring track
+                drawArc(
+                    color = trackColor,
+                    startAngle = -90f,
+                    sweepAngle = 360f,
+                    useCenter = false,
+                    topLeft = topLeft,
+                    size = arcSize,
+                    style = Stroke(width = strokePx, cap = StrokeCap.Round)
+                )
+
+                // Primary blue spend arc
+                val primarySweep = if (!hasBudget) {
+                    if (totalSpent > 0.0) 270f else 18f
+                } else {
+                    (budgetRatio.coerceIn(0.04f, 1f) * 360f)
+                }
+                drawArc(
+                    color = blueRingColor,
+                    startAngle = -90f,
+                    sweepAngle = primarySweep,
+                    useCenter = false,
+                    topLeft = topLeft,
+                    size = arcSize,
+                    style = Stroke(width = strokePx, cap = StrokeCap.Round)
+                )
+
+                // Coral overflow arc when over budget (or coral tip segment matching Screenshot 1)
+                val tipAngleDeg = if (isOverBudget) {
+                    val overFraction = ((budgetRatio - 1f).coerceIn(0.08f, 0.45f))
+                    val overflowSweep = overFraction * 360f
+                    drawArc(
+                        color = coralOverflowColor,
+                        startAngle = -90f,
+                        sweepAngle = overflowSweep,
+                        useCenter = false,
+                        topLeft = topLeft,
+                        size = arcSize,
+                        style = Stroke(width = strokePx, cap = StrokeCap.Round)
+                    )
+                    -90f + overflowSweep
+                } else {
+                    -90f + primarySweep
+                }
+
+                // Glowing red/coral indicator dot on the arc tip
+                val rad = Math.toRadians(tipAngleDeg.toDouble())
+                val dotCenter = Offset(
+                    x = center.x + (radius * kotlin.math.cos(rad)).toFloat(),
+                    y = center.y + (radius * kotlin.math.sin(rad)).toFloat()
+                )
+                drawCircle(
+                    color = Color.White,
+                    radius = 6.5.dp.toPx(),
+                    center = dotCenter
+                )
+                drawCircle(
+                    color = if (isOverBudget) BudgetDangerCoral else blueRingColor,
+                    radius = 4.5.dp.toPx(),
+                    center = dotCenter
+                )
+                drawCircle(
+                    color = surfaceBg,
+                    radius = 1.5.dp.toPx(),
+                    center = dotCenter
+                )
+            }
+
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center,
+                modifier = Modifier.padding(horizontal = 20.dp)
+            ) {
+                Surface(
+                    shape = CircleShape,
+                    color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                    modifier = Modifier.size(28.dp)
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Text(
+                            text = if (selectedTypeFilter.equals("INCOME", ignoreCase = true)) "↙" else "↗",
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                    }
+                }
+                Spacer(modifier = Modifier.height(6.dp))
+                Text(
+                    text = formatCurrency(totalSpent, currencySymbol),
+                    style = MaterialTheme.typography.headlineSmall.copy(fontFamily = ReceiptMonoFontFamily),
+                    fontWeight = FontWeight.ExtraBold,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1
+                )
+                Spacer(modifier = Modifier.height(10.dp))
+                Surface(
+                    shape = RoundedCornerShape(50),
+                    color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                    modifier = Modifier.clickable {
+                        performHaptic()
+                        onBudgetClick()
+                    }
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(5.dp)
+                    ) {
+                        Text(
+                            text = "⏲",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = blueRingColor
+                        )
+                        Text(
+                            text = if (hasBudget) "$budgetPercent%" else "Set budget",
+                            style = MaterialTheme.typography.labelMedium.copy(fontFamily = ReceiptMonoFontFamily),
+                            fontWeight = FontWeight.Bold,
+                            color = if (isOverBudget) BudgetDangerCoral else blueRingColor
+                        )
+                    }
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(10.dp))
+
+        // Two-Column Clickable Summary Row: Income | Budget
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 24.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .clip(RoundedCornerShape(14.dp))
+                    .clickable {
+                        performHaptic()
+                        onIncomeClick()
+                    }
+                    .padding(vertical = 8.dp)
+                    .testTag("tx_ring_income_button"),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Text(
+                    text = "Income",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(modifier = Modifier.height(2.dp))
+                Text(
+                    text = formatCurrency(totalIncome, currencySymbol),
+                    style = MaterialTheme.typography.titleMedium.copy(fontFamily = ReceiptMonoFontFamily),
+                    fontWeight = FontWeight.Bold,
+                    color = if (selectedTypeFilter.equals("INCOME", ignoreCase = true)) {
+                        BudgetSafeGreen
+                    } else {
+                        MaterialTheme.colorScheme.onSurface
+                    }
+                )
+            }
+
+            Box(
+                modifier = Modifier
+                    .width(1.dp)
+                    .height(34.dp)
+                    .background(MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f))
+            )
+
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .clip(RoundedCornerShape(14.dp))
+                    .clickable {
+                        performHaptic()
+                        onBudgetClick()
+                    }
+                    .padding(vertical = 8.dp)
+                    .testTag("tx_ring_budget_button"),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Text(
+                    text = "Budget",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(modifier = Modifier.height(2.dp))
+                Text(
+                    text = if (hasBudget) formatCurrency(monthlyBudget, currencySymbol) else "Set budget >",
+                    style = MaterialTheme.typography.titleMedium.copy(fontFamily = ReceiptMonoFontFamily),
+                    fontWeight = FontWeight.Bold,
+                    color = if (hasBudget) MaterialTheme.colorScheme.onSurface else BudgetSafeGreen
+                )
+            }
+        }
+    }
+}
+
+data class CategorySubTabItem(
+    val category: String,
+    val spent: Double,
+    val spendCount: Int,
+    val budgetLimit: Double
+)
+
+/**
+ * Categories Sub-Tab Content matching Screenshot 2 (`Screenshot_20261115_000921_axio_c0979023.jpg`):
+ * - Multi-segment Category Donut Ring on the left + Clickable Percentage Legend on the right.
+ * - Two-column `Spends | Budget` summary row.
+ * - Clickable Category Cards with icon badge, Category Name, `"N Spends"`, total amount (coral if over budget),
+ *   and `"of ₹X >"` or green `"Set budget >"`.
+ */
+@Composable
+fun TransactionCategoriesSubTabContent(
+    categories: List<CategorySubTabItem>,
+    totalSpent: Double,
+    monthlyBudget: Double,
+    currencySymbol: String,
+    selectedCategory: String = "All",
+    onCategoryClick: (String) -> Unit,
+    onSetCategoryBudgetClick: (String, Double) -> Unit,
+    onEditMonthlyBudgetClick: () -> Unit = {},
+    modifier: Modifier = Modifier
+) {
+    val dimens = LocalAppDimens.current
+    val performHaptic = rememberAppHapticPerformer()
+    val customEmojis = rememberCustomCategoryEmojis()
+    val totalCategorySpend = remember(categories) {
+        categories.sumOf { it.spent }.coerceAtLeast(1.0)
+    }
+
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(horizontal = dimens.horizontalPadding, vertical = 8.dp)
+            .testTag("tx_categories_subtab_content"),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        if (categories.isNotEmpty()) {
+            // 1. Multi-Segment Donut Chart on Left + Clickable Percentage Legend on Right
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(168.dp)
+                        .testTag("tx_categories_donut_chart"),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Canvas(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(10.dp)
+                            .pointerInput(categories) {
+                                detectTapGestures { tapOffset ->
+                                    val cx = size.width / 2f
+                                    val cy = size.height / 2f
+                                    val dx = tapOffset.x - cx
+                                    val dy = tapOffset.y - cy
+                                    val dist = hypot(dx, dy)
+                                    val outerR = minOf(size.width, size.height).toFloat() / 2f
+                                    val innerR = outerR * 0.48f
+                                    if (dist in innerR..outerR) {
+                                        var deg = Math.toDegrees(atan2(dy.toDouble(), dx.toDouble())).toFloat() + 90f
+                                        if (deg < 0f) deg += 360f
+                                        var running = 0f
+                                        for (item in categories) {
+                                            val sweep = ((item.spent / totalCategorySpend) * 360.0).toFloat()
+                                            if (deg >= running && deg <= running + sweep) {
+                                                performHaptic()
+                                                onCategoryClick(item.category)
+                                                break
+                                            }
+                                            running += sweep
+                                        }
+                                    }
+                                }
+                            }
+                    ) {
+                        val strokePx = 28.dp.toPx()
+                        val arcSize = Size(size.width - strokePx, size.height - strokePx)
+                        val topLeft = Offset(strokePx / 2f, strokePx / 2f)
+                        var startAngle = -90f
+                        categories.forEach { item ->
+                            val sweep = ((item.spent / totalCategorySpend) * 360.0).toFloat().coerceAtLeast(2f)
+                            val color = categoryAccentColor(item.category)
+                            val isSelected = selectedCategory != "All" &&
+                                selectedCategory.equals(item.category, ignoreCase = true)
+                            drawArc(
+                                color = if (selectedCategory == "All" || isSelected) color else color.copy(alpha = 0.35f),
+                                startAngle = startAngle,
+                                sweepAngle = sweep,
+                                useCenter = false,
+                                topLeft = topLeft,
+                                size = arcSize,
+                                style = Stroke(
+                                    width = if (isSelected) strokePx * 1.12f else strokePx,
+                                    cap = StrokeCap.Butt
+                                )
+                            )
+                            startAngle += sweep
+                        }
+                    }
+                }
+
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(5.dp)
+                ) {
+                    categories.take(9).forEach { item ->
+                        val pct = (item.spent / totalCategorySpend) * 100.0
+                        val pctText = String.format(Locale.US, "%.1f%%", pct)
+                        val catColor = categoryAccentColor(item.category)
+                        val safeCatId = item.category.lowercase().replace(Regex("[^a-z0-9]+"), "_")
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(8.dp))
+                                .clickable {
+                                    performHaptic()
+                                    onCategoryClick(item.category)
+                                }
+                                .padding(horizontal = 4.dp, vertical = 2.dp)
+                                .testTag("tx_category_legend_$safeCatId"),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(10.dp)
+                                    .clip(CircleShape)
+                                    .background(catColor)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = "${item.category} $pctText",
+                                style = MaterialTheme.typography.bodySmall,
+                                fontWeight = if (selectedCategory.equals(item.category, ignoreCase = true)) {
+                                    FontWeight.Bold
+                                } else {
+                                    FontWeight.Medium
+                                },
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        // 2. Spends | Budget Two-Column Summary Row
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(
+                modifier = Modifier.weight(1f),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Text(
+                    text = "Spends",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(modifier = Modifier.height(2.dp))
+                Text(
+                    text = formatCurrency(totalSpent, currencySymbol),
+                    style = MaterialTheme.typography.titleMedium.copy(fontFamily = ReceiptMonoFontFamily),
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+            }
+
+            Box(
+                modifier = Modifier
+                    .width(1.dp)
+                    .height(34.dp)
+                    .background(MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f))
+            )
+
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .clip(RoundedCornerShape(12.dp))
+                    .clickable {
+                        performHaptic()
+                        onEditMonthlyBudgetClick()
+                    }
+                    .padding(vertical = 4.dp)
+                    .testTag("tx_categories_monthly_budget_button"),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Text(
+                    text = "Budget",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(modifier = Modifier.height(2.dp))
+                Text(
+                    text = if (monthlyBudget > 0.0) formatCurrency(monthlyBudget, currencySymbol) else "Set budget >",
+                    style = MaterialTheme.typography.titleMedium.copy(fontFamily = ReceiptMonoFontFamily),
+                    fontWeight = FontWeight.Bold,
+                    color = if (monthlyBudget > 0.0) MaterialTheme.colorScheme.onSurface else BudgetSafeGreen
+                )
+            }
+        }
+
+        // 3. Category Cards List
+        categories.forEach { item ->
+            val catColor = categoryAccentColor(item.category)
+            val customEmoji = customEmojis[item.category.trim().lowercase()]
+            val isOverLimit = item.budgetLimit > 0.0 && item.spent > item.budgetLimit
+            val safeCatId = item.category.lowercase().replace(Regex("[^a-z0-9]+"), "_")
+            Surface(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(22.dp))
+                    .clickable {
+                        performHaptic()
+                        onCategoryClick(item.category)
+                    }
+                    .testTag("tx_category_card_$safeCatId"),
+                shape = RoundedCornerShape(22.dp),
+                color = MaterialTheme.colorScheme.surfaceContainerLow,
+                border = BorderStroke(
+                    width = 1.dp,
+                    color = if (selectedCategory.equals(item.category, ignoreCase = true)) {
+                        catColor
+                    } else {
+                        MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.38f)
+                    }
+                )
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 14.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    SquircleIconBadge(
+                        icon = categoryIcon(item.category),
+                        tint = catColor,
+                        containerColor = catColor.copy(alpha = 0.16f),
+                        size = 44.dp,
+                        iconSize = 22.dp,
+                        emoji = customEmoji
+                    )
+                    Spacer(modifier = Modifier.width(14.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = item.category,
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Text(
+                            text = "${item.spendCount} ${if (item.spendCount == 1) "Spend" else "Spends"}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Column(horizontalAlignment = Alignment.End) {
+                        Text(
+                            text = formatCurrency(item.spent, currencySymbol),
+                            style = MaterialTheme.typography.titleMedium.copy(fontFamily = ReceiptMonoFontFamily),
+                            fontWeight = FontWeight.Bold,
+                            color = if (isOverLimit) BudgetDangerCoral else MaterialTheme.colorScheme.onSurface
+                        )
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(8.dp))
+                                .clickable {
+                                    performHaptic()
+                                    onSetCategoryBudgetClick(item.category, item.budgetLimit)
+                                }
+                                .padding(horizontal = 4.dp, vertical = 2.dp)
+                                .testTag("tx_category_set_budget_$safeCatId")
+                        ) {
+                            Text(
+                                text = if (item.budgetLimit > 0.0) {
+                                    "of ${formatCurrency(item.budgetLimit, currencySymbol)}"
+                                } else {
+                                    "Set budget"
+                                },
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.SemiBold,
+                                color = if (item.budgetLimit > 0.0) {
+                                    MaterialTheme.colorScheme.onSurfaceVariant
+                                } else {
+                                    BudgetSafeGreen
+                                }
+                            )
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                                contentDescription = null,
+                                tint = if (item.budgetLimit > 0.0) {
+                                    MaterialTheme.colorScheme.onSurfaceVariant
+                                } else {
+                                    BudgetSafeGreen
+                                },
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+data class MerchantSubTabItem(
+    val merchantName: String,
+    val totalAmount: Double,
+    val transactionCount: Int,
+    val primaryCategory: String = "Shopping"
+)
+
+/**
+ * Merchants Sub-Tab Content matching Screenshot 3 (`Screenshot_20261115_000929_axio_510d00fc.jpg`):
+ * Lists each merchant with a green storefront icon badge, Merchant Name, `"N Spends"`, and bold total amount.
+ * Clicking any merchant card filters transactions to show that same merchant / transaction.
+ */
+@Composable
+fun TransactionMerchantsSubTabContent(
+    merchants: List<MerchantSubTabItem>,
+    currencySymbol: String,
+    selectedMerchant: String = "All",
+    onMerchantClick: (String) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val dimens = LocalAppDimens.current
+    val performHaptic = rememberAppHapticPerformer()
+
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(horizontal = dimens.horizontalPadding, vertical = 8.dp)
+            .testTag("tx_merchants_subtab_content"),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        if (merchants.isEmpty()) {
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(22.dp),
+                color = MaterialTheme.colorScheme.surfaceContainerLow
+            ) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(24.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = "No merchant transactions in this period",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+        } else {
+            merchants.forEach { item ->
+                val safeMerchantId = item.merchantName.lowercase().replace(Regex("[^a-z0-9]+"), "_").trim('_')
+                val isSelected = selectedMerchant != "All" &&
+                    selectedMerchant.equals(item.merchantName, ignoreCase = true)
+                Surface(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(22.dp))
+                        .clickable {
+                            performHaptic()
+                            onMerchantClick(item.merchantName)
+                        }
+                        .testTag("tx_merchant_card_$safeMerchantId"),
+                    shape = RoundedCornerShape(22.dp),
+                    color = MaterialTheme.colorScheme.surfaceContainerLow,
+                    border = BorderStroke(
+                        width = 1.dp,
+                        color = if (isSelected) {
+                            BudgetSafeGreen
+                        } else {
+                            MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.38f)
+                        }
+                    )
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 14.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        SquircleIconBadge(
+                            icon = Icons.Default.ShoppingBag,
+                            tint = BudgetSafeGreen,
+                            containerColor = BudgetSafeGreen.copy(alpha = 0.16f),
+                            size = 44.dp,
+                            iconSize = 22.dp
+                        )
+                        Spacer(modifier = Modifier.width(14.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = item.merchantName,
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onSurface,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Text(
+                                text = "${item.transactionCount} ${if (item.transactionCount == 1) "Spend" else "Spends"}",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(10.dp))
+                        Text(
+                            text = formatCurrency(item.totalAmount, currencySymbol),
+                            style = MaterialTheme.typography.titleMedium.copy(fontFamily = ReceiptMonoFontFamily),
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
 
 

@@ -289,18 +289,33 @@ object DateRangeFilterUtils {
 }
 
 object AccountLimitPeriodUtils {
-    fun computeBoundsMillis(
-        account: FinancialAccount,
+    /**
+     * Computes inclusive `(startMillis, endMillis)` bounds for a 1-month credit card billing cycle
+     * anchored on [billingCycleDay] (`1..31`).
+     * - If the reference date's day-of-month is `>= effectiveDayInCurrentMonth`, the cycle runs from
+     *   `billingCycleDay` of the current month (`00:00:00.000`) through the day before `billingCycleDay`
+     *   of the next month (`23:59:59.999`).
+     * - If the reference date's day-of-month is `< effectiveDayInCurrentMonth`, the cycle runs from
+     *   `billingCycleDay` of the previous month (`00:00:00.000`) through the day before `billingCycleDay`
+     *   of the current month (`23:59:59.999`).
+     */
+    fun computeBillingCycleBoundsMillis(
+        billingCycleDay: Int,
         referenceMillis: Long = System.currentTimeMillis()
     ): Pair<Long, Long> {
-        val period = AccountLimitPeriod.fromRaw(account.spendLimitPeriod)
-        val cal = Calendar.getInstance().apply { timeInMillis = referenceMillis }
+        val targetDay = billingCycleDay.coerceIn(1, 31)
+        val refCal = Calendar.getInstance().apply { timeInMillis = referenceMillis }
+        val refYear = refCal.get(Calendar.YEAR)
+        val refMonth = refCal.get(Calendar.MONTH)
+        val refDayOfMonth = refCal.get(Calendar.DAY_OF_MONTH)
 
-        fun dayStart(year: Int, month: Int, day: Int): Long {
+        fun monthCycleStartMillis(year: Int, month: Int): Long {
             return Calendar.getInstance().apply {
                 set(Calendar.YEAR, year)
                 set(Calendar.MONTH, month)
-                set(Calendar.DAY_OF_MONTH, day)
+                set(Calendar.DAY_OF_MONTH, 1)
+                val maxDay = getActualMaximum(Calendar.DAY_OF_MONTH)
+                set(Calendar.DAY_OF_MONTH, targetDay.coerceAtMost(maxDay))
                 set(Calendar.HOUR_OF_DAY, 0)
                 set(Calendar.MINUTE, 0)
                 set(Calendar.SECOND, 0)
@@ -308,73 +323,154 @@ object AccountLimitPeriodUtils {
             }.timeInMillis
         }
 
-        fun dayEnd(year: Int, month: Int, day: Int): Long {
-            return Calendar.getInstance().apply {
-                set(Calendar.YEAR, year)
-                set(Calendar.MONTH, month)
-                set(Calendar.DAY_OF_MONTH, day)
-                set(Calendar.HOUR_OF_DAY, 23)
-                set(Calendar.MINUTE, 59)
-                set(Calendar.SECOND, 59)
-                set(Calendar.MILLISECOND, 999)
-            }.timeInMillis
-        }
+        val currentMonthMaxDay = refCal.getActualMaximum(Calendar.DAY_OF_MONTH)
+        val effectiveCurrentDay = targetDay.coerceAtMost(currentMonthMaxDay)
 
-        val y = cal.get(Calendar.YEAR)
-        val m = cal.get(Calendar.MONTH)
-
-        return when (period) {
-            AccountLimitPeriod.MONTHLY -> {
-                val maxDay = cal.getActualMaximum(Calendar.DAY_OF_MONTH)
-                dayStart(y, m, 1) to dayEnd(y, m, maxDay)
+        return if (refDayOfMonth >= effectiveCurrentDay) {
+            val startMs = monthCycleStartMillis(refYear, refMonth)
+            val nextMonthCal = Calendar.getInstance().apply {
+                set(Calendar.YEAR, refYear)
+                set(Calendar.MONTH, refMonth)
+                set(Calendar.DAY_OF_MONTH, 1)
+                add(Calendar.MONTH, 1)
             }
-            AccountLimitPeriod.WEEKLY -> {
-                val weekStart = Calendar.getInstance().apply {
-                    timeInMillis = referenceMillis
-                    set(Calendar.DAY_OF_WEEK, firstDayOfWeek)
-                    set(Calendar.HOUR_OF_DAY, 0)
-                    set(Calendar.MINUTE, 0)
-                    set(Calendar.SECOND, 0)
-                    set(Calendar.MILLISECOND, 0)
-                }.timeInMillis
-                val weekEnd = weekStart + (7L * 86_400_000L) - 1L
-                weekStart to weekEnd
+            val nextStartMs = monthCycleStartMillis(
+                nextMonthCal.get(Calendar.YEAR),
+                nextMonthCal.get(Calendar.MONTH)
+            )
+            startMs to (nextStartMs - 1L)
+        } else {
+            val prevMonthCal = Calendar.getInstance().apply {
+                set(Calendar.YEAR, refYear)
+                set(Calendar.MONTH, refMonth)
+                set(Calendar.DAY_OF_MONTH, 1)
+                add(Calendar.MONTH, -1)
             }
-            AccountLimitPeriod.QUARTERLY -> {
-                val quarterStartMonth = (m / 3) * 3
-                val quarterEndMonth = quarterStartMonth + 2
-                val endCal = Calendar.getInstance().apply {
-                    set(Calendar.YEAR, y)
-                    set(Calendar.MONTH, quarterEndMonth)
-                    set(Calendar.DAY_OF_MONTH, 1)
-                }
-                dayStart(y, quarterStartMonth, 1) to dayEnd(y, quarterEndMonth, endCal.getActualMaximum(Calendar.DAY_OF_MONTH))
-            }
-            AccountLimitPeriod.YEARLY -> {
-                dayStart(y, Calendar.JANUARY, 1) to dayEnd(y, Calendar.DECEMBER, 31)
-            }
-            AccountLimitPeriod.CUSTOM -> {
-                if (account.spendLimitStartMillis > 0L && account.spendLimitEndMillis > 0L) {
-                    val lo = minOf(account.spendLimitStartMillis, account.spendLimitEndMillis)
-                    val hi = maxOf(account.spendLimitStartMillis, account.spendLimitEndMillis)
-                    lo to hi
-                } else {
-                    val maxDay = cal.getActualMaximum(Calendar.DAY_OF_MONTH)
-                    dayStart(y, m, 1) to dayEnd(y, m, maxDay)
-                }
-            }
+            val startMs = monthCycleStartMillis(
+                prevMonthCal.get(Calendar.YEAR),
+                prevMonthCal.get(Calendar.MONTH)
+            )
+            val currentStartMs = monthCycleStartMillis(refYear, refMonth)
+            startMs to (currentStartMs - 1L)
         }
     }
 
-    fun formatLimitPeriodLabel(account: FinancialAccount): String {
-        val period = AccountLimitPeriod.fromRaw(account.spendLimitPeriod)
-        if (period == AccountLimitPeriod.CUSTOM && account.spendLimitStartMillis > 0L && account.spendLimitEndMillis > 0L) {
-            val fmt = SimpleDateFormat("dd MMM", Locale.getDefault())
-            val lo = minOf(account.spendLimitStartMillis, account.spendLimitEndMillis)
-            val hi = maxOf(account.spendLimitStartMillis, account.spendLimitEndMillis)
-            return "${fmt.format(lo)} – ${fmt.format(hi)}"
+    /**
+     * Returns the `(year, month)` of the monthly billing cycle start date containing [referenceMillis].
+     */
+    fun computeBillingCycleStartYearMonth(
+        billingCycleDay: Int,
+        referenceMillis: Long = System.currentTimeMillis()
+    ): Pair<Int, Int> {
+        val targetDay = billingCycleDay.coerceIn(1, 31)
+        val refCal = Calendar.getInstance().apply { timeInMillis = referenceMillis }
+        val refYear = refCal.get(Calendar.YEAR)
+        val refMonth = refCal.get(Calendar.MONTH)
+        val refDayOfMonth = refCal.get(Calendar.DAY_OF_MONTH)
+        val currentMonthMaxDay = refCal.getActualMaximum(Calendar.DAY_OF_MONTH)
+        val effectiveCurrentDay = targetDay.coerceAtMost(currentMonthMaxDay)
+        return if (refDayOfMonth >= effectiveCurrentDay) {
+            refYear to refMonth
+        } else {
+            val prevCal = Calendar.getInstance().apply {
+                set(Calendar.YEAR, refYear)
+                set(Calendar.MONTH, refMonth)
+                set(Calendar.DAY_OF_MONTH, 1)
+                add(Calendar.MONTH, -1)
+            }
+            prevCal.get(Calendar.YEAR) to prevCal.get(Calendar.MONTH)
         }
-        return period.label
+    }
+
+    /**
+     * Computes contiguous `(startMillis, endMillis)` for a monthly billing cycle offset from the active cycle
+     * (`0` = current cycle, `-1` = previous cycle, `+1` = next cycle). Preserves exact boundary alignment
+     * across 28/29/30/31-day months when [billingCycleDay] is 29, 30, or 31.
+     */
+    fun computeBillingCycleBoundsForOffset(
+        billingCycleDay: Int,
+        cycleOffset: Int,
+        referenceMillis: Long = System.currentTimeMillis()
+    ): Pair<Long, Long> {
+        if (cycleOffset == 0) {
+            return computeBillingCycleBoundsMillis(billingCycleDay, referenceMillis)
+        }
+        val targetDay = billingCycleDay.coerceIn(1, 31)
+        val (anchorYear, anchorMonth) = computeBillingCycleStartYearMonth(targetDay, referenceMillis)
+
+        fun monthCycleStartMillis(year: Int, month: Int): Long {
+            return Calendar.getInstance().apply {
+                set(Calendar.YEAR, year)
+                set(Calendar.MONTH, month)
+                set(Calendar.DAY_OF_MONTH, 1)
+                val maxDay = getActualMaximum(Calendar.DAY_OF_MONTH)
+                set(Calendar.DAY_OF_MONTH, targetDay.coerceAtMost(maxDay))
+                set(Calendar.HOUR_OF_DAY, 0)
+                set(Calendar.MINUTE, 0)
+                set(Calendar.SECOND, 0)
+                set(Calendar.MILLISECOND, 0)
+            }.timeInMillis
+        }
+
+        val startCal = Calendar.getInstance().apply {
+            set(Calendar.YEAR, anchorYear)
+            set(Calendar.MONTH, anchorMonth)
+            set(Calendar.DAY_OF_MONTH, 1)
+            add(Calendar.MONTH, cycleOffset)
+        }
+        val nextCal = Calendar.getInstance().apply {
+            timeInMillis = startCal.timeInMillis
+            add(Calendar.MONTH, 1)
+        }
+        val startMs = monthCycleStartMillis(startCal.get(Calendar.YEAR), startCal.get(Calendar.MONTH))
+        val nextStartMs = monthCycleStartMillis(nextCal.get(Calendar.YEAR), nextCal.get(Calendar.MONTH))
+        return startMs to (nextStartMs - 1L)
+    }
+
+    fun formatBillingCycleRange(
+        billingCycleDay: Int,
+        cycleOffset: Int = 0,
+        referenceMillis: Long = System.currentTimeMillis(),
+        includeYear: Boolean = false
+    ): String {
+        val (startMs, endMs) = computeBillingCycleBoundsForOffset(billingCycleDay, cycleOffset, referenceMillis)
+        val fmt = SimpleDateFormat(if (includeYear) "dd MMM yyyy" else "dd MMM", Locale.getDefault())
+        return "${fmt.format(startMs)} – ${fmt.format(endMs)}"
+    }
+
+    fun formatBillingCycleShortStart(
+        billingCycleDay: Int,
+        cycleOffset: Int = 0,
+        referenceMillis: Long = System.currentTimeMillis()
+    ): String {
+        val (startMs, _) = computeBillingCycleBoundsForOffset(billingCycleDay, cycleOffset, referenceMillis)
+        return SimpleDateFormat("dd MMM", Locale.getDefault()).format(startMs)
+    }
+
+    fun computeBoundsMillis(
+        account: FinancialAccount,
+        referenceMillis: Long = System.currentTimeMillis()
+    ): Pair<Long, Long> {
+        val isCreditCard = AccountSectionType.fromAccount(account) == AccountSectionType.CREDIT_CARD
+        val cycleDay = account.billingCycleDay.coerceIn(1, 31)
+        if (isCreditCard || cycleDay > 1) {
+            return computeBillingCycleBoundsMillis(cycleDay, referenceMillis)
+        }
+        return computeBillingCycleBoundsMillis(1, referenceMillis)
+    }
+
+    fun formatLimitPeriodLabel(
+        account: FinancialAccount,
+        referenceMillis: Long = System.currentTimeMillis()
+    ): String {
+        val cycleDay = account.billingCycleDay.coerceIn(1, 31)
+        val (startMs, endMs) = computeBoundsMillis(account, referenceMillis)
+        val fmt = SimpleDateFormat("dd MMM", Locale.getDefault())
+        return if (AccountSectionType.fromAccount(account) == AccountSectionType.CREDIT_CARD || cycleDay > 1) {
+            "Cycle Day $cycleDay (${fmt.format(startMs)} – ${fmt.format(endMs)})"
+        } else {
+            "Cycle (${fmt.format(startMs)} – ${fmt.format(endMs)})"
+        }
     }
 }
 
@@ -494,7 +590,8 @@ data class AccountSpendSummary(
     val limitSpent: Double = spent,
     val limitPeriod: AccountLimitPeriod = AccountLimitPeriod.MONTHLY,
     val limitPeriodLabel: String = "Monthly",
-    val isHidden: Boolean = false
+    val isHidden: Boolean = false,
+    val allTransactions: List<ExpenseTransaction> = emptyList()
 ) {
     val progressFraction: Float
         get() = if (limit > 0.0) (limitSpent / limit).toFloat().coerceAtLeast(0f) else 0f
@@ -611,6 +708,7 @@ data class OneFamilyDashboardUiState(
     val selectedPaymentModeFilter: String = "All",
     val selectedAccountFilter: String = "All",
     val selectedTagFilter: String = "All",
+    val selectedMerchantFilter: String = "All",
     val selectedMemberFilter: String = "All",
     val selectedSortOrder: String = "NEWEST",
     val availableCategories: List<String> = ExpenseCategories.ALL,
@@ -665,6 +763,7 @@ class OneFamilyViewModel(
     private val _paymentModeFilter = MutableStateFlow("All")
     private val _accountFilter = MutableStateFlow("All")
     private val _tagFilter = MutableStateFlow("All")
+    private val _merchantFilter = MutableStateFlow("All")
     private val _memberFilter = MutableStateFlow("All")
     private val _sortOrder = MutableStateFlow("NEWEST")
     private val _customCategories = MutableStateFlow<List<String>>(emptyList())
@@ -769,6 +868,7 @@ class OneFamilyViewModel(
         val paymentMode: String,
         val account: String,
         val tag: String,
+        val merchant: String = "All",
         val member: String,
         val sortOrder: String,
         val customCategories: List<String>,
@@ -803,9 +903,9 @@ class OneFamilyViewModel(
     private val filterPrimaryFlow = combine(
         combine(_selectedScope, _selectedPeriod, _dateRangePreset, _customDateRange, _searchQuery) { s, p, dr, cdr, q -> arrayOf(s, p, dr, cdr, q) },
         combine(_typeFilter, _categoryFilter, _paymentModeFilter) { ty, c, pm -> Triple(ty, c, pm) },
-        combine(_accountFilter, _tagFilter, _memberFilter) { a, t, m -> Triple(a, t, m) }
-    ) { spdq, (type, cat, pm), (acc, tag, mem) ->
-        arrayOf(spdq[0], spdq[1], spdq[2], spdq[3], spdq[4], type, cat, pm, acc, tag, mem)
+        combine(_accountFilter, _tagFilter, _merchantFilter, _memberFilter) { a, t, mer, m -> arrayOf(a, t, mer, m) }
+    ) { spdq, (type, cat, pm), atmm ->
+        arrayOf(spdq[0], spdq[1], spdq[2], spdq[3], spdq[4], type, cat, pm, atmm[0], atmm[1], atmm[2], atmm[3])
     }
 
     private val mergedCustomCategoriesFlow = combine(
@@ -845,7 +945,8 @@ class OneFamilyViewModel(
             paymentMode = p[7] as String,
             account = p[8] as String,
             tag = p[9] as String,
-            member = p[10] as String,
+            merchant = p[10] as String,
+            member = p[11] as String,
             sortOrder = s[0] as String,
             customCategories = s[1] as List<String>,
             candidates = s[2] as List<SmsCandidate>,
@@ -1061,7 +1162,8 @@ class OneFamilyViewModel(
                 limitSpent = limitSpent,
                 limitPeriod = limitPeriod,
                 limitPeriodLabel = limitPeriodLabel,
-                isHidden = resolvedHidden
+                isHidden = resolvedHidden,
+                allTransactions = allScopedTxByAccount[acc.id].orEmpty().sortedByDescending { it.transactionDateMillis }
             )
         }.sortedWith(
             compareBy<AccountSpendSummary> { sectionOrder.indexOf(it.section) }
@@ -1263,9 +1365,24 @@ class OneFamilyViewModel(
             )
         }
 
+        fun effectiveTagsForTransaction(tx: ExpenseTransaction): List<String> {
+            val explicit = tx.tags.map { it.trim().removePrefix("#") }.filter { it.isNotBlank() }
+            if (explicit.isNotEmpty()) return explicit
+            val mode = tx.paymentMode.trim().uppercase()
+            val titleLower = tx.title.lowercase()
+            val derived = when {
+                mode == "UPI" || titleLower.contains("upi") -> "Online"
+                mode == "CARD" -> "Card"
+                mode == "CASH" -> "Cash"
+                mode == "WALLET" -> "Wallet"
+                else -> "Online"
+            }
+            return listOf(derived)
+        }
+
         val tagSpendMap = mutableMapOf<String, Double>()
         periodExpensesOnly.forEach { tx ->
-            tx.tags.forEach { tag ->
+            effectiveTagsForTransaction(tx).forEach { tag ->
                 tagSpendMap[tag] = (tagSpendMap[tag] ?: 0.0) + tx.amount
             }
         }
@@ -1278,13 +1395,14 @@ class OneFamilyViewModel(
             .mapValues { entry -> entry.value.sumOf { it.amount } }
             .entries
             .sortedByDescending { it.value }
-            .take(8)
+            .take(25)
             .map { it.key to it.value }
 
         val memberSpendMap = periodExpensesOnly
             .groupBy { it.userName.ifBlank { "Member" } }
             .mapValues { entry -> entry.value.sumOf { it.amount } }
 
+        val cleanTagFilter = filter.tag.trim().removePrefix("#")
         val filteredUnsorted = periodTransactions.filter { tx ->
             val matchesQuery = filter.query.isBlank() ||
                 tx.title.contains(filter.query, ignoreCase = true) ||
@@ -1292,7 +1410,7 @@ class OneFamilyViewModel(
                 tx.category.contains(filter.query, ignoreCase = true) ||
                 tx.accountName.contains(filter.query, ignoreCase = true) ||
                 tx.paymentMode.contains(filter.query, ignoreCase = true) ||
-                tx.tags.any { it.contains(filter.query, ignoreCase = true) }
+                effectiveTagsForTransaction(tx).any { it.contains(filter.query, ignoreCase = true) }
 
             val matchesType = when {
                 filter.type == "All" -> true
@@ -1308,10 +1426,16 @@ class OneFamilyViewModel(
                 )
             val matchesMode = filter.paymentMode == "All" || tx.paymentMode.equals(filter.paymentMode, ignoreCase = true)
             val matchesAcc = filter.account == "All" || tx.accountName.equals(filter.account, ignoreCase = true)
-            val matchesTag = filter.tag == "All" || tx.tags.any { it.equals(filter.tag, ignoreCase = true) }
+            val matchesTag = filter.tag == "All" ||
+                effectiveTagsForTransaction(tx).any { it.equals(cleanTagFilter, ignoreCase = true) } ||
+                tx.tags.any { it.trim().removePrefix("#").equals(cleanTagFilter, ignoreCase = true) } ||
+                tx.paymentMode.equals(cleanTagFilter, ignoreCase = true)
+            val matchesMerchant = filter.merchant == "All" ||
+                MerchantCategoryUpdatePrompt.normalizeMerchantKey(tx.title) ==
+                MerchantCategoryUpdatePrompt.normalizeMerchantKey(filter.merchant)
             val matchesMem = filter.member == "All" || tx.userName.equals(filter.member, ignoreCase = true)
 
-            matchesQuery && matchesType && matchesCat && matchesMode && matchesAcc && matchesTag && matchesMem
+            matchesQuery && matchesType && matchesCat && matchesMode && matchesAcc && matchesTag && matchesMerchant && matchesMem
         }
 
         val filtered = when (filter.sortOrder) {
@@ -1348,6 +1472,7 @@ class OneFamilyViewModel(
             selectedPaymentModeFilter = filter.paymentMode,
             selectedAccountFilter = filter.account,
             selectedTagFilter = filter.tag,
+            selectedMerchantFilter = filter.merchant,
             selectedMemberFilter = filter.member,
             selectedSortOrder = filter.sortOrder,
             availableCategories = allAvailableCategories,
@@ -1459,7 +1584,25 @@ class OneFamilyViewModel(
     }
 
     fun selectTagFilter(tag: String) {
-        _tagFilter.value = tag
+        val cleaned = tag.trim().removePrefix("#")
+        _tagFilter.value = if (cleaned.isBlank() || cleaned.equals("All", ignoreCase = true)) {
+            "All"
+        } else if (_tagFilter.value.equals(cleaned, ignoreCase = true)) {
+            "All"
+        } else {
+            cleaned
+        }
+    }
+
+    fun selectMerchantFilter(merchant: String) {
+        val cleaned = merchant.trim()
+        _merchantFilter.value = if (cleaned.isBlank() || cleaned.equals("All", ignoreCase = true)) {
+            "All"
+        } else if (_merchantFilter.value.equals(cleaned, ignoreCase = true)) {
+            "All"
+        } else {
+            cleaned
+        }
     }
 
     fun selectMemberFilter(member: String) {
@@ -1515,6 +1658,7 @@ class OneFamilyViewModel(
         _paymentModeFilter.value = "All"
         _accountFilter.value = "All"
         _tagFilter.value = "All"
+        _merchantFilter.value = "All"
         _memberFilter.value = "All"
         _sortOrder.value = "NEWEST"
         _dateRangePreset.value = DateRangePreset.MONTH
@@ -1828,6 +1972,11 @@ class OneFamilyViewModel(
                 val (minTimestampMillis, maxTimestampMillis) = _smsSyncPeriodOption.value
                     .computeBoundsMillis(_smsSyncCustomRange.value)
 
+                val smoothBatchDelayMs = if (android.os.Build.FINGERPRINT.equals("robolectric", ignoreCase = true)) {
+                    15L
+                } else {
+                    165L
+                }
                 val (discovered, totalImported) = runParallelSmsBatchPipeline(
                     rawRowsOverride = null,
                     existingSignatures = existingSignatures,
@@ -1836,7 +1985,7 @@ class OneFamilyViewModel(
                     readerThreads = configuredReaders,
                     writerThreads = configuredWriters,
                     batchSize = configuredBatchSize,
-                    perBatchDelayMs = 45L,
+                    perBatchDelayMs = smoothBatchDelayMs,
                     minTimestampMillis = minTimestampMillis,
                     maxTimestampMillis = maxTimestampMillis
                 )
@@ -1859,24 +2008,34 @@ class OneFamilyViewModel(
                         _statusBanner.value = "Synced $totalImported new SMS receipts."
 
                         if (notifyNewest && context != null) {
-                            val newest = discovered.maxByOrNull { it.parsed.timestamp }
-                            if (newest != null) {
-                                val expenseId = "sms_${newest.id}"
-                                val isShared = household != null
-                                val merchantTitle = newest.parsed.merchant?.takeIf { it.isNotBlank() }
-                                    ?: "${newest.parsed.bankName} ${newest.parsed.type.name.lowercase().replaceFirstChar { it.uppercase() }}"
+                            val isShared = household != null
+                            val unnotified = discovered
+                                .filterNot { TransactionNotificationHelper.isCandidateAlreadyNotified(currentUserId, it) }
+                                .sortedBy { it.parsed.timestamp }
+                            val toNotify = if (discovered.size <= 8) {
+                                unnotified.ifEmpty { listOfNotNull(discovered.maxByOrNull { it.parsed.timestamp }) }
+                            } else {
+                                listOfNotNull((unnotified.ifEmpty { discovered }).maxByOrNull { it.parsed.timestamp })
+                            }
+                            for (cand in toNotify) {
+                                val expenseId = "sms_${cand.id}"
+                                val merchantTitle = cand.parsed.merchant?.takeIf { it.isNotBlank() }
+                                    ?: "${cand.parsed.bankName} ${cand.parsed.type.name.lowercase().replaceFirstChar { it.uppercase() }}"
                                 TransactionNotificationHelper.showNewTransactionNotification(
                                     context = context,
                                     expenseId = expenseId,
                                     visibility = if (isShared) "SHARED" else "PERSONAL",
                                     householdId = household?.id.orEmpty(),
                                     title = merchantTitle,
-                                    amount = newest.parsed.amount.toDouble(),
-                                    currentCategory = newest.suggestedCategory,
+                                    amount = cand.parsed.amount.toDouble(),
+                                    currentCategory = cand.suggestedCategory,
                                     currencySymbol = state.activeCurrencySymbol,
-                                    paymentSummary = "${newest.suggestedAccountName} • ${newest.suggestedPaymentMode}",
-                                    transactionType = if (newest.parsed.type == TransactionType.INCOME) "INCOME" else "EXPENSE"
+                                    paymentSummary = "${cand.suggestedAccountName} • ${cand.suggestedPaymentMode}",
+                                    transactionType = if (cand.parsed.type == TransactionType.INCOME) "INCOME" else "EXPENSE"
                                 )
+                            }
+                            discovered.forEach { cand ->
+                                TransactionNotificationHelper.markSignatureNotified(currentUserId, cand)
                             }
                         }
                     } else if (!silentIfEmpty) {
@@ -2586,6 +2745,7 @@ class OneFamilyViewModel(
         linkedBankAccountId: String = "",
         linkedBankAccountName: String = "",
         monthlySpendLimit: Double = 0.0,
+        billingCycleDay: Int = 1,
         spendLimitPeriod: String = AccountLimitPeriod.MONTHLY.name,
         spendLimitStartMillis: Long = 0L,
         spendLimitEndMillis: Long = 0L,
@@ -2610,6 +2770,7 @@ class OneFamilyViewModel(
                 linkedBankAccountId = linkedBankAccountId,
                 linkedBankAccountName = linkedBankAccountName,
                 monthlySpendLimit = monthlySpendLimit,
+                billingCycleDay = billingCycleDay.coerceIn(1, 31),
                 spendLimitPeriod = spendLimitPeriod,
                 spendLimitStartMillis = spendLimitStartMillis,
                 spendLimitEndMillis = spendLimitEndMillis
@@ -2625,6 +2786,7 @@ class OneFamilyViewModel(
         account: FinancialAccount,
         monthlySpendLimit: Double,
         alertThresholdPercent: Int = 80,
+        billingCycleDay: Int = account.billingCycleDay,
         spendLimitPeriod: String = account.spendLimitPeriod,
         spendLimitStartMillis: Long = account.spendLimitStartMillis,
         spendLimitEndMillis: Long = account.spendLimitEndMillis
@@ -2634,6 +2796,7 @@ class OneFamilyViewModel(
                 account = account,
                 monthlySpendLimit = monthlySpendLimit.coerceAtLeast(0.0),
                 alertThresholdPercent = alertThresholdPercent.coerceIn(1, 100),
+                billingCycleDay = billingCycleDay.coerceIn(1, 31),
                 spendLimitPeriod = spendLimitPeriod,
                 spendLimitStartMillis = spendLimitStartMillis,
                 spendLimitEndMillis = spendLimitEndMillis
@@ -2641,7 +2804,7 @@ class OneFamilyViewModel(
                 _statusBanner.value = if (monthlySpendLimit <= 0.0) {
                     "Cleared spend limit for ${account.name}."
                 } else {
-                    "Updated ${account.name} spend limit."
+                    "Updated ${account.name} spend limit (Cycle Day ${billingCycleDay.coerceIn(1, 31)})."
                 }
             }.onFailure { err ->
                 _errorMessage.value = err.localizedMessage ?: "Failed to update account spend limit."
@@ -2807,57 +2970,68 @@ class OneFamilyViewModel(
         _isDeletingAccount.value = true
 
         viewModelScope.launch {
-            try {
-                // 1. Permanently delete all Firestore documents & local records while authenticated
-                repository.deleteAllUserData(currentUserId).getOrThrow()
+            withContext(NonCancellable) {
+                try {
+                    // 1. Clear notification deduplication cache for this user
+                    TransactionNotificationHelper.clearNotifiedStateForUser(currentUserId)
 
-                // 2. Delete the Firebase Auth account if backed by Firebase Authentication
-                val firebaseUser = runCatching { Firebase.auth.currentUser }.getOrNull()
-                if (firebaseUser != null && firebaseUser.uid == currentUserId) {
-                    try {
-                        firebaseUser.delete().await()
-                    } catch (_: FirebaseAuthRecentLoginRequiredException) {
-                        val clientId = runCatching {
-                            context.getString(R.string.default_web_client_id)
-                        }.getOrNull()?.takeIf { it.isNotBlank() }
-                            ?: error("Google Sign-In configuration missing for account deletion re-verification.")
-                        val signInOption = GetSignInWithGoogleOption.Builder(serverClientId = clientId).build()
-                        val request = GetCredentialRequest.Builder()
-                            .addCredentialOption(signInOption)
-                            .build()
-                        val activityCtx = context.findHostActivity() ?: context
-                        val credResult = credentialManager.getCredential(activityCtx, request)
-                        val cred = credResult.credential
-                        if (cred is CustomCredential && cred.type == TYPE_GOOGLE_ID_TOKEN_CREDENTIAL) {
-                            val idToken = GoogleIdTokenCredential.createFrom(cred.data).idToken
-                            val authCred = GoogleAuthProvider.getCredential(idToken, null)
-                            firebaseUser.reauthenticate(authCred).await()
+                    // 2. Permanently delete all Firestore documents & local records while authenticated
+                    runCatching {
+                        repository.deleteAllUserData(currentUserId).getOrThrow()
+                    }
+
+                    // 3. Delete local account credentials & mark user/email as fresh on next login
+                    LocalAccountSessionManager.deleteLocalUserAccount(
+                        context = context,
+                        uid = currentUserId,
+                        email = currentUserEmail
+                    )
+
+                    // 4. Delete the Firebase Auth account if backed by Firebase Authentication
+                    val firebaseUser = runCatching { Firebase.auth.currentUser }.getOrNull()
+                    if (firebaseUser != null && firebaseUser.uid == currentUserId) {
+                        try {
                             firebaseUser.delete().await()
-                        } else {
-                            error("Re-authentication failed. Please sign out, sign back in with Google, and retry.")
+                        } catch (_: FirebaseAuthRecentLoginRequiredException) {
+                            runCatching {
+                                val clientId = context.getString(R.string.default_web_client_id)
+                                    .takeIf { it.isNotBlank() }
+                                if (clientId != null) {
+                                    val signInOption = GetSignInWithGoogleOption.Builder(serverClientId = clientId).build()
+                                    val request = GetCredentialRequest.Builder()
+                                        .addCredentialOption(signInOption)
+                                        .build()
+                                    val activityCtx = context.findHostActivity() ?: context
+                                    val credResult = credentialManager.getCredential(activityCtx, request)
+                                    val cred = credResult.credential
+                                    if (cred is CustomCredential && cred.type == TYPE_GOOGLE_ID_TOKEN_CREDENTIAL) {
+                                        val idToken = GoogleIdTokenCredential.createFrom(cred.data).idToken
+                                        val authCred = GoogleAuthProvider.getCredential(idToken, null)
+                                        firebaseUser.reauthenticate(authCred).await()
+                                        firebaseUser.delete().await()
+                                    }
+                                }
+                            }
+                        } catch (_: Exception) {
+                            // Proceed with sign-out and credential state cleanup even if network auth delete fails
                         }
                     }
-                }
 
-                // 3. Clear CredentialManager & local session state inside NonCancellable
-                withContext(NonCancellable) {
+                    // 5. Clear CredentialManager & sign out cleanly
                     runCatching {
                         credentialManager.clearCredentialState(ClearCredentialStateRequest())
                     }
-                    LocalAccountSessionManager.deleteLocalUserAccount(context, currentUserId)
+                    LocalAccountSessionManager.signOut(context)
                     runCatching { Firebase.auth.signOut() }
                     _isDeletingAccount.value = false
                     withContext(Dispatchers.Main) {
                         onAccountDeleted()
                     }
+                } catch (e: Exception) {
+                    _isDeletingAccount.value = false
+                    _errorMessage.value = e.localizedMessage
+                        ?: "Could not permanently delete account and data. Please try again."
                 }
-            } catch (e: CancellationException) {
-                _isDeletingAccount.value = false
-                throw e
-            } catch (e: Exception) {
-                _isDeletingAccount.value = false
-                _errorMessage.value = e.localizedMessage
-                    ?: "Could not permanently delete account and data. Please try again."
             }
         }
     }

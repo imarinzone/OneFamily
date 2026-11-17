@@ -1,6 +1,7 @@
 package com.example.data.sms
 
 import android.Manifest
+import android.app.AlarmManager
 import android.app.NotificationChannel
 import android.app.NotificationChannelGroup
 import android.app.NotificationManager
@@ -25,14 +26,17 @@ import androidx.core.content.ContextCompat
 import androidx.core.graphics.drawable.DrawableCompat
 import com.example.MainActivity
 import com.example.R
+import com.example.data.local.LocalAccountDataStore
 import com.example.data.local.LocalAccountSessionManager
 import com.example.data.model.ExpenseCategories
+import com.example.data.model.NotificationSubCategory
 import com.example.data.repository.OneFamilyRepository
 import com.example.ui.theme.categoryAccentColorArgb
 import com.google.firebase.Firebase
 import com.google.firebase.auth.auth
 import com.ritesh.parser.core.TransactionType
 import java.text.NumberFormat
+import java.util.Calendar
 import java.util.Collections
 import java.util.Locale
 import kotlinx.coroutines.CoroutineScope
@@ -42,6 +46,15 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
+enum class SpendSummaryPeriod(
+    val label: String,
+    val subCategory: NotificationSubCategory
+) {
+    DAILY("Daily Spend Summary", NotificationSubCategory.DAILY_SUMMARY),
+    WEEKLY("Weekly Spend Summary", NotificationSubCategory.WEEKLY_SUMMARY),
+    MONTHLY("Monthly Spend Summary", NotificationSubCategory.MONTHLY_SUMMARY)
+}
+
 object TransactionNotificationHelper {
     const val CHANNEL_GROUP_ID = "onefamily_alerts_group"
     const val CHANNEL_ID = "onefamily_realtime_transactions"
@@ -49,6 +62,7 @@ object TransactionNotificationHelper {
     const val CHANNEL_ID_FCM_FAMILY = "onefamily_fcm_family_push"
     const val CHANNEL_ID_FCM_BUDGET = "onefamily_fcm_budget_push"
     const val CHANNEL_ID_CREDIT_LIMIT = "onefamily_credit_card_limit_alerts"
+    const val CHANNEL_ID_SPEND_SUMMARY = "onefamily_spend_summary_alerts"
     const val EXTRA_EDIT_EXPENSE_ID = "extra_edit_expense_id"
     const val EXTRA_EDIT_HOUSEHOLD_ID = "extra_edit_household_id"
     const val EXTRA_EDIT_VISIBILITY = "extra_edit_visibility"
@@ -66,6 +80,66 @@ object TransactionNotificationHelper {
         Collections.synchronizedSet(mutableSetOf<String>())
     private val notifiedCreditLimitKeys: MutableSet<String> =
         Collections.synchronizedSet(mutableSetOf<String>())
+
+    fun clearNotifiedStateForUser(uid: String) {
+        if (uid.isBlank()) {
+            notifiedSignatures.clear()
+            notifiedBodyTimestamps.clear()
+            return
+        }
+        val prefix = "$uid|"
+        synchronized(notifiedSignatures) {
+            notifiedSignatures.removeAll { it.startsWith(prefix) }
+        }
+        notifiedBodyTimestamps.keys.removeIf { it.startsWith(prefix) }
+    }
+
+    fun markSignatureNotified(uid: String, candidate: SmsCandidate) {
+        if (uid.isBlank()) return
+        val contentKey = SmsInboxReader.buildSmsContentKey(
+            body = candidate.parsed.smsBody,
+            timestamp = candidate.parsed.timestamp
+        )
+        val adjacentKeys = SmsInboxReader.buildSmsAdjacentContentKeys(
+            body = candidate.parsed.smsBody,
+            timestamp = candidate.parsed.timestamp
+        )
+        notifiedSignatures.add("$uid|${candidate.id}")
+        notifiedSignatures.add("$uid|$contentKey")
+        adjacentKeys.forEach { notifiedSignatures.add("$uid|$it") }
+        val normalizedBody = SmsInboxReader.normalizeSmsBody(candidate.parsed.smsBody)
+        if (normalizedBody.length >= 15) {
+            val bodyIdentityKey = "$uid|${candidate.parsed.type.name}|${String.format(Locale.US, "%.2f", candidate.parsed.amount.toDouble())}|$normalizedBody"
+            notifiedBodyTimestamps[bodyIdentityKey] = candidate.parsed.timestamp
+        }
+    }
+
+    fun isCandidateAlreadyNotified(uid: String, candidate: SmsCandidate): Boolean {
+        if (uid.isBlank()) return false
+        val contentKey = SmsInboxReader.buildSmsContentKey(
+            body = candidate.parsed.smsBody,
+            timestamp = candidate.parsed.timestamp
+        )
+        val adjacentKeys = SmsInboxReader.buildSmsAdjacentContentKeys(
+            body = candidate.parsed.smsBody,
+            timestamp = candidate.parsed.timestamp
+        )
+        if ("$uid|${candidate.id}" in notifiedSignatures ||
+            "$uid|$contentKey" in notifiedSignatures ||
+            adjacentKeys.any { "$uid|$it" in notifiedSignatures }
+        ) {
+            return true
+        }
+        val normalizedBody = SmsInboxReader.normalizeSmsBody(candidate.parsed.smsBody)
+        if (normalizedBody.length >= 15) {
+            val bodyIdentityKey = "$uid|${candidate.parsed.type.name}|${String.format(Locale.US, "%.2f", candidate.parsed.amount.toDouble())}|$normalizedBody"
+            val prevTs = notifiedBodyTimestamps[bodyIdentityKey]
+            if (prevTs != null && kotlin.math.abs(candidate.parsed.timestamp - prevTs) <= SmsInboxReader.SLIDING_DEDUP_WINDOW_MS) {
+                return true
+            }
+        }
+        return false
+    }
 
     fun ensureChannel(context: Context) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -118,13 +192,23 @@ object TransactionNotificationHelper {
                 description = "Credit card spend limit threshold warnings"
                 enableVibration(true)
             }
+            val spendSummaryChannel = NotificationChannel(
+                CHANNEL_ID_SPEND_SUMMARY,
+                "Spend Summaries",
+                NotificationManager.IMPORTANCE_HIGH
+            ).apply {
+                group = CHANNEL_GROUP_ID
+                description = "Daily, weekly, and monthly total spend summary notifications"
+                enableVibration(true)
+            }
             manager?.createNotificationChannels(
                 listOf(
                     smsExpenseChannel,
                     smsIncomeChannel,
                     fcmFamilyChannel,
                     fcmBudgetChannel,
-                    creditLimitChannel
+                    creditLimitChannel,
+                    spendSummaryChannel
                 )
             )
         }
@@ -644,15 +728,181 @@ object TransactionNotificationHelper {
     }
 
     /**
+     * Fires a Daily, Weekly, or Monthly Spend Summary notification showing total spend,
+     * number of transactions, and top category. Title always begins with the formatted amount.
+     */
+    fun showSpendSummaryNotification(
+        context: Context,
+        period: SpendSummaryPeriod,
+        spentAmount: Double,
+        transactionCount: Int,
+        topCategory: String? = null,
+        currencySymbol: String = "₹",
+        forceNotify: Boolean = false
+    ) {
+        LocalAccountSessionManager.ensureInitialized(context.applicationContext)
+        val fcmSettings = LocalAccountSessionManager.fcmPushSettings.value
+        if (!fcmSettings.isSubCategoryEnabled(period.subCategory) && !forceNotify) return
+
+        ensureChannel(context)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            val granted = ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.POST_NOTIFICATIONS
+            ) == PackageManager.PERMISSION_GRANTED
+            if (!granted) return
+        }
+
+        val numFmt = NumberFormat.getNumberInstance(Locale.forLanguageTag("en-IN")).apply {
+            maximumFractionDigits = if (spentAmount % 1.0 == 0.0) 0 else 2
+        }
+        val spentStr = "$currencySymbol${numFmt.format(spentAmount.coerceAtLeast(0.0))}"
+        val headline = "$spentStr • ${period.label}"
+        val cleanTopCat = topCategory?.takeIf { it.isNotBlank() }?.let { ExpenseCategories.normalizeCategory(it) }
+        val bodyText = if (transactionCount > 0) {
+            buildString {
+                append("$transactionCount expense")
+                if (transactionCount != 1) append("s")
+                if (!cleanTopCat.isNullOrBlank()) {
+                    append(" • Top: $cleanTopCat")
+                }
+                append(" • Total spent: $spentStr")
+            }
+        } else {
+            "No expenses logged in this period • Total spent: $spentStr"
+        }
+
+        val iconCat = cleanTopCat ?: "Bills & Utilities"
+        val openAppIntent = Intent(context, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
+        }
+        val notificationId = ("spend_summary_${period.name.lowercase()}").hashCode()
+        val contentPendingIntent = PendingIntent.getActivity(
+            context,
+            notificationId,
+            openAppIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        val builder = NotificationCompat.Builder(context, CHANNEL_ID_SPEND_SUMMARY)
+            .setSmallIcon(categoryNotificationIconRes(iconCat))
+            .setLargeIcon(buildCategoryLargeIconBitmap(context, iconCat))
+            .setColor(categoryAccentColorArgb(iconCat))
+            .setContentTitle(headline)
+            .setContentText(bodyText)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(bodyText))
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setCategory(NotificationCompat.CATEGORY_STATUS)
+            .setAutoCancel(true)
+            .setContentIntent(contentPendingIntent)
+
+        runCatching {
+            NotificationManagerCompat.from(context).notify(notificationId, builder.build())
+        }
+    }
+
+    /**
+     * Computes the user's total non-excluded expense spend for [period] (Daily, Weekly, or Monthly)
+     * relative to [referenceMillis] and posts the corresponding Spend Summary notification.
+     */
+    fun evaluateAndSendSpendSummary(
+        context: Context,
+        period: SpendSummaryPeriod,
+        referenceMillis: Long = System.currentTimeMillis(),
+        forceNotify: Boolean = false
+    ) {
+        val appContext = context.applicationContext
+        LocalAccountSessionManager.ensureInitialized(appContext)
+        LocalAccountDataStore.ensureInitialized(appContext)
+
+        val fcmSettings = LocalAccountSessionManager.fcmPushSettings.value
+        if (!fcmSettings.isSubCategoryEnabled(period.subCategory) && !forceNotify) return
+
+        val activeUid = LocalAccountSessionManager.getCurrentUser(appContext)?.uid
+            ?: runCatching { Firebase.auth.currentUser?.uid }.getOrNull()
+            ?: LocalAccountSessionManager.DEFAULT_TEST_UID
+        val profile = LocalAccountDataStore.getUserProfileOnce(activeUid)
+        val householdId = profile?.activeHouseholdId.orEmpty()
+        val currencySymbol = profile?.currencySymbol?.takeIf { it.isNotBlank() } ?: "₹"
+
+        val (startMillis, endMillis) = computeSummaryWindowMillis(period, referenceMillis)
+        val allExpenses = LocalAccountDataStore.getExpensesForUserOrHouseholdOnce(activeUid, householdId)
+        val matchingExpenses = allExpenses.filter { tx ->
+            !tx.isExcludedFromExpense &&
+                tx.type.equals("EXPENSE", ignoreCase = true) &&
+                !ExpenseCategories.isIncomeCategory(tx.category) &&
+                tx.transactionDateMillis in startMillis..endMillis
+        }
+
+        val totalSpent = matchingExpenses.sumOf { it.amount }
+        val topCategory = matchingExpenses
+            .groupBy { ExpenseCategories.normalizeCategory(it.category) }
+            .maxByOrNull { (_, list) -> list.sumOf { it.amount } }
+            ?.key
+
+        showSpendSummaryNotification(
+            context = appContext,
+            period = period,
+            spentAmount = totalSpent,
+            transactionCount = matchingExpenses.size,
+            topCategory = topCategory,
+            currencySymbol = currencySymbol,
+            forceNotify = forceNotify
+        )
+    }
+
+    fun computeSummaryWindowMillis(
+        period: SpendSummaryPeriod,
+        referenceMillis: Long = System.currentTimeMillis()
+    ): Pair<Long, Long> {
+        val endCal = Calendar.getInstance().apply {
+            timeInMillis = referenceMillis
+            set(Calendar.HOUR_OF_DAY, 23)
+            set(Calendar.MINUTE, 59)
+            set(Calendar.SECOND, 59)
+            set(Calendar.MILLISECOND, 999)
+        }
+        val startCal = Calendar.getInstance().apply {
+            timeInMillis = referenceMillis
+            when (period) {
+                SpendSummaryPeriod.DAILY -> {
+                    set(Calendar.HOUR_OF_DAY, 0)
+                    set(Calendar.MINUTE, 0)
+                    set(Calendar.SECOND, 0)
+                    set(Calendar.MILLISECOND, 0)
+                }
+                SpendSummaryPeriod.WEEKLY -> {
+                    add(Calendar.DAY_OF_YEAR, -6)
+                    set(Calendar.HOUR_OF_DAY, 0)
+                    set(Calendar.MINUTE, 0)
+                    set(Calendar.SECOND, 0)
+                    set(Calendar.MILLISECOND, 0)
+                }
+                SpendSummaryPeriod.MONTHLY -> {
+                    set(Calendar.DAY_OF_MONTH, 1)
+                    set(Calendar.HOUR_OF_DAY, 0)
+                    set(Calendar.MINUTE, 0)
+                    set(Calendar.SECOND, 0)
+                    set(Calendar.MILLISECOND, 0)
+                }
+            }
+        }
+        return startCal.timeInMillis to endCal.timeInMillis
+    }
+
+    /**
      * Shared processor used by both `IncomingSmsBroadcastReceiver` (`SMS_RECEIVED`) and
-     * `SmsInboxContentObserver` (`content://sms`) to deduplicate, save, and notify when a new
-     * bank/UPI SMS arrives.
+     * `SmsInboxContentObserver` (`content://sms`) to deduplicate, save, and notify immediately
+     * when a new bank/UPI SMS arrives, without blocking on slow background network calls.
      */
     suspend fun processIncomingSmsCandidateAndNotify(
         context: Context,
         candidate: SmsCandidate
     ) = incomingSmsMutex.withLock {
         val appContext = context.applicationContext
+        if (com.ritesh.parser.core.bank.BankParser.isMandateOrBillReminderOrNonTransaction(candidate.parsed.smsBody)) {
+            return@withLock
+        }
         LocalAccountSessionManager.ensureInitialized(appContext)
         val firebaseUser = runCatching { Firebase.auth.currentUser }.getOrNull()
         val localUser = LocalAccountSessionManager.getCurrentUser(appContext)
@@ -691,62 +941,65 @@ object TransactionNotificationHelper {
         }
 
         try {
-            val repo = OneFamilyRepository(appContext)
-            val profile = repo.getUserProfileOnce()
-            val household = profile?.activeHouseholdId?.takeIf { it.isNotBlank() }?.let {
-                repo.getHouseholdOnce(it)
-            }
-
-            // Check if this SMS (or its adjacent content key / linked signature) already exists in the ledger
-            val existingSignatures = repo.getAllExistingSmsSignatures(household?.id)
-            if (candidate.id in existingSignatures ||
-                contentKey in existingSignatures ||
-                adjacentKeys.any { it in existingSignatures }
+            // 1. Check fast local signatures first (zero network latency)
+            val localExistingSignatures = LocalAccountDataStore.getAllExistingSmsSignatures(activeUid)
+            if (candidate.id in localExistingSignatures ||
+                contentKey in localExistingSignatures ||
+                adjacentKeys.any { it in localExistingSignatures }
             ) {
-                notifiedSignatures.add(scopedSig)
-                notifiedSignatures.add(scopedContentKey)
-                notifiedSignatures.addAll(scopedAdjacentKeys)
-                if (bodyIdentityKey.isNotEmpty()) {
-                    notifiedBodyTimestamps[bodyIdentityKey] = candidate.parsed.timestamp
-                }
+                markSignatureNotified(activeUid, candidate)
                 return@withLock
             }
 
-            notifiedSignatures.add(scopedSig)
-            notifiedSignatures.add(scopedContentKey)
-            notifiedSignatures.addAll(scopedAdjacentKeys)
-            if (bodyIdentityKey.isNotEmpty()) {
-                notifiedBodyTimestamps[bodyIdentityKey] = candidate.parsed.timestamp
+            // 2. Resolve profile & household from fast local cache first (with bounded timeout fallback)
+            val cachedProfile = LocalAccountDataStore.getUserProfileOnce(activeUid)
+            val cachedHousehold = cachedProfile?.activeHouseholdId?.takeIf { it.isNotBlank() }?.let {
+                LocalAccountDataStore.getHouseholdOnce(it)
             }
 
             val parsed = candidate.parsed
             val isIncome = parsed.type == TransactionType.INCOME
             val merchantTitle = parsed.merchant?.takeIf { it.isNotBlank() }
                 ?: "${parsed.bankName} ${parsed.type.name.lowercase().replaceFirstChar { it.uppercase() }}"
-            val effectiveShared = household != null
+            val effectiveShared = cachedHousehold != null
             val docId = "sms_${candidate.id}"
-            val memberDisplayName = firebaseUser?.displayName ?: localUser?.displayName ?: profile?.displayName ?: "Member"
-            val currencySymbol = profile?.currencySymbol ?: "₹"
+            val memberDisplayName = firebaseUser?.displayName
+                ?: localUser?.displayName
+                ?: cachedProfile?.displayName
+                ?: "Member"
+            val currencySymbol = cachedProfile?.currencySymbol ?: "₹"
+            val txTags = listOf("sms-auto", parsed.bankName.lowercase().replace(" ", "-"))
+            val txNotes = "[${parsed.sender}] ${parsed.smsBody}".take(500)
 
-            val savedResult = repo.addExpense(
-                userName = memberDisplayName,
-                household = household,
-                title = merchantTitle,
-                amount = parsed.amount.toDouble(),
-                type = if (isIncome) "INCOME" else "EXPENSE",
-                category = candidate.suggestedCategory,
-                accountName = candidate.suggestedAccountName,
-                paymentMode = candidate.suggestedPaymentMode,
-                tags = listOf("sms-auto", parsed.bankName.lowercase().replace(" ", "-")),
-                notes = "[${parsed.sender}] ${parsed.smsBody}".take(500),
-                isShared = effectiveShared,
-                smsSignature = candidate.id,
-                referenceNumber = parsed.reference.orEmpty(),
-                transactionDateMillis = parsed.timestamp,
-                customDocId = docId
+            // 3. Persist immediately to local store so the transaction is never lost even if process is killed
+            LocalAccountDataStore.cacheSmsMessage(
+                signature = candidate.id,
+                sender = parsed.sender,
+                body = parsed.smsBody,
+                timestamp = parsed.timestamp,
+                persistImmediately = true
             )
+            val localSavedId = runCatching {
+                LocalAccountDataStore.addExpense(
+                    uid = activeUid,
+                    userName = memberDisplayName,
+                    household = cachedHousehold,
+                    title = merchantTitle,
+                    amount = parsed.amount.toDouble(),
+                    type = if (isIncome) "INCOME" else "EXPENSE",
+                    category = candidate.suggestedCategory,
+                    accountName = candidate.suggestedAccountName,
+                    paymentMode = candidate.suggestedPaymentMode,
+                    tags = txTags,
+                    notes = txNotes,
+                    isShared = effectiveShared,
+                    smsSignature = candidate.id,
+                    referenceNumber = parsed.reference.orEmpty(),
+                    transactionDateMillis = parsed.timestamp,
+                    customDocId = docId
+                )
+            }.getOrDefault(docId)
 
-            val expenseIdToNotify = savedResult.getOrDefault(docId)
             val paymentSummary = buildString {
                 if (candidate.suggestedAccountName.isNotBlank()) append(candidate.suggestedAccountName)
                 if (candidate.suggestedPaymentMode.isNotBlank()) {
@@ -754,10 +1007,12 @@ object TransactionNotificationHelper {
                     append(candidate.suggestedPaymentMode)
                 }
             }
+
+            // 4. Post the real-time notification IMMEDIATELY before any slow Firestore network round-trip
             showNewTransactionNotification(
                 context = appContext,
-                expenseId = expenseIdToNotify,
-                householdId = household?.id.orEmpty(),
+                expenseId = localSavedId,
+                householdId = cachedHousehold?.id.orEmpty(),
                 visibility = if (effectiveShared) "SHARED" else "PERSONAL",
                 title = merchantTitle,
                 amount = parsed.amount.toDouble(),
@@ -767,18 +1022,50 @@ object TransactionNotificationHelper {
                 transactionType = if (isIncome) "INCOME" else "EXPENSE"
             )
 
-            if (household != null) {
+            markSignatureNotified(activeUid, candidate)
+
+            if (cachedHousehold != null) {
                 showFamilyTransactionPushNotification(
                     context = appContext,
-                    expenseId = expenseIdToNotify,
-                    householdId = household.id,
-                    householdName = household.name,
+                    expenseId = localSavedId,
+                    householdId = cachedHousehold.id,
+                    householdName = cachedHousehold.name,
                     memberName = memberDisplayName,
                     title = merchantTitle,
                     amount = parsed.amount.toDouble(),
                     category = candidate.suggestedCategory,
                     currencySymbol = currencySymbol
                 )
+            }
+
+            // 5. Sync to Firestore with bounded timeout if backed by Firebase Auth
+            if (firebaseUser != null) {
+                kotlinx.coroutines.withTimeoutOrNull(6_000L) {
+                    runCatching {
+                        val repo = OneFamilyRepository(appContext)
+                        val remoteProfile = repo.getUserProfileOnce() ?: cachedProfile
+                        val remoteHousehold = remoteProfile?.activeHouseholdId?.takeIf { it.isNotBlank() }?.let {
+                            repo.getHouseholdOnce(it)
+                        } ?: cachedHousehold
+                        repo.addExpense(
+                            userName = memberDisplayName,
+                            household = remoteHousehold,
+                            title = merchantTitle,
+                            amount = parsed.amount.toDouble(),
+                            type = if (isIncome) "INCOME" else "EXPENSE",
+                            category = candidate.suggestedCategory,
+                            accountName = candidate.suggestedAccountName,
+                            paymentMode = candidate.suggestedPaymentMode,
+                            tags = txTags,
+                            notes = txNotes,
+                            isShared = remoteHousehold != null,
+                            smsSignature = candidate.id,
+                            referenceNumber = parsed.reference.orEmpty(),
+                            transactionDateMillis = parsed.timestamp,
+                            customDocId = docId
+                        )
+                    }
+                }
             }
         } catch (e: Exception) {
             LocalAccountSessionManager.recordDiagnostic(
@@ -852,27 +1139,41 @@ class IncomingSmsBroadcastReceiver : BroadcastReceiver() {
         val messages = Telephony.Sms.Intents.getMessagesFromIntent(intent)
         if (messages.isNullOrEmpty()) return
 
-        val sender = messages.firstOrNull()?.displayOriginatingAddress.orEmpty()
-        val fullBody = messages.joinToString(separator = "") { it.displayMessageBody.orEmpty() }
-        val timestamp = messages.firstOrNull()?.timestampMillis ?: System.currentTimeMillis()
-
-        if (sender.isBlank() || fullBody.isBlank()) return
+        // Group PDU segments by originating address so multi-part or multiple SMS in a single intent are all processed
+        val groupedBySender = messages.groupBy { msg ->
+            msg.displayOriginatingAddress?.takeIf { it.isNotBlank() }
+                ?: msg.originatingAddress.orEmpty()
+        }
 
         val reader = SmsInboxReader(appContext)
-        val candidate = reader.parseRawSms(
-            sender = sender,
-            body = fullBody,
-            timestamp = timestamp,
-            defaultShared = true
-        ) ?: return
+        val candidates = groupedBySender.mapNotNull { (sender, parts) ->
+            val fullBody = parts.joinToString(separator = "") { part ->
+                part.displayMessageBody ?: part.messageBody.orEmpty()
+            }
+            val timestamp = parts.firstOrNull()?.timestampMillis?.takeIf { it > 0L }
+                ?: System.currentTimeMillis()
+            if (sender.isBlank() || fullBody.isBlank()) {
+                null
+            } else {
+                reader.parseRawSms(
+                    sender = sender,
+                    body = fullBody,
+                    timestamp = timestamp,
+                    defaultShared = true
+                )
+            }
+        }
+        if (candidates.isEmpty()) return
 
         val pendingResult = goAsync()
         CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
             try {
-                TransactionNotificationHelper.processIncomingSmsCandidateAndNotify(
-                    context = appContext,
-                    candidate = candidate
-                )
+                for (candidate in candidates) {
+                    TransactionNotificationHelper.processIncomingSmsCandidateAndNotify(
+                        context = appContext,
+                        candidate = candidate
+                    )
+                }
             } finally {
                 pendingResult.finish()
             }
@@ -891,7 +1192,7 @@ class SmsInboxContentObserver(
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val observerMutex = Mutex()
-    private var lastProcessedSmsDateMillis: Long = System.currentTimeMillis()
+    private var lastProcessedSmsDateMillis: Long = System.currentTimeMillis() - 60_000L
 
     override fun onChange(selfChange: Boolean, uri: Uri?) {
         super.onChange(selfChange, uri)
@@ -910,12 +1211,16 @@ class SmsInboxContentObserver(
                         Telephony.Sms.DATE,
                         Telephony.Sms.TYPE
                     )
+                    // Use a 5-minute lookback window to tolerate carrier SMSC timestamp skew,
+                    // and avoid `LIMIT` inside sortOrder which fails on Android 10+ TelephonyProvider.
+                    val lookbackFloorMillis = (lastProcessedSmsDateMillis - 300_000L).coerceAtLeast(0L)
+                    val queryUri = Telephony.Sms.Inbox.CONTENT_URI
                     context.contentResolver.query(
-                        Telephony.Sms.Inbox.CONTENT_URI,
+                        queryUri,
                         projection,
-                        "${Telephony.Sms.DATE} > ?",
-                        arrayOf(lastProcessedSmsDateMillis.toString()),
-                        "${Telephony.Sms.DATE} DESC LIMIT 3"
+                        "${Telephony.Sms.DATE} >= ?",
+                        arrayOf(lookbackFloorMillis.toString()),
+                        "${Telephony.Sms.DATE} ASC"
                     )?.use { cursor ->
                         val addrIdx = cursor.getColumnIndex(Telephony.Sms.ADDRESS)
                         val bodyIdx = cursor.getColumnIndex(Telephony.Sms.BODY)
@@ -953,3 +1258,146 @@ class SmsInboxContentObserver(
         }
     }
 }
+
+/**
+ * Schedules daily, weekly, and monthly spend summary notifications at the user's configured
+ * time (`summaryNotificationHour` : `summaryNotificationMinute`).
+ */
+object SpendSummaryAlarmScheduler {
+    const val ACTION_SPEND_SUMMARY_ALARM = "com.example.action.SPEND_SUMMARY_ALARM"
+    const val EXTRA_SUMMARY_PERIOD = "extra_summary_period"
+    private const val REQUEST_CODE_DAILY = 4101
+    private const val REQUEST_CODE_WEEKLY = 4102
+    private const val REQUEST_CODE_MONTHLY = 4103
+
+    fun computeNextTriggerMillis(
+        hourOfDay: Int,
+        minute: Int,
+        nowMillis: Long = System.currentTimeMillis()
+    ): Long {
+        val cal = Calendar.getInstance().apply {
+            timeInMillis = nowMillis
+            set(Calendar.HOUR_OF_DAY, hourOfDay.coerceIn(0, 23))
+            set(Calendar.MINUTE, minute.coerceIn(0, 59))
+            set(Calendar.SECOND, 0)
+            set(Calendar.MILLISECOND, 0)
+            if (timeInMillis <= nowMillis) {
+                add(Calendar.DAY_OF_YEAR, 1)
+            }
+        }
+        return cal.timeInMillis
+    }
+
+    fun computeTriggerMillisForPeriod(
+        period: SpendSummaryPeriod,
+        settings: com.example.data.model.FcmPushSettings,
+        nowMillis: Long = System.currentTimeMillis()
+    ): Long {
+        val (hour, minute) = settings.getSummaryTime(period.subCategory)
+        return computeNextTriggerMillis(
+            hourOfDay = hour,
+            minute = minute,
+            nowMillis = nowMillis
+        )
+    }
+
+    fun scheduleNextSummaryAlarms(context: Context, nowMillis: Long = System.currentTimeMillis()) {
+        val appContext = context.applicationContext
+        LocalAccountSessionManager.ensureInitialized(appContext)
+        val settings = LocalAccountSessionManager.fcmPushSettings.value
+        val alarmManager = appContext.getSystemService(Context.ALARM_SERVICE) as? AlarmManager ?: return
+
+        scheduleOrCancelPeriod(
+            context = appContext,
+            alarmManager = alarmManager,
+            period = SpendSummaryPeriod.DAILY,
+            requestCode = REQUEST_CODE_DAILY,
+            enabled = settings.dailySummaryEnabled,
+            triggerAtMillis = computeTriggerMillisForPeriod(SpendSummaryPeriod.DAILY, settings, nowMillis)
+        )
+        scheduleOrCancelPeriod(
+            context = appContext,
+            alarmManager = alarmManager,
+            period = SpendSummaryPeriod.WEEKLY,
+            requestCode = REQUEST_CODE_WEEKLY,
+            enabled = settings.weeklySummaryEnabled,
+            triggerAtMillis = computeTriggerMillisForPeriod(SpendSummaryPeriod.WEEKLY, settings, nowMillis)
+        )
+        scheduleOrCancelPeriod(
+            context = appContext,
+            alarmManager = alarmManager,
+            period = SpendSummaryPeriod.MONTHLY,
+            requestCode = REQUEST_CODE_MONTHLY,
+            enabled = settings.monthlySummaryEnabled,
+            triggerAtMillis = computeTriggerMillisForPeriod(SpendSummaryPeriod.MONTHLY, settings, nowMillis)
+        )
+    }
+
+    private fun scheduleOrCancelPeriod(
+        context: Context,
+        alarmManager: AlarmManager,
+        period: SpendSummaryPeriod,
+        requestCode: Int,
+        enabled: Boolean,
+        triggerAtMillis: Long
+    ) {
+        val intent = Intent(context, SpendSummaryBroadcastReceiver::class.java).apply {
+            action = ACTION_SPEND_SUMMARY_ALARM
+            putExtra(EXTRA_SUMMARY_PERIOD, period.name)
+        }
+        val pendingIntent = PendingIntent.getBroadcast(
+            context,
+            requestCode,
+            intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        if (!enabled) {
+            runCatching { alarmManager.cancel(pendingIntent) }
+            return
+        }
+        runCatching {
+            alarmManager.setAndAllowWhileIdle(
+                AlarmManager.RTC_WAKEUP,
+                triggerAtMillis,
+                pendingIntent
+            )
+        }
+    }
+}
+
+/**
+ * BroadcastReceiver that fires when a scheduled Spend Summary alarm triggers, posts the
+ * corresponding Daily/Weekly/Monthly spend summary notification, and schedules the next alarm.
+ */
+class SpendSummaryBroadcastReceiver : BroadcastReceiver() {
+    override fun onReceive(context: Context, intent: Intent) {
+        val appContext = context.applicationContext
+        LocalAccountSessionManager.ensureInitialized(appContext)
+        LocalAccountDataStore.ensureInitialized(appContext)
+
+        val periodName = intent.getStringExtra(SpendSummaryAlarmScheduler.EXTRA_SUMMARY_PERIOD).orEmpty()
+        val period = SpendSummaryPeriod.entries.firstOrNull { it.name.equals(periodName, ignoreCase = true) }
+
+        if (period != null) {
+            TransactionNotificationHelper.evaluateAndSendSpendSummary(
+                context = appContext,
+                period = period,
+                forceNotify = false
+            )
+        } else {
+            val settings = LocalAccountSessionManager.fcmPushSettings.value
+            if (settings.dailySummaryEnabled) {
+                TransactionNotificationHelper.evaluateAndSendSpendSummary(appContext, SpendSummaryPeriod.DAILY)
+            }
+            if (settings.weeklySummaryEnabled) {
+                TransactionNotificationHelper.evaluateAndSendSpendSummary(appContext, SpendSummaryPeriod.WEEKLY)
+            }
+            if (settings.monthlySummaryEnabled) {
+                TransactionNotificationHelper.evaluateAndSendSpendSummary(appContext, SpendSummaryPeriod.MONTHLY)
+            }
+        }
+
+        SpendSummaryAlarmScheduler.scheduleNextSummaryAlarms(appContext)
+    }
+}
+

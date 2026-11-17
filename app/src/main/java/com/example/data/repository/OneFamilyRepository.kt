@@ -36,6 +36,8 @@ class OneFamilyRepository(
     private val allowLocalMode: Boolean = true
 ) {
 
+    private var appContext: Context? = null
+
     constructor(db: FirebaseFirestore) : this({ db }, allowLocalMode = false)
 
     constructor(context: Context) : this({
@@ -43,6 +45,7 @@ class OneFamilyRepository(
             context.applicationContext.getString(R.string.firestore_database_id)
         )
     }, allowLocalMode = true) {
+        appContext = context.applicationContext
         LocalAccountSessionManager.ensureInitialized(context.applicationContext)
     }
 
@@ -131,9 +134,22 @@ class OneFamilyRepository(
         try {
             val existing = docRef.get().await()
             if (existing.exists()) {
-                existing.toObject(UserProfile::class.java, DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
+                val loaded = existing.toObject(UserProfile::class.java, DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
                     ?: UserProfile(id = uid, uid = uid, displayName = displayName, email = email)
+                LocalAccountDataStore.ensureUserProfile(
+                    uid = uid,
+                    displayName = loaded.displayName.ifBlank { displayName },
+                    email = loaded.email.ifBlank { email },
+                    photoUrl = loaded.photoUrl.ifBlank { photoUrl }
+                )
+                loaded
             } else {
+                // Brand-new Firestore user document (first-time login or re-login after account deletion)
+                appContext?.let { ctx ->
+                    LocalAccountSessionManager.prepareUserLoginAfterAuth(ctx, uid, email)
+                    LocalAccountSessionManager.setInitialSmsSyncCompleted(ctx, uid, false)
+                }
+                LocalAccountDataStore.deleteAllUserData(uid, email)
                 val payload = mapOf(
                     "uid" to uid,
                     "email" to email.take(200),
@@ -146,14 +162,11 @@ class OneFamilyRepository(
                     "updatedAt" to FieldValue.serverTimestamp()
                 )
                 docRef.set(payload).await()
-                UserProfile(
-                    id = uid,
+                LocalAccountDataStore.ensureUserProfile(
                     uid = uid,
-                    email = email,
                     displayName = displayName.ifBlank { "Family Member" },
-                    photoUrl = photoUrl,
-                    personalMonthlyBudget = 0.0,
-                    currencySymbol = "₹"
+                    email = email,
+                    photoUrl = photoUrl
                 )
             }
         } catch (e: CancellationException) {
@@ -1715,6 +1728,7 @@ class OneFamilyRepository(
         linkedBankAccountId: String? = null,
         linkedBankAccountName: String? = null,
         monthlySpendLimit: Double? = null,
+        billingCycleDay: Int? = null,
         spendLimitPeriod: String? = null,
         spendLimitStartMillis: Long? = null,
         spendLimitEndMillis: Long? = null,
@@ -1737,6 +1751,7 @@ class OneFamilyRepository(
                 linkedBankAccountId = linkedBankAccountId,
                 linkedBankAccountName = linkedBankAccountName,
                 monthlySpendLimit = monthlySpendLimit,
+                billingCycleDay = billingCycleDay,
                 spendLimitPeriod = spendLimitPeriod,
                 spendLimitStartMillis = spendLimitStartMillis,
                 spendLimitEndMillis = spendLimitEndMillis,
@@ -1771,6 +1786,8 @@ class OneFamilyRepository(
                 .take(100)
             val resolvedSpendLimit = (monthlySpendLimit ?: existingSnap.getDouble("monthlySpendLimit") ?: 0.0)
                 .coerceAtLeast(0.0)
+            val resolvedCycleDay = (billingCycleDay?.toLong() ?: existingSnap.getLong("billingCycleDay") ?: 1L)
+                .coerceIn(1L, 31L)
             val resolvedPeriod = com.example.data.model.AccountLimitPeriod.fromRaw(
                 spendLimitPeriod ?: existingSnap.getString("spendLimitPeriod")
             ).name
@@ -1793,6 +1810,7 @@ class OneFamilyRepository(
                 "linkedBankAccountId" to resolvedLinkedId,
                 "linkedBankAccountName" to resolvedLinkedName,
                 "monthlySpendLimit" to resolvedSpendLimit,
+                "billingCycleDay" to resolvedCycleDay,
                 "spendLimitPeriod" to resolvedPeriod,
                 "spendLimitStartMillis" to resolvedStartMillis,
                 "spendLimitEndMillis" to resolvedEndMillis,
@@ -1816,6 +1834,7 @@ class OneFamilyRepository(
         account: FinancialAccount,
         monthlySpendLimit: Double,
         alertThresholdPercent: Int = 80,
+        billingCycleDay: Int = account.billingCycleDay,
         spendLimitPeriod: String = account.spendLimitPeriod,
         spendLimitStartMillis: Long = account.spendLimitStartMillis,
         spendLimitEndMillis: Long = account.spendLimitEndMillis
@@ -1823,6 +1842,7 @@ class OneFamilyRepository(
         val normalizedPeriod = com.example.data.model.AccountLimitPeriod.fromRaw(spendLimitPeriod).name
         val cleanStart = spendLimitStartMillis.coerceAtLeast(0L)
         val cleanEnd = spendLimitEndMillis.coerceAtLeast(0L)
+        val sanitizedCycleDay = billingCycleDay.coerceIn(1, 31)
         if (isLocalMode()) {
             val uid = requireLocalUserId()
             LocalAccountDataStore.updateAccountSpendLimit(
@@ -1830,6 +1850,7 @@ class OneFamilyRepository(
                 account = account,
                 monthlySpendLimit = monthlySpendLimit,
                 alertThresholdPercent = alertThresholdPercent,
+                billingCycleDay = sanitizedCycleDay,
                 spendLimitPeriod = normalizedPeriod,
                 spendLimitStartMillis = cleanStart,
                 spendLimitEndMillis = cleanEnd
@@ -1852,6 +1873,7 @@ class OneFamilyRepository(
                 linkedBankAccountId = account.linkedBankAccountId,
                 linkedBankAccountName = account.linkedBankAccountName,
                 monthlySpendLimit = sanitizedLimit,
+                billingCycleDay = sanitizedCycleDay,
                 spendLimitPeriod = normalizedPeriod,
                 spendLimitStartMillis = cleanStart,
                 spendLimitEndMillis = cleanEnd,
@@ -1868,6 +1890,7 @@ class OneFamilyRepository(
                 docRef.update(
                     mapOf(
                         "monthlySpendLimit" to sanitizedLimit,
+                        "billingCycleDay" to sanitizedCycleDay.toLong(),
                         "spendLimitPeriod" to normalizedPeriod,
                         "spendLimitStartMillis" to cleanStart,
                         "spendLimitEndMillis" to cleanEnd,
@@ -1887,6 +1910,7 @@ class OneFamilyRepository(
                     linkedBankAccountId = account.linkedBankAccountId,
                     linkedBankAccountName = account.linkedBankAccountName,
                     monthlySpendLimit = sanitizedLimit,
+                    billingCycleDay = sanitizedCycleDay,
                     spendLimitPeriod = normalizedPeriod,
                     spendLimitStartMillis = cleanStart,
                     spendLimitEndMillis = cleanEnd,
@@ -1926,6 +1950,7 @@ class OneFamilyRepository(
                 linkedBankAccountId = account.linkedBankAccountId,
                 linkedBankAccountName = account.linkedBankAccountName,
                 monthlySpendLimit = account.monthlySpendLimit,
+                billingCycleDay = account.billingCycleDay,
                 spendLimitPeriod = account.spendLimitPeriod,
                 spendLimitStartMillis = account.spendLimitStartMillis,
                 spendLimitEndMillis = account.spendLimitEndMillis,
@@ -1957,6 +1982,7 @@ class OneFamilyRepository(
                     linkedBankAccountId = account.linkedBankAccountId,
                     linkedBankAccountName = account.linkedBankAccountName,
                     monthlySpendLimit = account.monthlySpendLimit,
+                    billingCycleDay = account.billingCycleDay,
                     spendLimitPeriod = account.spendLimitPeriod,
                     spendLimitStartMillis = account.spendLimitStartMillis,
                     spendLimitEndMillis = account.spendLimitEndMillis,
@@ -2193,19 +2219,13 @@ class OneFamilyRepository(
         }
 
         // 3. Hard-delete user profile document
-        if (userSnap.exists()) {
-            try {
-                userRef.delete().await()
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                handleFirestoreError(e, OperationType.DELETE, userRef.path)
-                throw e
-            }
+        runCatching {
+            userRef.delete().await()
         }
 
         firestoreAccountTimestampMap.clear()
-        LocalAccountDataStore.deleteAllUserData(uid)
+        val userEmail = currentFirebaseUser?.email.orEmpty()
+        LocalAccountDataStore.deleteAllUserData(uid, userEmail)
     }
 
     private fun generateJoinCode(): String {

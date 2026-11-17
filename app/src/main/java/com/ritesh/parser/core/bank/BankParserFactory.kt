@@ -28,7 +28,26 @@ object BankParserFactory {
         OneCardParser(),
         AmexBankParser(),
         PaytmBankParser(),
-        AirtelPaymentsBankParser()
+        AirtelPaymentsBankParser(),
+        RBLBankParser(),
+        AUBankParser(),
+        BandhanBankParser(),
+        IndianBankParser(),
+        BankOfIndiaParser(),
+        CentralBankParser(),
+        UCOBankParser(),
+        IOBBankParser(),
+        HSBCBankParser(),
+        StandardCharteredParser(),
+        CitiBankParser(),
+        DBSBankParser(),
+        JupiterParser(),
+        FiMoneyParser(),
+        SliceParser(),
+        SouthIndianBankParser(),
+        KarurVysyaBankParser(),
+        KarnatakaBankParser(),
+        DOPBankParser()
     )
 
     fun normalizeSender(sender: String): String {
@@ -43,41 +62,47 @@ object BankParserFactory {
         val matchedBySender = parsers.firstOrNull { it.canHandle(cleanSender) || it.canHandle(sender) }
         if (matchedBySender != null) return matchedBySender
 
+        // Do not match personal 10+ digit phone numbers unless sender matches a Cashiro bank parser
+        val digitsOnly = sender.filter { it.isDigit() }
+        if (digitsOnly.length >= 10 && !sender.contains("-")) {
+            return null
+        }
+
+        // Strict Cashiro bank name matching when DLT sender ID is generic (e.g. VM-TXNSMS)
         val lowerBody = smsBody.lowercase()
         return when {
-            lowerBody.contains("hdfc") -> HDFCBankParser()
-            lowerBody.contains("sbi") || lowerBody.contains("state bank") -> SBIBankParser()
-            lowerBody.contains("icici") -> ICICIBankParser()
-            lowerBody.contains("axis") -> AxisBankParser()
-            lowerBody.contains("kotak") -> KotakBankParser()
-            lowerBody.contains("idfc") -> IDFCFirstBankParser()
-            lowerBody.contains("indusind") -> IndusIndBankParser()
+            lowerBody.contains("hdfc bank") || lowerBody.contains("hdfc card") || lowerBody.contains("hdfcbk") -> HDFCBankParser()
+            lowerBody.contains("sbi ") || lowerBody.contains("state bank of india") || lowerBody.contains("sbi card") -> SBIBankParser()
+            lowerBody.contains("icici bank") || lowerBody.contains("icici card") -> ICICIBankParser()
+            lowerBody.contains("axis bank") || lowerBody.contains("axis card") -> AxisBankParser()
+            lowerBody.contains("kotak bank") || lowerBody.contains("kotak mahindra") -> KotakBankParser()
+            lowerBody.contains("idfc first") || lowerBody.contains("idfc bank") -> IDFCFirstBankParser()
+            lowerBody.contains("indusind bank") -> IndusIndBankParser()
             lowerBody.contains("yes bank") -> YesBankParser()
-            lowerBody.contains("pnb") || lowerBody.contains("punjab national") -> PNBBankParser()
-            lowerBody.contains("bank of baroda") || lowerBody.contains("bob") -> BankOfBarodaParser()
-            lowerBody.contains("federal") -> FederalBankParser()
-            lowerBody.contains("canara") -> CanaraBankParser()
+            lowerBody.contains("pnb ") || lowerBody.contains("punjab national bank") -> PNBBankParser()
+            lowerBody.contains("bank of baroda") -> BankOfBarodaParser()
+            lowerBody.contains("federal bank") -> FederalBankParser()
+            lowerBody.contains("canara bank") -> CanaraBankParser()
             lowerBody.contains("union bank") -> UnionBankParser()
             lowerBody.contains("onecard") -> OneCardParser()
-            lowerBody.contains("amex") || lowerBody.contains("american express") -> AmexBankParser()
-            lowerBody.contains("paytm") -> PaytmBankParser()
-            lowerBody.contains("airtel") -> AirtelPaymentsBankParser()
-            lowerBody.contains("rbl") -> GenericBankParser("RBL Bank")
-            lowerBody.contains("au bank") || lowerBody.contains("au small") -> GenericBankParser("AU Small Finance Bank")
-            lowerBody.contains("bandhan") -> GenericBankParser("Bandhan Bank")
-            lowerBody.contains("indian bank") -> GenericBankParser("Indian Bank")
-            lowerBody.contains("bank of india") || lowerBody.contains("boi") -> GenericBankParser("Bank of India")
-            lowerBody.contains("central bank") -> GenericBankParser("Central Bank")
-            lowerBody.contains("uco bank") -> GenericBankParser("UCO Bank")
-            lowerBody.contains("iob") || lowerBody.contains("indian overseas") -> GenericBankParser("Indian Overseas Bank")
-            lowerBody.contains("hsbc") -> GenericBankParser("HSBC Bank")
-            lowerBody.contains("standard chartered") || lowerBody.contains("scb") -> GenericBankParser("Standard Chartered")
-            lowerBody.contains("citi") -> GenericBankParser("Citi Bank")
-            lowerBody.contains("dbs") -> GenericBankParser("DBS Bank")
-            lowerBody.contains("jupiter") -> GenericBankParser("Jupiter")
-            lowerBody.contains("fi money") -> GenericBankParser("Fi Money")
-            lowerBody.contains("slice") -> GenericBankParser("Slice")
-            isLikelyFinancialSms(sender, smsBody) -> GenericBankParser(inferBankLabelFromSender(cleanSender))
+            lowerBody.contains("american express") || lowerBody.contains("amex card") -> AmexBankParser()
+            lowerBody.contains("paytm payments bank") -> PaytmBankParser()
+            lowerBody.contains("airtel payments bank") -> AirtelPaymentsBankParser()
+            lowerBody.contains("rbl bank") -> RBLBankParser()
+            lowerBody.contains("au small finance") || lowerBody.contains("au bank") -> AUBankParser()
+            lowerBody.contains("bandhan bank") -> BandhanBankParser()
+            lowerBody.contains("indian bank") -> IndianBankParser()
+            lowerBody.contains("bank of india") -> BankOfIndiaParser()
+            lowerBody.contains("central bank of india") -> CentralBankParser()
+            lowerBody.contains("uco bank") -> UCOBankParser()
+            lowerBody.contains("indian overseas bank") -> IOBBankParser()
+            lowerBody.contains("hsbc bank") || lowerBody.contains("hsbc card") -> HSBCBankParser()
+            lowerBody.contains("standard chartered") -> StandardCharteredParser()
+            lowerBody.contains("citibank") || lowerBody.contains("citi bank") -> CitiBankParser()
+            lowerBody.contains("dbs bank") -> DBSBankParser()
+            lowerBody.contains("south indian bank") -> SouthIndianBankParser()
+            lowerBody.contains("karur vysya") -> KarurVysyaBankParser()
+            lowerBody.contains("karnataka bank") -> KarnatakaBankParser()
             else -> null
         }
     }
@@ -87,37 +112,11 @@ object BankParserFactory {
         sender: String,
         timestamp: Long = System.currentTimeMillis()
     ): ParsedTransaction? {
+        if (BankParser.isMandateOrBillReminderOrNonTransaction(smsBody)) {
+            return null
+        }
         val parser = getParser(sender, smsBody) ?: return null
         return parser.parse(smsBody, sender, timestamp)
-    }
-
-    private fun isLikelyFinancialSms(sender: String, body: String): Boolean {
-        val lower = body.lowercase()
-        // Reject conversational personal numbers (+9198..., 10-digit mobile numbers) unless message clearly has bank/UPI structure
-        val digitsOnly = sender.filter { it.isDigit() }
-        val looksLikePersonalPhone = digitsOnly.length >= 10 && !sender.contains("-")
-
-        val hasCurrencyOrAmount = lower.contains("rs") || lower.contains("inr") || lower.contains("₹") ||
-            lower.contains("debited") || lower.contains("credited") || lower.contains("spent") || lower.contains("paid")
-        val hasFinancialContext = lower.contains("a/c") || lower.contains("acct") || lower.contains("ac ") ||
-            lower.contains("account") || lower.contains("card") || lower.contains("upi") ||
-            lower.contains("vpa") || lower.contains("imps") || lower.contains("neft") ||
-            lower.contains("avl bal") || lower.contains("available bal") || lower.contains("ref") ||
-            lower.contains("trf to") || lower.contains("debited") || lower.contains("credited")
-
-        if (looksLikePersonalPhone) {
-            return hasCurrencyOrAmount && (lower.contains("a/c") || lower.contains("acct") || lower.contains("upi") || lower.contains("card"))
-        }
-        return hasCurrencyOrAmount && hasFinancialContext
-    }
-
-    private fun inferBankLabelFromSender(cleanSender: String): String {
-        val trimmed = cleanSender.filter { it.isLetterOrDigit() }
-        return if (trimmed.isNotBlank() && trimmed.length in 3..10 && trimmed.any { it.isLetter() }) {
-            trimmed
-        } else {
-            "Bank Account"
-        }
     }
 
     fun inferCategory(parsed: ParsedTransaction): String {

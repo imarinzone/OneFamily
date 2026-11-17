@@ -1,6 +1,12 @@
 package com.example.ui.theme
 
+import android.content.Context
 import android.os.Build
+import android.os.VibrationEffect
+import android.os.Vibrator
+import android.os.VibratorManager
+import android.view.HapticFeedbackConstants
+import android.view.View
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.ColorScheme
@@ -18,10 +24,12 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.hapticfeedback.HapticFeedback
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -73,18 +81,66 @@ fun groupedCardShape(
 }
 
 /**
+ * Centralized haptic feedback dispatcher that reliably triggers both View haptics (ignoring
+ * view-level mute flags) and hardware Vibrator/VibratorManager crisp tactile pulse when enabled.
+ */
+object AppHapticManager {
+    fun performHaptic(
+        context: Context,
+        view: View? = null,
+        hapticFeedback: HapticFeedback? = null,
+        durationMs: Long = 18L
+    ) {
+        LocalAccountSessionManager.ensureInitialized(context)
+        if (!LocalAccountSessionManager.hapticFeedbackEnabled.value) return
+
+        runCatching {
+            @Suppress("DEPRECATION")
+            view?.performHapticFeedback(
+                HapticFeedbackConstants.KEYBOARD_TAP,
+                HapticFeedbackConstants.FLAG_IGNORE_VIEW_SETTING
+            )
+        }
+        runCatching {
+            hapticFeedback?.performHapticFeedback(HapticFeedbackType.LongPress)
+        }
+        runCatching {
+            val vibrator: Vibrator? = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                val manager = context.getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as? VibratorManager
+                manager?.defaultVibrator
+            } else {
+                @Suppress("DEPRECATION")
+                context.getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
+            }
+            if (vibrator != null && vibrator.hasVibrator()) {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    vibrator.vibrate(VibrationEffect.createOneShot(durationMs, 140))
+                } else {
+                    @Suppress("DEPRECATION")
+                    vibrator.vibrate(durationMs)
+                }
+            }
+        }
+    }
+}
+
+/**
  * Returns a haptic tick callback that respects the user's Haptic Feedback setting.
  */
 @Composable
 fun rememberAppHapticPerformer(): () -> Unit {
+    val context = LocalContext.current
+    val view = LocalView.current
     val haptic = LocalHapticFeedback.current
     val enabled by LocalAccountSessionManager.hapticFeedbackEnabled.collectAsStateWithLifecycle()
-    return remember(haptic, enabled) {
+    return remember(context, view, haptic, enabled) {
         {
             if (enabled) {
-                runCatching {
-                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                }
+                AppHapticManager.performHaptic(
+                    context = context,
+                    view = view,
+                    hapticFeedback = haptic
+                )
             }
         }
     }

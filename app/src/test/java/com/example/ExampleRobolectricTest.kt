@@ -3,6 +3,7 @@ package com.example
 import android.content.Context
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableDoubleStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.test.assertIsDisplayed
@@ -13,8 +14,12 @@ import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performScrollToIndex
 import androidx.compose.ui.test.performScrollToNode
+import androidx.compose.ui.test.performSemanticsAction
+import androidx.compose.ui.test.printToString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.test.core.app.ApplicationProvider
 import android.Manifest
@@ -1079,7 +1084,7 @@ class ExampleRobolectricTest {
 
         // 1. Before scanning starts: animation MUST NOT be shown, Start button is shown, and no thread counts appear
         composeTestRule.onNodeWithTag("first_time_sms_sync_screen").assertIsDisplayed()
-        composeTestRule.onNodeWithTag("start_first_time_sms_sync_button").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("start_first_time_sms_sync_button").performScrollTo().assertIsDisplayed()
         assertTrue(
             "Expected scanning animation to be hidden before scanning starts",
             composeTestRule.onAllNodesWithTag("sms_transaction_reading_animation").fetchSemanticsNodes().isEmpty()
@@ -1216,8 +1221,12 @@ class ExampleRobolectricTest {
         composeTestRule.waitForIdle()
         assertTrue(LocalAccountSessionManager.expertFeatureFlags.value.expertModeEnabled)
 
-        // 4. Verify Expert sub-flag chips and valid diagnostic cards exist, while ALL thread-count and bug-guard toggles are absent
-        composeTestRule.onNodeWithTag("expert_subflags_row").assertExists()
+        // 4. Verify diagnostic cards expand cleanly without clutter chips/test/diagnostic buttons or bug-guard toggles
+        assertTrue(composeTestRule.onAllNodesWithTag("expert_subflags_row").fetchSemanticsNodes().isEmpty())
+        assertTrue(composeTestRule.onAllNodesWithTag("expert_flag_crashlytics_chip").fetchSemanticsNodes().isEmpty())
+        assertTrue(composeTestRule.onAllNodesWithTag("expert_flag_fcm_chip").fetchSemanticsNodes().isEmpty())
+        assertTrue(composeTestRule.onAllNodesWithTag("fcm_test_push_button").fetchSemanticsNodes().isEmpty())
+        assertTrue(composeTestRule.onAllNodesWithTag("crashlytics_run_check_button").fetchSemanticsNodes().isEmpty())
         composeTestRule.onNodeWithTag("household_tab_list")
             .performScrollToNode(hasTestTag("fcm_push_settings_card"))
         composeTestRule.onNodeWithTag("fcm_push_settings_card").assertExists()
@@ -1225,6 +1234,11 @@ class ExampleRobolectricTest {
         composeTestRule.onNodeWithTag("household_tab_list")
             .performScrollToNode(hasTestTag("crashlytics_settings_card"))
         composeTestRule.onNodeWithTag("crashlytics_settings_card").assertExists()
+
+        // Verify Accounts carousel is NOT duplicated on the Settings page
+        assertTrue(
+            composeTestRule.onAllNodesWithText("Bank accounts, debit & credit cards & wallets").fetchSemanticsNodes().isEmpty()
+        )
 
         // Ensure user cannot modify parsing/writing thread counts or disable bug guards in UI
         assertTrue(composeTestRule.onAllNodesWithTag("expert_parallel_sms_card").fetchSemanticsNodes().isEmpty())
@@ -2642,12 +2656,15 @@ class ExampleRobolectricTest {
         composeTestRule.waitForIdle()
         assertEquals(DateRangePreset.ALL_TIME, selectedPreset)
 
-        // 2. Verify all 4 sections and their respective accounts + per-account transactions render
+        // 2. Verify all 4 sections and their respective accounts render WITHOUT exposing transactions inline
         composeTestRule.onNodeWithTag("accounts_tab_list")
             .performScrollToNode(hasTestTag("section_header_wallet"))
         composeTestRule.onNodeWithTag("accounts_tab_list")
-            .performScrollToNode(hasTestTag("account_tx_row_tx_wallet_1"))
-        composeTestRule.onNodeWithText("Metro Card Recharge").assertIsDisplayed()
+            .performScrollToNode(hasTestTag("account_card_paytm_wallet"))
+        assertTrue(
+            "Transactions must stay hidden on AccountsTabScreen before user clicks an account",
+            composeTestRule.onAllNodesWithTag("account_tx_row_tx_wallet_1").fetchSemanticsNodes().isEmpty()
+        )
 
         // 3. Inline spend limit editing for Paytm Wallet
         composeTestRule.onNodeWithTag("accounts_tab_list")
@@ -2660,29 +2677,29 @@ class ExampleRobolectricTest {
         composeTestRule.onNodeWithTag("inline_save_account_limit_paytm_wallet").performClick()
         composeTestRule.waitForIdle()
         assertEquals(400.0, walletLimit, 0.01)
+        composeTestRule.onNodeWithTag("accounts_tab_list").performScrollToIndex(0)
         composeTestRule.onNodeWithTag("accounts_tab_list")
             .performScrollToNode(hasTestTag("account_limit_status_paytm_wallet"))
         composeTestRule.onNodeWithTag("account_limit_status_paytm_wallet").assertIsDisplayed()
 
-        // 4. Verify Bank Account, Debit Card (Linked to Bank), and Credit Card sections + transactions
+        // 4. Verify Bank Account, Debit Card (Linked to Bank), and Credit Card sections render without inline tx rows
         composeTestRule.onNodeWithTag("accounts_tab_list")
             .performScrollToNode(hasTestTag("section_header_bank"))
         composeTestRule.onNodeWithTag("accounts_tab_list")
-            .performScrollToNode(hasTestTag("account_tx_row_tx_bank_1"))
-        composeTestRule.onNodeWithText("Apartment Rent Transfer").assertIsDisplayed()
+            .performScrollToNode(hasTestTag("account_card_hdfc_salary_a_c"))
 
         composeTestRule.onNodeWithTag("accounts_tab_list")
             .performScrollToNode(hasTestTag("debit_linked_bank_hdfc_millennia_debit_card"))
         composeTestRule.onNodeWithText("Linked to HDFC Salary A/c ••4321").assertIsDisplayed()
-        composeTestRule.onNodeWithTag("accounts_tab_list")
-            .performScrollToNode(hasTestTag("account_tx_row_tx_debit_1"))
-        composeTestRule.onNodeWithText("Supermarket Swipe").assertIsDisplayed()
 
         composeTestRule.onNodeWithTag("accounts_tab_list")
             .performScrollToNode(hasTestTag("section_header_credit_card"))
         composeTestRule.onNodeWithTag("accounts_tab_list")
-            .performScrollToNode(hasTestTag("account_tx_row_tx_credit_1"))
-        composeTestRule.onNodeWithText("Airline Ticket Booking").assertIsDisplayed()
+            .performScrollToNode(hasTestTag("account_card_axis_neo_credit_card"))
+        assertTrue(
+            "Credit card transactions must stay hidden on AccountsTabScreen",
+            composeTestRule.onAllNodesWithTag("account_tx_row_tx_credit_1").fetchSemanticsNodes().isEmpty()
+        )
 
         // 5. Verify AddAccountDialog creates a Debit Card linked to HDFC Salary A/c with spend limit
         composeTestRule.onNodeWithTag("accounts_tab_list")
@@ -3304,41 +3321,34 @@ class ExampleRobolectricTest {
         LocalAccountSessionManager.ensureInitialized(app)
         LocalAccountSessionManager.updateFcmPushSettings(app, FcmPushSettings())
 
-        // 1. Default credit card alert threshold is 80% and AccountLimitPeriodUtils computes Weekly/Quarterly/Custom bounds accurately
+        // 1. Default credit card alert threshold is 80% and AccountLimitPeriodUtils computes Billing Cycle Day bounds accurately
         assertEquals(80, LocalAccountSessionManager.fcmPushSettings.value.creditCardAlertThresholdPercent)
 
         val cal = Calendar.getInstance().apply {
-            set(2026, Calendar.OCTOBER, 14, 12, 0, 0)
+            set(2026, Calendar.OCTOBER, 20, 12, 0, 0)
             set(Calendar.MILLISECOND, 0)
         }
         val refMs = cal.timeInMillis
-        val quarterlyAcc = FinancialAccount(
+        val billingCycleCard = FinancialAccount(
             id = "cc_regalia",
             name = "HDFC Regalia Credit Card",
             accountType = "CREDIT_CARD",
             monthlySpendLimit = 50000.0,
-            spendLimitPeriod = AccountLimitPeriod.QUARTERLY.name
+            billingCycleDay = 15
         )
-        val qBounds = AccountLimitPeriodUtils.computeBoundsMillis(quarterlyAcc, refMs)
-        val expectedQStart = Calendar.getInstance().apply {
-            set(2026, Calendar.OCTOBER, 1, 0, 0, 0)
+        val cycleBounds = AccountLimitPeriodUtils.computeBoundsMillis(billingCycleCard, refMs)
+        val expectedCycleStart = Calendar.getInstance().apply {
+            set(2026, Calendar.OCTOBER, 15, 0, 0, 0)
             set(Calendar.MILLISECOND, 0)
         }.timeInMillis
-        assertTrue(qBounds.first >= expectedQStart)
-        assertEquals("Quarterly", AccountLimitPeriodUtils.formatLimitPeriodLabel(quarterlyAcc))
-
-        val customAcc = FinancialAccount(
-            id = "cc_custom",
-            name = "Axis Magnus Credit Card",
-            accountType = "CREDIT_CARD",
-            monthlySpendLimit = 20000.0,
-            spendLimitPeriod = AccountLimitPeriod.CUSTOM.name,
-            spendLimitStartMillis = refMs - 86_400_000L * 5,
-            spendLimitEndMillis = refMs + 86_400_000L * 5
-        )
-        val cBounds = AccountLimitPeriodUtils.computeBoundsMillis(customAcc, refMs)
-        assertEquals(refMs - 86_400_000L * 5, cBounds.first)
-        assertEquals(refMs + 86_400_000L * 5, cBounds.second)
+        val expectedCycleEnd = Calendar.getInstance().apply {
+            set(2026, Calendar.NOVEMBER, 14, 23, 59, 59)
+            set(Calendar.MILLISECOND, 999)
+        }.timeInMillis
+        assertEquals(expectedCycleStart, cycleBounds.first)
+        assertEquals(expectedCycleEnd, cycleBounds.second)
+        val periodLabel = AccountLimitPeriodUtils.formatLimitPeriodLabel(billingCycleCard, refMs)
+        assertTrue("Expected Cycle Day 15 label, got $periodLabel", periodLabel.startsWith("Cycle Day 15"))
 
         // 2. Customize threshold to 90% via Settings Notifications card
         val uiState = OneFamilyDashboardUiState(
@@ -3360,10 +3370,15 @@ class ExampleRobolectricTest {
 
         composeTestRule.onNodeWithTag("household_tab_list")
             .performScrollToNode(hasTestTag("notif_credit_threshold_card"))
-        composeTestRule.onNodeWithTag("notif_credit_threshold_chip_90").performClick()
+        // Redundant preset chips must be removed; only the Slider configures the threshold
+        assertTrue(composeTestRule.onAllNodesWithTag("notif_credit_threshold_chip_90").fetchSemanticsNodes().isEmpty())
+        composeTestRule.onNodeWithTag("notif_credit_threshold_slider")
+            .performScrollTo()
+            .performSemanticsAction(SemanticsActions.SetProgress) { it(90f) }
         composeTestRule.waitForIdle()
 
-        assertEquals(90, LocalAccountSessionManager.fcmPushSettings.value.creditCardAlertThresholdPercent)
+        val updatedThreshold = LocalAccountSessionManager.fcmPushSettings.value.creditCardAlertThresholdPercent
+        assertEquals(90, updatedThreshold)
         composeTestRule.onNodeWithTag("notif_credit_threshold_value").assertIsDisplayed()
 
         // 3. Fire credit card limit notification -> posts on Card Limits channel with spent/limit & % in title
@@ -3373,7 +3388,7 @@ class ExampleRobolectricTest {
             accountName = "HDFC Regalia Credit Card",
             spentAmount = 45000.0,
             limitAmount = 50000.0,
-            periodLabel = "Quarterly",
+            periodLabel = periodLabel,
             thresholdPercent = 90,
             currencySymbol = "₹",
             forceNotify = true
@@ -3384,6 +3399,213 @@ class ExampleRobolectricTest {
         assertTrue("Expected spent & % in credit limit alert title, got: $title", title.contains("45,000") && title.contains("90%"))
 
         LocalAccountSessionManager.updateFcmPushSettings(app, FcmPushSettings())
+    }
+
+    @Test
+    fun `test credit card billing cycle date UI removes unwanted period chips, SMS sync shows stay-open background notice, and Daily Weekly Monthly spend summaries support custom time`() {
+        val app = ApplicationProvider.getApplicationContext<Application>()
+        shadowOf(app).grantPermissions(Manifest.permission.POST_NOTIFICATIONS)
+        val nm = app.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        nm.cancelAll()
+        LocalAccountSessionManager.ensureInitialized(app)
+        LocalAccountDataStore.ensureInitialized(app)
+        LocalAccountSessionManager.updateFcmPushSettings(app, FcmPushSettings())
+
+        // 1. Verify AddAccountDialog for CREDIT_CARD shows Billing Cycle Day (1-31) and removes Weekly/Monthly/Quarterly/Yearly/Custom chips
+        var savedCycleDay = -1
+        var showAddCardDialog by mutableStateOf(true)
+        var showSyncScreen by mutableStateOf(false)
+        var showSettingsScreen by mutableStateOf(false)
+        composeTestRule.setContent {
+            OneFamilyTheme {
+                when {
+                    showAddCardDialog -> {
+                        AddAccountDialog(
+                            currencySymbol = "₹",
+                            accounts = emptyList(),
+                            initialAccountType = "CREDIT_CARD",
+                            onDismiss = { showAddCardDialog = false },
+                            onSave = { _, _, _, _, _, _, _, _, _ -> },
+                            onSaveWithBillingCycle = { _, _, _, _, _, _, _, _, _, billingCycleDay ->
+                                savedCycleDay = billingCycleDay
+                                showAddCardDialog = false
+                                showSyncScreen = true
+                            }
+                        )
+                    }
+                    showSyncScreen -> {
+                        FirstTimeSmsSyncScreen(
+                            syncState = SmsSyncProgressState(
+                                isSyncing = true
+                            ),
+                            onStartSyncClick = {},
+                            onContinueToAppClick = {},
+                            onSkipClick = {}
+                        )
+                    }
+                    showSettingsScreen -> {
+                        HouseholdTabScreen(
+                            uiState = OneFamilyDashboardUiState(
+                                isLoading = false,
+                                userProfile = UserProfile(uid = "u_summary_test", displayName = "Sam", currencySymbol = "₹")
+                            ),
+                            onCreateHousehold = { _, _ -> },
+                            onJoinByCode = {},
+                            onInviteByEmail = {},
+                            onAcceptEmailInvite = {}
+                        )
+                    }
+                }
+            }
+        }
+        composeTestRule.waitForIdle()
+
+        assertTrue(
+            "Old limit_period_chip_weekly must be removed from Credit Card limit dialog",
+            composeTestRule.onAllNodesWithTag("limit_period_chip_weekly").fetchSemanticsNodes().isEmpty()
+        )
+        assertTrue(
+            "Old limit_period_chip_quarterly must be removed from Credit Card limit dialog",
+            composeTestRule.onAllNodesWithTag("limit_period_chip_quarterly").fetchSemanticsNodes().isEmpty()
+        )
+        composeTestRule.onNodeWithTag("add_account_spend_limit_input").performScrollTo().assertIsDisplayed()
+        composeTestRule.onNodeWithTag("add_account_limit_cycle_link", useUnmergedTree = true).assertIsDisplayed()
+        composeTestRule.onNodeWithTag("add_account_cycle_limit_banner").performScrollTo().assertIsDisplayed()
+        composeTestRule.onNodeWithTag("billing_cycle_calendar_grid").performScrollTo().assertIsDisplayed()
+        composeTestRule.onNodeWithTag("billing_cycle_calendar_day_5").performScrollTo().performClick()
+        composeTestRule.onNodeWithTag("billing_cycle_calendar_day_31").performScrollTo().assertIsDisplayed()
+        composeTestRule.onNodeWithTag("billing_cycle_calendar_day_15").performScrollTo().performClick()
+        composeTestRule.onNodeWithTag("add_account_name_input").performScrollTo().performTextReplacement("ICICI Sapphiro Card")
+        composeTestRule.onNodeWithTag("add_account_last_four_input").performScrollTo().performTextReplacement("8899")
+        composeTestRule.onNodeWithTag("add_account_balance_input").performScrollTo().performTextReplacement("12000")
+        composeTestRule.onNodeWithTag("add_account_credit_limit_input").performScrollTo().performTextReplacement("200000")
+        composeTestRule.onNodeWithTag("add_account_spend_limit_input").performScrollTo().performTextReplacement("60000")
+        composeTestRule.onNodeWithTag("save_account_button").performScrollTo().performClick()
+        composeTestRule.waitForIdle()
+        assertEquals(15, savedCycleDay)
+
+        // 2. Verify FirstTimeSmsSyncScreen displays stay-open / background execution notice while scanning
+        composeTestRule.onNodeWithTag("sms_sync_stay_open_notice").performScrollTo().assertIsDisplayed()
+        composeTestRule.onNodeWithTag("sms_sync_allow_background_button").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Please Do Not Go Back or Minimize", substring = true).assertIsDisplayed()
+
+        // 3. Verify Daily, Weekly, and Monthly spend summary notifications and user-configurable summary notification time
+        LocalAccountDataStore.deleteAllUserData("u_summary_test")
+        LocalAccountSessionManager.registerUsernamePassword(app, "summaryuser", "pass", "Sam")
+        val samUid = LocalAccountSessionManager.getCurrentUser(app)!!.uid
+        val now = System.currentTimeMillis()
+        LocalAccountDataStore.restoreExpense(
+            ExpenseTransaction(
+                id = "sum_tx_today",
+                userId = samUid,
+                userName = "Sam",
+                title = "Fresh Mart",
+                amount = 1250.0,
+                type = "EXPENSE",
+                category = "Groceries",
+                transactionDateMillis = now - 60_000L
+            )
+        )
+        LocalAccountDataStore.restoreExpense(
+            ExpenseTransaction(
+                id = "sum_tx_week",
+                userId = samUid,
+                userName = "Sam",
+                title = "Metro Fuel",
+                amount = 2000.0,
+                type = "EXPENSE",
+                category = "Fuel & Travel",
+                transactionDateMillis = now - 86_400_000L * 2
+            )
+        )
+
+        nm.cancelAll()
+        com.example.data.sms.TransactionNotificationHelper.evaluateAndSendSpendSummary(
+            context = app,
+            period = com.example.data.sms.SpendSummaryPeriod.DAILY,
+            referenceMillis = now,
+            forceNotify = true
+        )
+        com.example.data.sms.TransactionNotificationHelper.evaluateAndSendSpendSummary(
+            context = app,
+            period = com.example.data.sms.SpendSummaryPeriod.WEEKLY,
+            referenceMillis = now,
+            forceNotify = true
+        )
+        com.example.data.sms.TransactionNotificationHelper.evaluateAndSendSpendSummary(
+            context = app,
+            period = com.example.data.sms.SpendSummaryPeriod.MONTHLY,
+            referenceMillis = now,
+            forceNotify = true
+        )
+
+        val summaryNotifs = shadowOf(nm).allNotifications
+        assertEquals(3, summaryNotifs.size)
+        val summaryTitles = summaryNotifs.map { it.extras.getCharSequence(Notification.EXTRA_TITLE)?.toString().orEmpty() }
+        assertTrue("Expected Daily Spend Summary with ₹1,250 in title, got $summaryTitles", summaryTitles.any { it == "₹1,250 • Daily Spend Summary" })
+        assertTrue("Expected Weekly Spend Summary with ₹3,250 in title, got $summaryTitles", summaryTitles.any { it == "₹3,250 • Weekly Spend Summary" })
+        assertTrue("Expected Monthly Spend Summary with amount in title, got $summaryTitles", summaryTitles.any { it.endsWith("• Monthly Spend Summary") && it.startsWith("₹") })
+
+        // Verify Daily, Weekly, and Monthly categories each show and save their own separate timings under notification settings
+        showSyncScreen = false
+        showSettingsScreen = true
+        composeTestRule.waitForIdle()
+
+        composeTestRule.onNodeWithTag("household_tab_list")
+            .performScrollToNode(hasTestTag("notif_category_timing_panel_daily_summary"))
+        composeTestRule.onNodeWithTag("notif_category_time_chip_daily_summary_9_0").performScrollTo().performClick()
+        composeTestRule.waitForIdle()
+
+        composeTestRule.onNodeWithTag("household_tab_list")
+            .performScrollToNode(hasTestTag("notif_category_timing_panel_weekly_summary"))
+        composeTestRule.onNodeWithTag("notif_category_time_chip_weekly_summary_20_0").performScrollTo().performClick()
+        composeTestRule.waitForIdle()
+
+        composeTestRule.onNodeWithTag("household_tab_list")
+            .performScrollToNode(hasTestTag("notif_category_timing_panel_monthly_summary"))
+        composeTestRule.onNodeWithTag("notif_category_custom_time_button_monthly_summary").performScrollTo().performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("notif_category_hour_input_monthly_summary").performScrollTo().performTextReplacement("7")
+        composeTestRule.onNodeWithTag("notif_category_minute_input_monthly_summary").performScrollTo().performTextReplacement("30")
+        composeTestRule.onNodeWithTag("notif_category_save_time_button_monthly_summary").performScrollTo().performClick()
+        composeTestRule.waitForIdle()
+
+        val updatedSettings = LocalAccountSessionManager.fcmPushSettings.value
+        assertEquals(9, updatedSettings.dailySummaryHour)
+        assertEquals(0, updatedSettings.dailySummaryMinute)
+        assertEquals("09:00 AM", updatedSettings.formatSummaryTime(NotificationSubCategory.DAILY_SUMMARY))
+
+        assertEquals(20, updatedSettings.weeklySummaryHour)
+        assertEquals(0, updatedSettings.weeklySummaryMinute)
+        assertEquals("08:00 PM", updatedSettings.formatSummaryTime(NotificationSubCategory.WEEKLY_SUMMARY))
+
+        assertEquals(7, updatedSettings.monthlySummaryHour)
+        assertEquals(30, updatedSettings.monthlySummaryMinute)
+        assertEquals("07:30 AM", updatedSettings.formatSummaryTime(NotificationSubCategory.MONTHLY_SUMMARY))
+
+        // Verify SpendSummaryAlarmScheduler computes separate triggers for Daily, Weekly, and Monthly
+        val dailyTrig = com.example.data.sms.SpendSummaryAlarmScheduler.computeTriggerMillisForPeriod(
+            com.example.data.sms.SpendSummaryPeriod.DAILY,
+            updatedSettings,
+            now
+        )
+        val weeklyTrig = com.example.data.sms.SpendSummaryAlarmScheduler.computeTriggerMillisForPeriod(
+            com.example.data.sms.SpendSummaryPeriod.WEEKLY,
+            updatedSettings,
+            now
+        )
+        val monthlyTrig = com.example.data.sms.SpendSummaryAlarmScheduler.computeTriggerMillisForPeriod(
+            com.example.data.sms.SpendSummaryPeriod.MONTHLY,
+            updatedSettings,
+            now
+        )
+        assertTrue(dailyTrig != weeklyTrig)
+        assertTrue(weeklyTrig != monthlyTrig)
+        assertTrue(dailyTrig != monthlyTrig)
+
+        LocalAccountDataStore.deleteAllUserData(samUid)
+        LocalAccountSessionManager.updateFcmPushSettings(app, FcmPushSettings())
+        LocalAccountSessionManager.signOut(app)
     }
 
     @Test
@@ -3470,16 +3692,16 @@ class ExampleRobolectricTest {
 
         composeTestRule.onNodeWithTag("accounts_tab_list")
             .performScrollToNode(hasTestTag("all_accounts_row_axis_ace_credit_card"))
-        composeTestRule.onNodeWithTag("all_accounts_row_axis_ace_credit_card").assertIsDisplayed()
-        composeTestRule.onNodeWithTag("all_accounts_hidden_badge_axis_ace_credit_card").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("all_accounts_row_axis_ace_credit_card").performScrollTo().assertIsDisplayed()
+        composeTestRule.onNodeWithTag("all_accounts_hidden_badge_axis_ace_credit_card", useUnmergedTree = true).assertIsDisplayed()
 
         // Unhide Axis card via bottom list toggle
-        composeTestRule.onNodeWithTag("all_accounts_toggle_hide_axis_ace_credit_card").performClick()
+        composeTestRule.onNodeWithTag("all_accounts_toggle_hide_axis_ace_credit_card").performScrollTo().performClick()
         composeTestRule.waitForIdle()
         assertEquals("acc_axis_hidden" to false, toggledHidden)
 
         // Delete / untrack Axis card via confirmation dialog
-        composeTestRule.onNodeWithTag("all_accounts_delete_axis_ace_credit_card").performClick()
+        composeTestRule.onNodeWithTag("all_accounts_delete_axis_ace_credit_card").performScrollTo().performClick()
         composeTestRule.waitForIdle()
         composeTestRule.onNodeWithTag("delete_account_confirm_dialog").assertIsDisplayed()
         composeTestRule.onNodeWithTag("confirm_delete_account_button").performClick()
@@ -3643,10 +3865,585 @@ class ExampleRobolectricTest {
 
         assertEquals("Groceries", assignedCategory)
     }
+
+    @Test
+    fun `test AllTransactionsScreen Axio subtabs and clickable Tag Category and Merchant filtering`() {
+        val now = System.currentTimeMillis()
+        val txSwiggy1 = ExpenseTransaction(
+            id = "tx_axio_1",
+            userId = "u_axio",
+            userName = "Alex",
+            title = "Swiggy",
+            amount = 964.0,
+            category = "Food & Dining",
+            type = "EXPENSE",
+            paymentMode = "UPI",
+            accountName = "HDFC Bank",
+            tags = listOf("Online"),
+            transactionDateMillis = now - 2_000L
+        )
+        val txBabitha = ExpenseTransaction(
+            id = "tx_axio_2",
+            userId = "u_axio",
+            userName = "Alex",
+            title = "Babitha",
+            amount = 29000.0,
+            category = "Travel",
+            type = "EXPENSE",
+            paymentMode = "CARD",
+            accountName = "ICICI Card",
+            tags = listOf("Flight"),
+            transactionDateMillis = now - 4_000L
+        )
+        val allTxs = listOf(txSwiggy1, txBabitha)
+
+        var selectedCategory by mutableStateOf("All")
+        var selectedTag by mutableStateOf("All")
+        var selectedMerchant by mutableStateOf("All")
+        var selectedType by mutableStateOf("All")
+
+        composeTestRule.setContent {
+            OneFamilyTheme {
+                val filtered = allTxs.filter { tx ->
+                    val catOk = selectedCategory == "All" || tx.category.equals(selectedCategory, ignoreCase = true)
+                    val tagOk = selectedTag == "All" || tx.tags.any { it.equals(selectedTag, ignoreCase = true) }
+                    val merOk = selectedMerchant == "All" || tx.title.equals(selectedMerchant, ignoreCase = true)
+                    val typeOk = selectedType == "All" || tx.type.equals(selectedType, ignoreCase = true)
+                    catOk && tagOk && merOk && typeOk
+                }
+                AllTransactionsScreen(
+                    uiState = OneFamilyDashboardUiState(
+                        isLoading = false,
+                        userProfile = UserProfile(uid = "u_axio", displayName = "Alex", currencySymbol = "₹"),
+                        activeExpenses = allTxs,
+                        allScopedExpenses = allTxs,
+                        filteredExpenses = filtered,
+                        totalMonthlySpent = 29964.0,
+                        totalMonthlyIncome = 0.0,
+                        activeMonthlyBudget = 25000.0,
+                        selectedCategoryFilter = selectedCategory,
+                        selectedTagFilter = selectedTag,
+                        selectedMerchantFilter = selectedMerchant,
+                        selectedTypeFilter = selectedType,
+                        categoryProgressList = listOf(
+                            CategorySpendProgress(
+                                category = "Travel",
+                                spent = 29000.0,
+                                limit = 0.0,
+                                alertThresholdPercent = 80,
+                                budgetDoc = null,
+                                memberBreakdown = emptyMap()
+                            ),
+                            CategorySpendProgress(
+                                category = "Food & Dining",
+                                spent = 964.0,
+                                limit = 20000.0,
+                                alertThresholdPercent = 80,
+                                budgetDoc = null,
+                                memberBreakdown = emptyMap()
+                            )
+                        )
+                    ),
+                    onSelectCategory = { selectedCategory = it },
+                    onSelectTag = {
+                        val clean = it.trim().removePrefix("#")
+                        selectedTag = if (clean == "All" || selectedTag.equals(clean, ignoreCase = true)) "All" else clean
+                    },
+                    onSelectMerchant = {
+                        val clean = it.trim()
+                        selectedMerchant = if (clean == "All" || selectedMerchant.equals(clean, ignoreCase = true)) "All" else clean
+                    },
+                    onSelectType = { selectedType = it },
+                    onClearFilters = {
+                        selectedCategory = "All"
+                        selectedTag = "All"
+                        selectedMerchant = "All"
+                        selectedType = "All"
+                    }
+                )
+            }
+        }
+        composeTestRule.waitForIdle()
+
+        // 1. Verify Transactions | Categories | Merchants sub-tabs and Circular Spend/Budget Ring Gauge exist
+        composeTestRule.onNodeWithTag("tx_subtab_transactions").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("tx_subtab_categories").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("tx_subtab_merchants").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("all_transactions_screen_list")
+            .performScrollToNode(hasTestTag("tx_page_spend_ring_gauge"))
+        composeTestRule.onNodeWithTag("tx_page_spend_ring_gauge").assertIsDisplayed()
+
+        // 2. Click #Online tag pill on Swiggy transaction -> filters to only #Online transactions
+        composeTestRule.onNodeWithTag("all_transactions_screen_list")
+            .performScrollToNode(hasTestTag("tx_tag_pill_tx_axio_1_online"))
+        composeTestRule.onNodeWithTag("tx_tag_pill_tx_axio_1_online").performClick()
+        composeTestRule.waitForIdle()
+        assertEquals("Online", selectedTag)
+        assertTrue(
+            "Babitha transaction should be filtered out when #Online tag is active",
+            composeTestRule.onAllNodesWithTag("expense_card_tx_axio_2").fetchSemanticsNodes().isEmpty()
+        )
+
+        // Clear tag filter via active tag pill
+        composeTestRule.onNodeWithTag("all_transactions_screen_list")
+            .performScrollToNode(hasTestTag("all_tx_active_tag_pill"))
+        composeTestRule.onNodeWithTag("all_tx_active_tag_pill").performClick()
+        composeTestRule.waitForIdle()
+        assertEquals("All", selectedTag)
+
+        // 3. Switch to Categories sub-tab -> verify Donut chart & Category cards -> click Travel card to filter by Travel
+        composeTestRule.onNodeWithTag("all_transactions_screen_list")
+            .performScrollToNode(hasTestTag("tx_subtab_categories"))
+        composeTestRule.onNodeWithTag("tx_subtab_categories").performClick()
+        composeTestRule.waitForIdle()
+
+        composeTestRule.onNodeWithTag("all_transactions_screen_list")
+            .performScrollToNode(hasTestTag("tx_category_card_travel"))
+        composeTestRule.onNodeWithTag("tx_category_card_travel").performClick()
+        composeTestRule.waitForIdle()
+        assertEquals("Travel", selectedCategory)
+
+        // Clear category filter
+        composeTestRule.onNodeWithTag("all_transactions_screen_list")
+            .performScrollToNode(hasTestTag("all_tx_active_category_pill"))
+        composeTestRule.onNodeWithTag("all_tx_active_category_pill").performClick()
+        composeTestRule.waitForIdle()
+        assertEquals("All", selectedCategory)
+
+        // 4. Switch to Merchants sub-tab -> click Babitha merchant card -> filters transactions to Babitha
+        composeTestRule.onNodeWithTag("all_transactions_screen_list")
+            .performScrollToNode(hasTestTag("tx_subtab_merchants"))
+        composeTestRule.onNodeWithTag("tx_subtab_merchants").performClick()
+        composeTestRule.waitForIdle()
+
+        composeTestRule.onNodeWithTag("all_transactions_screen_list")
+            .performScrollToNode(hasTestTag("tx_merchant_card_babitha"))
+        composeTestRule.onNodeWithTag("tx_merchant_card_babitha").performClick()
+        composeTestRule.waitForIdle()
+        assertEquals("Babitha", selectedMerchant)
+        assertTrue(
+            "Swiggy transaction should be filtered out when Babitha merchant filter is active",
+            composeTestRule.onAllNodesWithTag("expense_card_tx_axio_1").fetchSemanticsNodes().isEmpty()
+        )
+    }
+
+    @Test
+    fun `test haptics account deletion fresh relogin for arindamzipper realtime sms notifications and strict cashiro mandate reminder filtering`() = kotlinx.coroutines.runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val shadowApplication = shadowOf(context as android.app.Application)
+        shadowApplication.grantPermissions(
+            Manifest.permission.POST_NOTIFICATIONS,
+            Manifest.permission.READ_SMS,
+            Manifest.permission.RECEIVE_SMS,
+            Manifest.permission.VIBRATE
+        )
+        LocalAccountSessionManager.ensureInitialized(context)
+
+        // 1. Thoroughly test Haptic Feedback (enabled vs disabled)
+        val vibrator = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+            val vm = context.getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as android.os.VibratorManager
+            vm.defaultVibrator
+        } else {
+            @Suppress("DEPRECATION")
+            context.getSystemService(Context.VIBRATOR_SERVICE) as android.os.Vibrator
+        }
+        val shadowVibrator = shadowOf(vibrator)
+
+        LocalAccountSessionManager.setHapticFeedbackEnabled(context, true)
+        assertTrue(LocalAccountSessionManager.hapticFeedbackEnabled.value)
+        com.example.ui.theme.AppHapticManager.performHaptic(context, durationMs = 24L)
+        assertEquals("Vibrator must vibrate for 24ms when haptic feedback is enabled", 24L, shadowVibrator.milliseconds)
+
+        vibrator.cancel()
+        LocalAccountSessionManager.setHapticFeedbackEnabled(context, false)
+        assertFalse(LocalAccountSessionManager.hapticFeedbackEnabled.value)
+        com.example.ui.theme.AppHapticManager.performHaptic(context, durationMs = 30L)
+        assertFalse("Vibrator must not vibrate when haptic feedback is disabled", shadowVibrator.isVibrating)
+        LocalAccountSessionManager.setHapticFeedbackEnabled(context, true)
+
+        // 2. Test account creation, data population, deletion, and fresh re-login for arindamzipper@gmail.com
+        val targetEmail = "arindamzipper@gmail.com"
+        val firstLoginUser = LocalAccountSessionManager.signInWithUsernamePassword(
+            context = context,
+            rawUsername = targetEmail,
+            rawPassword = "password123"
+        ).getOrThrow()
+        assertEquals("local_user_arindamzipper_gmail_com", firstLoginUser.uid)
+        assertEquals(targetEmail, firstLoginUser.email)
+
+        // Mark initial SMS sync completed and add a transaction for arindamzipper@gmail.com
+        LocalAccountSessionManager.setInitialSmsSyncCompleted(context, firstLoginUser.uid, true)
+        assertTrue(LocalAccountSessionManager.hasCompletedInitialSmsSync(context, firstLoginUser.uid))
+
+        LocalAccountDataStore.addExpense(
+            uid = firstLoginUser.uid,
+            userName = firstLoginUser.displayName,
+            household = null,
+            title = "Old Transaction Before Delete",
+            amount = 999.0,
+            type = "EXPENSE",
+            category = "Shopping",
+            accountName = "HDFC Bank",
+            paymentMode = "UPI",
+            tags = emptyList(),
+            notes = "",
+            isShared = false
+        )
+        assertEquals(1, LocalAccountDataStore.observePersonalExpenses(firstLoginUser.uid).first().size)
+
+        // Delete account and data
+        LocalAccountSessionManager.deleteLocalUserAccount(
+            context = context,
+            uid = firstLoginUser.uid,
+            email = targetEmail
+        )
+        assertNull("Active user must be null after account deletion", LocalAccountSessionManager.getCurrentUser(context))
+        assertEquals(
+            "All transactions must be permanently deleted after account deletion",
+            0,
+            LocalAccountDataStore.observePersonalExpenses(firstLoginUser.uid).first().size
+        )
+        assertFalse(
+            "Initial SMS sync flag must be cleared on account deletion",
+            LocalAccountSessionManager.hasCompletedInitialSmsSync(context, firstLoginUser.uid)
+        )
+
+        // Also test Google Sign-In UID deletion + prepareUserLoginAfterAuth reset for arindamzipper@gmail.com
+        val googleUid = "google_uid_arindamzipper_123"
+        LocalAccountSessionManager.setInitialSmsSyncCompleted(context, googleUid, true)
+        LocalAccountSessionManager.deleteLocalUserAccount(context, googleUid, targetEmail)
+        LocalAccountSessionManager.setInitialSmsSyncCompleted(context, googleUid, true) // simulate stale pref
+        val resetConsumed = LocalAccountSessionManager.prepareUserLoginAfterAuth(
+            context = context,
+            uid = googleUid,
+            email = targetEmail
+        )
+        assertTrue("prepareUserLoginAfterAuth must detect deleted account and reset it as fresh", resetConsumed)
+        assertFalse(
+            "hasCompletedInitialSmsSync must be false after prepareUserLoginAfterAuth on deleted Google account",
+            LocalAccountSessionManager.hasCompletedInitialSmsSync(context, googleUid)
+        )
+
+        // Re-login with arindamzipper@gmail.com via signInWithUsernamePassword (must succeed as a fresh account creation!)
+        val reloginUser = LocalAccountSessionManager.signInWithUsernamePassword(
+            context = context,
+            rawUsername = targetEmail,
+            rawPassword = "newpassword456"
+        ).getOrThrow()
+        assertEquals("local_user_arindamzipper_gmail_com", reloginUser.uid)
+        assertEquals(targetEmail, reloginUser.email)
+        assertFalse(
+            "Re-logged in account after deletion must start fresh with initialSmsSyncCompleted = false",
+            LocalAccountSessionManager.hasCompletedInitialSmsSync(context, reloginUser.uid)
+        )
+        assertEquals(
+            "Re-logged in account must have 0 old transactions",
+            0,
+            LocalAccountDataStore.observePersonalExpenses(reloginUser.uid).first().size
+        )
+
+        // 3. Test strict Cashiro SMS parsing: reject mandates, bill reminders, and unknown/random SMS
+        val smsReader = SmsInboxReader(context)
+        val mandateSmsExamples = listOf(
+            "AD-HDFCBK" to "Dear Customer, UPI Mandate for Rs. 499.00 towards NETFLIX has been successfully created on your HDFC Bank A/c XX4821. UMN: 998877@okhdfcbank.",
+            "VM-ICICIB" to "Your e-Mandate for Rs 1,500.00 towards Spotify on ICICI Bank Acct XX1104 is registered.",
+            "AX-AXISBK" to "Standing Instruction / AutoPay setup of Rs. 2,500.00 on Axis Bank Card XX9012 for Tata Play is active.",
+            "VM-SBIINB" to "Pre-debit notification: Your SBI A/c XX3344 will be debited for Rs. 999.00 on 20-Nov-26 towards Amazon Prime AutoPay."
+        )
+        for ((sender, body) in mandateSmsExamples) {
+            assertNull(
+                "Mandate / Pre-debit SMS must be strictly rejected: $body",
+                com.ritesh.parser.core.bank.BankParserFactory.parseSms(body, sender)
+            )
+            assertNull(
+                "SmsInboxReader must reject mandate SMS: $body",
+                smsReader.parseRawSms(sender, body, System.currentTimeMillis())
+            )
+        }
+
+        val billReminderSmsExamples = listOf(
+            "AD-HDFCBK" to "Your HDFC Bank Credit Card XX4821 statement for Oct is generated. Total Amount Due: Rs. 18,450.00. Minimum Amount Due: Rs. 920.00. Due Date: 25-Nov-26. Ignore if already paid.",
+            "VM-ICICIB" to "Reminder: Payment of Rs. 6,200.00 for your ICICI Bank Credit Card XX9012 is due on 22-Nov-26. Please pay to avoid late payment charges. Ignore if paid.",
+            "AX-AXISBK" to "Bill of Rs. 1,180.00 for your Axis Bank Credit Card XX7788 is due. Kindly pay before 24-Nov-26. Ignore if already paid.",
+            "JD-BESCOM" to "Your electricity bill of Rs 1,450 is due on 28-Nov-26. Please pay online."
+        )
+        for ((sender, body) in billReminderSmsExamples) {
+            assertNull(
+                "Bill reminder / due alert SMS must be strictly rejected: $body",
+                com.ritesh.parser.core.bank.BankParserFactory.parseSms(body, sender)
+            )
+            assertNull(
+                "SmsInboxReader must reject bill reminder SMS: $body",
+                smsReader.parseRawSms(sender, body, System.currentTimeMillis())
+            )
+        }
+
+        // Non-Cashiro random sender must also be rejected
+        assertNull(
+            "Random non-Cashiro sender must be rejected",
+            com.ritesh.parser.core.bank.BankParserFactory.parseSms(
+                "Rs. 500 paid for subscription account.",
+                "VM-RNDAPP"
+            )
+        )
+
+        // 4. Test Real-Time Incoming SMS Notifications (all valid Cashiro bank SMS must immediately notify & save)
+        val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        val shadowNotificationManager = shadowOf(notificationManager)
+        notificationManager.cancelAll()
+        TransactionNotificationHelper.clearNotifiedStateForUser(reloginUser.uid)
+
+        val now = System.currentTimeMillis()
+        val incomingCand1 = smsReader.parseRawSms(
+            sender = "VM-HDFCBK",
+            body = "Rs. 740.00 debited from HDFC Bank A/c XX4821 on 16-11-26 to VPA swiggy@icici (UPI Ref 632011112222). Avl Bal: Rs. 42,100.00",
+            timestamp = now - 5_000L
+        )
+        val incomingCand2 = smsReader.parseRawSms(
+            sender = "AD-ICICIB",
+            body = "ICICI Bank Acct XX9012 debited for Rs 1,350.00 on 16-Nov-26; ZEPTO NOW credited. UPI:632033334444.",
+            timestamp = now - 2_000L
+        )
+        assertNotNull("Valid HDFC SMS must be parsed by Cashiro parser", incomingCand1)
+        assertNotNull("Valid ICICI SMS must be parsed by Cashiro parser", incomingCand2)
+
+        TransactionNotificationHelper.processIncomingSmsCandidateAndNotify(context, incomingCand1!!)
+        TransactionNotificationHelper.processIncomingSmsCandidateAndNotify(context, incomingCand2!!)
+
+        assertEquals(
+            "Both incoming SMS transactions must immediately post notifications",
+            2,
+            shadowNotificationManager.allNotifications.size
+        )
+        val savedAfterRealtime = LocalAccountDataStore.observePersonalExpenses(reloginUser.uid).first()
+        assertEquals(
+            "Both incoming SMS transactions must be immediately saved to the user's ledger",
+            2,
+            savedAfterRealtime.size
+        )
+
+        LocalAccountSessionManager.signOut(context)
+    }
+
+    @Test
+    fun `test AccountsTabScreen hides transactions until click, AccountDetailScreen shows graph with Monthly and Billing Cycle views, and Calendar View picks 1 to 31`() {
+        // 1. Verify billing cycle offset boundaries across 28/30/31-day months (e.g. billingCycleDay = 31)
+        val march15Ref = Calendar.getInstance().apply {
+            set(2026, Calendar.MARCH, 15, 12, 0, 0)
+            set(Calendar.MILLISECOND, 0)
+        }.timeInMillis
+
+        val activeCycle31 = AccountLimitPeriodUtils.computeBillingCycleBoundsForOffset(31, 0, march15Ref)
+        val expectedFebStart = Calendar.getInstance().apply {
+            set(2026, Calendar.FEBRUARY, 28, 0, 0, 0)
+            set(Calendar.MILLISECOND, 0)
+        }.timeInMillis
+        val expectedMar30End = Calendar.getInstance().apply {
+            set(2026, Calendar.MARCH, 30, 23, 59, 59)
+            set(Calendar.MILLISECOND, 999)
+        }.timeInMillis
+        assertEquals(expectedFebStart, activeCycle31.first)
+        assertEquals(expectedMar30End, activeCycle31.second)
+
+        val prevCycle31 = AccountLimitPeriodUtils.computeBillingCycleBoundsForOffset(31, -1, march15Ref)
+        val expectedJan31Start = Calendar.getInstance().apply {
+            set(2026, Calendar.JANUARY, 31, 0, 0, 0)
+            set(Calendar.MILLISECOND, 0)
+        }.timeInMillis
+        assertEquals(expectedJan31Start, prevCycle31.first)
+        assertEquals(expectedFebStart - 1L, prevCycle31.second)
+
+        // 2. Setup Credit Card with Billing Cycle Day 15 and transactions across two cycles
+        val refOct20 = Calendar.getInstance().apply {
+            set(2026, Calendar.OCTOBER, 20, 12, 0, 0)
+            set(Calendar.MILLISECOND, 0)
+        }.timeInMillis
+        val ccAccount = FinancialAccount(
+            id = "acc_cc_detail",
+            name = "Axis Magnus Credit Card",
+            bankName = "Axis Bank",
+            accountType = "CREDIT_CARD",
+            lastFourDigits = "7744",
+            creditLimit = 300000.0,
+            monthlySpendLimit = 50000.0,
+            billingCycleDay = 15
+        )
+        val txCurrentCycle = ExpenseTransaction(
+            id = "tx_cc_oct18",
+            title = "Current Cycle Flight",
+            amount = 14500.0,
+            category = "Travel",
+            paymentMode = "CARD",
+            accountName = "Axis Magnus Credit Card",
+            transactionDateMillis = Calendar.getInstance().apply {
+                set(2026, Calendar.OCTOBER, 18, 10, 0, 0)
+                set(Calendar.MILLISECOND, 0)
+            }.timeInMillis
+        )
+        val txPrevCycleOct5 = ExpenseTransaction(
+            id = "tx_cc_oct05",
+            title = "Early Oct Dining",
+            amount = 2200.0,
+            category = "Food & Drinks",
+            paymentMode = "CARD",
+            accountName = "Axis Magnus Credit Card",
+            transactionDateMillis = Calendar.getInstance().apply {
+                set(2026, Calendar.OCTOBER, 5, 20, 0, 0)
+                set(Calendar.MILLISECOND, 0)
+            }.timeInMillis
+        )
+        val allCardTxs = listOf(txCurrentCycle, txPrevCycleOct5)
+
+        var selectedAccountId by mutableStateOf<String?>(null)
+        var savedCycleDay by mutableIntStateOf(ccAccount.billingCycleDay)
+        var savedLimit by mutableDoubleStateOf(ccAccount.monthlySpendLimit)
+
+        composeTestRule.setContent {
+            val currentSummary = com.example.ui.viewmodel.AccountSpendSummary(
+                account = ccAccount.copy(monthlySpendLimit = savedLimit, billingCycleDay = savedCycleDay),
+                section = com.example.data.model.AccountSectionType.CREDIT_CARD,
+                linkedBankDisplayName = "",
+                spent = allCardTxs.sumOf { it.amount },
+                income = 0.0,
+                limit = savedLimit,
+                alertThresholdPercent = 80,
+                transactions = allCardTxs,
+                allTransactions = allCardTxs
+            )
+            val uiState = OneFamilyDashboardUiState(
+                isLoading = false,
+                periodLabel = "Oct 2026",
+                accounts = listOf(currentSummary.account),
+                accountSummaries = listOf(currentSummary)
+            )
+            OneFamilyTheme {
+                if (selectedAccountId == null) {
+                    AccountsTabScreen(
+                        uiState = uiState,
+                        onSaveAccountSpendLimitWithBillingCycle = { _, newLimit, newDay ->
+                            savedLimit = newLimit
+                            savedCycleDay = newDay
+                        },
+                        onAccountClick = { selectedAccountId = it }
+                    )
+                } else {
+                    com.example.ui.screens.AccountDetailScreen(
+                        summary = currentSummary,
+                        currencySymbol = "₹",
+                        referenceMillis = refOct20,
+                        onBackClick = { selectedAccountId = null },
+                        onSaveSpendLimitAndCycle = { _, newLimit, newDay ->
+                            savedLimit = newLimit
+                            savedCycleDay = newDay
+                        }
+                    )
+                }
+            }
+        }
+        composeTestRule.waitForIdle()
+
+        // Accounts list MUST NOT show transactions prior to click
+        assertTrue(
+            composeTestRule.onAllNodesWithText("Current Cycle Flight").fetchSemanticsNodes().isEmpty()
+        )
+        assertTrue(
+            composeTestRule.onAllNodesWithText("Early Oct Dining").fetchSemanticsNodes().isEmpty()
+        )
+
+        // Inline limit editor on AccountsTabScreen links Billing Cycle calendar to spend limit
+        composeTestRule.onNodeWithTag("accounts_tab_list")
+            .performScrollToNode(hasTestTag("set_account_limit_axis_magnus_credit_card"))
+        composeTestRule.onNodeWithTag("set_account_limit_axis_magnus_credit_card").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("accounts_tab_list")
+            .performScrollToNode(hasTestTag("inline_limit_cycle_link_axis_magnus_credit_card"))
+        composeTestRule.onNodeWithTag("inline_limit_cycle_link_axis_magnus_credit_card").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("accounts_tab_list")
+            .performScrollToNode(hasTestTag("inline_billing_cycle_calendar_axis_magnus_credit_card_grid"))
+        composeTestRule.onNodeWithTag("inline_billing_cycle_calendar_axis_magnus_credit_card_grid").assertIsDisplayed()
+        // Collapse inline editor before opening detail page
+        composeTestRule.onNodeWithTag("accounts_tab_list")
+            .performScrollToNode(hasTestTag("set_account_limit_axis_magnus_credit_card"))
+        composeTestRule.onNodeWithTag("set_account_limit_axis_magnus_credit_card").performClick()
+        composeTestRule.waitForIdle()
+
+        // Click on the Credit Card account card -> opens AccountDetailScreen
+        composeTestRule.onNodeWithTag("accounts_tab_list")
+            .performScrollToNode(hasTestTag("account_card_axis_magnus_credit_card"))
+        composeTestRule.onNodeWithTag("account_card_axis_magnus_credit_card").performClick()
+        composeTestRule.waitForIdle()
+
+        composeTestRule.onNodeWithTag("account_detail_screen").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("account_detail_screen")
+            .performScrollToNode(hasTestTag("account_detail_graph_card"))
+        composeTestRule.onNodeWithTag("account_detail_graph_card").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("account_detail_screen")
+            .performScrollToNode(hasTestTag("account_detail_period_bar_strip"))
+        composeTestRule.onNodeWithTag("account_detail_period_bar_strip").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("account_detail_screen")
+            .performScrollToNode(hasTestTag("account_detail_daily_canvas"))
+        composeTestRule.onNodeWithTag("account_detail_daily_canvas").assertIsDisplayed()
+
+        // Open Set Limit dialog on AccountDetailScreen -> shows linked Billing Cycle Calendar directly inside dialog
+        composeTestRule.onNodeWithTag("account_detail_screen")
+            .performScrollToNode(hasTestTag("account_detail_edit_limit_button"))
+        composeTestRule.onNodeWithTag("account_detail_edit_limit_button").performClick()
+        composeTestRule.waitForIdle()
+
+        composeTestRule.onNodeWithTag("account_detail_limit_dialog").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("account_detail_limit_cycle_link_banner").performScrollTo().assertIsDisplayed()
+        composeTestRule.onNodeWithTag("limit_dialog_billing_cycle_calendar_grid").performScrollTo().assertIsDisplayed()
+        composeTestRule.onNodeWithTag("account_detail_limit_input").performScrollTo().performTextReplacement("75000")
+        composeTestRule.onNodeWithTag("limit_dialog_billing_cycle_calendar_day_18").performScrollTo().performClick()
+        composeTestRule.onNodeWithTag("account_detail_save_limit_button").performClick()
+        composeTestRule.waitForIdle()
+        assertEquals(75000.0, savedLimit, 0.01)
+        assertEquals(18, savedCycleDay)
+
+        // Restore cycle day 15 via calendar button to verify standalone cycle picker also works
+        composeTestRule.onNodeWithTag("account_detail_screen")
+            .performScrollToNode(hasTestTag("account_detail_set_cycle_date_button"))
+        composeTestRule.onNodeWithTag("account_detail_set_cycle_date_button").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("billing_cycle_dialog_calendar_day_15").performScrollTo().performClick()
+        composeTestRule.onNodeWithTag("billing_cycle_calendar_confirm_button").performClick()
+        composeTestRule.waitForIdle()
+        assertEquals(15, savedCycleDay)
+
+        // Default mode for Credit Card is Billing Cycle (15 Oct – 14 Nov), so only Oct 18 appears, not Oct 5
+        composeTestRule.onNodeWithTag("account_detail_screen")
+            .performScrollToNode(hasTestTag("account_detail_tx_row_tx_cc_oct18"))
+        composeTestRule.onNodeWithText("Current Cycle Flight").assertIsDisplayed()
+        assertTrue(
+            "Oct 5 transaction belongs to previous cycle (15 Sep – 14 Oct), not current cycle (15 Oct – 14 Nov)",
+            composeTestRule.onAllNodesWithTag("account_detail_tx_row_tx_cc_oct05").fetchSemanticsNodes().isEmpty()
+        )
+
+        // Switch to Monthly view -> both Oct 18 and Oct 5 transactions appear together in Oct 2026!
+        composeTestRule.onNodeWithTag("account_detail_screen")
+            .performScrollToNode(hasTestTag("account_detail_mode_monthly"))
+        composeTestRule.onNodeWithTag("account_detail_mode_monthly").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("account_detail_screen")
+            .performScrollToNode(hasTestTag("account_detail_tx_row_tx_cc_oct05"))
+        composeTestRule.onNodeWithText("Early Oct Dining").assertIsDisplayed()
+
+        // Open Calendar View from AccountDetailScreen and select Day 22 (1..31 grid, no scrollable chip tab)
+        composeTestRule.onNodeWithTag("account_detail_screen")
+            .performScrollToNode(hasTestTag("account_detail_set_cycle_date_button"))
+        composeTestRule.onNodeWithTag("account_detail_set_cycle_date_button").performClick()
+        composeTestRule.waitForIdle()
+
+        composeTestRule.onNodeWithTag("billing_cycle_calendar_dialog").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("billing_cycle_dialog_calendar_grid").performScrollTo().assertIsDisplayed()
+        composeTestRule.onNodeWithTag("billing_cycle_dialog_calendar_day_31").performScrollTo().assertIsDisplayed()
+        composeTestRule.onNodeWithTag("billing_cycle_dialog_calendar_day_22").performScrollTo().performClick()
+        composeTestRule.onNodeWithTag("billing_cycle_calendar_confirm_button").performClick()
+        composeTestRule.waitForIdle()
+
+        assertEquals(22, savedCycleDay)
+    }
 }
-
-
-
 
 
 
