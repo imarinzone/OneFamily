@@ -3,8 +3,10 @@ package com.example
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.provider.Settings
 import android.provider.Telephony
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
@@ -43,17 +45,17 @@ import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ReceiptLong
+import androidx.compose.material.icons.automirrored.outlined.ReceiptLong
 import androidx.compose.material.icons.filled.AccountBalance
 import androidx.compose.material.icons.filled.AccountBalanceWallet
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Home
-import androidx.compose.material.icons.filled.PieChart
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.outlined.AccountBalance
 import androidx.compose.material.icons.outlined.AccountBalanceWallet
 import androidx.compose.material.icons.outlined.Home
-import androidx.compose.material.icons.outlined.PieChart
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.FloatingActionButton
@@ -117,8 +119,6 @@ import com.example.ui.screens.AddCategoryBudgetDialog
 import com.example.ui.screens.AddCustomCategoryDialog
 import com.example.ui.screens.AddTransactionDialog
 import com.example.ui.screens.AllTransactionsScreen
-import com.example.ui.screens.AnalyticsTabScreen
-import com.example.ui.screens.BudgetsTabScreen
 import com.example.ui.screens.EditOverallBudgetDialog
 import com.example.ui.screens.EditTransactionDialog
 import com.example.ui.screens.ExportTransactionsCsvDialog
@@ -265,8 +265,7 @@ enum class OneFamilyNavTab(
     val unselectedIcon: ImageVector
 ) {
     HOME("Home", Icons.Filled.Home, Icons.Outlined.Home),
-    ANALYSIS("Analysis", Icons.Filled.PieChart, Icons.Outlined.PieChart),
-    BUDGETS("Budgets", Icons.Filled.AccountBalanceWallet, Icons.Outlined.AccountBalanceWallet),
+    TRANSACTIONS("Transactions", Icons.AutoMirrored.Filled.ReceiptLong, Icons.AutoMirrored.Outlined.ReceiptLong),
     ACCOUNTS("Accounts", Icons.Filled.AccountBalance, Icons.Outlined.AccountBalance),
     ACCOUNT("Settings", Icons.Filled.Settings, Icons.Outlined.Settings);
 
@@ -344,6 +343,7 @@ fun OneFamilyMainShell(
             ) == PackageManager.PERMISSION_GRANTED
         )
     }
+    var smsPermissionWarning by remember { mutableStateOf<String?>(null) }
 
     var showAllTransactionsPage by rememberSaveable { mutableStateOf(false) }
     var selectedAccountDetailId by rememberSaveable { mutableStateOf<String?>(null) }
@@ -407,8 +407,12 @@ fun OneFamilyMainShell(
             ContextCompat.checkSelfPermission(context, Manifest.permission.READ_SMS) == PackageManager.PERMISSION_GRANTED
         hasReadSmsPermission = readSmsGranted
         if (readSmsGranted) {
+            smsPermissionWarning = null
             showSmsSyncScreen = true
             viewModel.scanDeviceSmsInbox(context = context, silentIfEmpty = false, notifyNewest = true)
+        } else {
+            smsPermissionWarning =
+                "SMS permission was denied or restricted by Android. Tap Start SMS Sync Now to retry, or open App Settings -> Permissions -> SMS (on Android 13+, tap 3-dots in App Info -> Allow restricted settings)."
         }
     }
 
@@ -466,6 +470,7 @@ fun OneFamilyMainShell(
         ) == PackageManager.PERMISSION_GRANTED
         hasReadSmsPermission = hasReadSms
         if (hasReadSms) {
+            smsPermissionWarning = null
             viewModel.scanDeviceSmsInbox(context = context, silentIfEmpty = false, notifyNewest = true)
         } else {
             val perms = buildList {
@@ -529,8 +534,8 @@ fun OneFamilyMainShell(
                     showSmsSyncScreen = false
                 },
                 onSkipClick = {
+                    viewModel.cancelSmsSync()
                     LocalAccountSessionManager.setInitialSmsSyncCompleted(context, currentUserId, true)
-                    viewModel.resetSmsSyncProgress()
                     showSmsSyncScreen = false
                 },
                 currencySymbol = currency,
@@ -539,6 +544,16 @@ fun OneFamilyMainShell(
                 onSelectPeriodOption = { viewModel.selectSmsSyncPeriod(it) },
                 onSelectCustomDateRange = { startMs, endMs ->
                     viewModel.selectSmsSyncCustomRange(startMs, endMs)
+                },
+                permissionWarningMessage = smsPermissionWarning,
+                onOpenAppSettingsClick = {
+                    val intent = Intent(
+                        Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                        Uri.fromParts("package", context.packageName, null)
+                    ).apply {
+                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    }
+                    runCatching { context.startActivity(intent) }
                 }
             )
         } else {
@@ -569,8 +584,7 @@ fun OneFamilyMainShell(
                     val isDateBarApplicable = selectedAccountDetailId == null && (
                         showAllTransactionsPage ||
                             currentTab == OneFamilyNavTab.HOME ||
-                            currentTab == OneFamilyNavTab.ANALYSIS ||
-                            currentTab == OneFamilyNavTab.BUDGETS ||
+                            currentTab == OneFamilyNavTab.TRANSACTIONS ||
                             currentTab == OneFamilyNavTab.ACCOUNTS
                         )
                     AnimatedVisibility(
@@ -670,10 +684,8 @@ fun OneFamilyMainShell(
                                 onClearFilters = { viewModel.clearFilters() },
                                 onExportCsvClick = { showExportCsvDialog = true },
                                 onAddTransactionClick = { showAddTransactionDialog = true },
-                                onEditMonthlyBudget = {
-                                    showAllTransactionsPage = false
-                                    navigateToTab(OneFamilyNavTab.BUDGETS)
-                                },
+                                onEditMonthlyBudget = { showEditOverallBudgetDialog = true },
+                                onAddCustomCategoryClick = { showAddCustomCategoryDialog = true },
                                 onSaveCategoryBudgetInline = { category, limit ->
                                     viewModel.saveCategoryBudget(
                                         category = category,
@@ -714,9 +726,15 @@ fun OneFamilyMainShell(
                                     OneFamilyNavTab.HOME -> HomeTabScreen(
                                         uiState = uiState,
                                         onScopeSelected = { viewModel.selectScope(it) },
+                                        onStepMonth = { viewModel.stepMonth(it) },
+                                        onSelectPeriod = { viewModel.selectPeriod(it) },
                                         onSelectDateRangePreset = { viewModel.selectDateRangePreset(it) },
                                         onSelectCustomDateRange = { s, e -> viewModel.selectCustomDateRange(s, e) },
-                                        onEditMonthlyBudget = { navigateToTab(OneFamilyNavTab.BUDGETS) },
+                                        onEditMonthlyBudget = { showEditOverallBudgetDialog = true },
+                                        onAccountClick = { clickedAccountId ->
+                                            selectedAccountDetailId = clickedAccountId
+                                        },
+                                        onNavigateToAccounts = { navigateToTab(OneFamilyNavTab.ACCOUNTS) },
                                         onSearchQueryChange = { viewModel.updateSearchQuery(it) },
                                         onSelectType = { viewModel.selectTypeFilter(it) },
                                         onSelectCategory = { viewModel.selectCategoryFilter(it) },
@@ -738,7 +756,7 @@ fun OneFamilyMainShell(
                                         onDeleteTransaction = { viewModel.deleteTransaction(it) },
                                         onLinkDuplicateTransaction = { linkingDuplicateTransaction = it },
                                         onUndoLastSwipeAction = { viewModel.undoLastSwipeAction() },
-                                        onOpenAllTransactionsPage = { showAllTransactionsPage = true },
+                                        onOpenAllTransactionsPage = { navigateToTab(OneFamilyNavTab.TRANSACTIONS) },
                                         onSaveCategoryBudgetInline = { category, limit ->
                                             viewModel.saveCategoryBudget(
                                                 category = category,
@@ -751,35 +769,43 @@ fun OneFamilyMainShell(
                                         }
                                     )
 
-                                    OneFamilyNavTab.ANALYSIS -> AnalyticsTabScreen(
+                                    OneFamilyNavTab.TRANSACTIONS -> AllTransactionsScreen(
                                         uiState = uiState,
-                                        onStepMonth = { viewModel.stepMonth(it) },
+                                        onBackClick = { navigateToTab(OneFamilyNavTab.HOME) },
+                                        onScopeSelected = { viewModel.selectScope(it) },
                                         onSelectPeriod = { viewModel.selectPeriod(it) },
+                                        onSelectDateRangePreset = { viewModel.selectDateRangePreset(it) },
+                                        onSelectCustomDateRange = { s, e -> viewModel.selectCustomDateRange(s, e) },
+                                        onSearchQueryChange = { viewModel.updateSearchQuery(it) },
+                                        onSelectType = { viewModel.selectTypeFilter(it) },
                                         onSelectCategory = { viewModel.selectCategoryFilter(it) },
-                                        onEditTransaction = { editingTransaction = it },
-                                        onQuickChangeCategory = { quickCategoryTransaction = it },
-                                        onToggleTransactionPrivacy = { viewModel.toggleTransactionPrivacy(it) },
-                                        onDeleteTransaction = { viewModel.deleteTransaction(it) },
-                                        onLinkDuplicateTransaction = { linkingDuplicateTransaction = it },
-                                        onOpenAllTransactionsPage = { showAllTransactionsPage = true }
-                                    )
-
-                                    OneFamilyNavTab.BUDGETS -> BudgetsTabScreen(
-                                        uiState = uiState,
-                                        onEditOverallBudgetClick = { showEditOverallBudgetDialog = true },
+                                        onSelectPaymentMode = { viewModel.selectPaymentModeFilter(it) },
+                                        onSelectAccount = { viewModel.selectAccountFilter(it) },
+                                        onSelectTag = { viewModel.selectTagFilter(it) },
+                                        onSelectMerchant = { viewModel.selectMerchantFilter(it) },
+                                        onSelectSortOrder = { viewModel.selectSortOrder(it) },
+                                        onClearFilters = { viewModel.clearFilters() },
+                                        onExportCsvClick = { showExportCsvDialog = true },
+                                        onAddTransactionClick = { showAddTransactionDialog = true },
+                                        onEditMonthlyBudget = { showEditOverallBudgetDialog = true },
+                                        onAddCustomCategoryClick = { showAddCustomCategoryDialog = true },
                                         onSaveCategoryBudgetInline = { category, limit ->
                                             viewModel.saveCategoryBudget(
                                                 category = category,
                                                 monthlyLimit = limit,
                                                 alertThresholdPercent = 80,
                                                 isShared = uiState.householdFeatureEnabled &&
-                                                    uiState.selectedScope != BudgetScope.PERSONAL_ONLY
+                                                    uiState.selectedScope == BudgetScope.HOUSEHOLD_SHARED &&
+                                                    uiState.household != null
                                             )
                                         },
-                                        onAddCustomCategoryClick = { showAddCustomCategoryDialog = true },
-                                        onScopeSelected = { viewModel.selectScope(it) },
-                                        onSelectDateRangePreset = { viewModel.selectDateRangePreset(it) },
-                                        onSelectCustomDateRange = { s, e -> viewModel.selectCustomDateRange(s, e) }
+                                        onEditTransaction = { editingTransaction = it },
+                                        onQuickChangeCategory = { quickCategoryTransaction = it },
+                                        onToggleTransactionPrivacy = { viewModel.toggleTransactionPrivacy(it) },
+                                        onToggleExcludeTransaction = { viewModel.toggleTransactionExcluded(it) },
+                                        onLinkDuplicateTransaction = { linkingDuplicateTransaction = it },
+                                        onDeleteTransaction = { viewModel.deleteTransaction(it) },
+                                        onUndoLastSwipeAction = { viewModel.undoLastSwipeAction() }
                                     )
 
                                     OneFamilyNavTab.ACCOUNTS -> AccountsTabScreen(
@@ -1002,6 +1028,22 @@ fun OneFamilyMainShell(
             availableCategories = uiState.availableCategories,
             currencySymbol = currency,
             onDismiss = { showAddTransactionDialog = false },
+            onCreateAccount = { name, bankName, accountType, lastFour, balance, creditLimit, linkedBankId, linkedBankName, spendLimit, billingCycleDay ->
+                viewModel.saveFinancialAccount(
+                    name = name,
+                    bankName = bankName,
+                    accountType = accountType,
+                    lastFourDigits = lastFour,
+                    balance = balance,
+                    creditLimit = creditLimit,
+                    isSharedVisible = true,
+                    linkedBankAccountId = linkedBankId,
+                    linkedBankAccountName = linkedBankName,
+                    monthlySpendLimit = spendLimit,
+                    billingCycleDay = billingCycleDay,
+                    context = context
+                )
+            },
             onSaveExcluded = { pendingAddExcluded = it },
             onSave = { title, amount, type, category, accountName, paymentMode, tagsInput, notes, isShared, txDateMillis ->
                 viewModel.addManualTransaction(
@@ -1029,6 +1071,7 @@ fun OneFamilyMainShell(
         EditTransactionDialog(
             transaction = txToEdit,
             hasHousehold = activeHasHousehold,
+            accounts = uiState.accounts,
             availableCategories = uiState.availableCategories,
             currencySymbol = currency,
             onDismiss = { editingTransaction = null },
@@ -1039,6 +1082,22 @@ fun OneFamilyMainShell(
             onLinkDuplicate = {
                 editingTransaction = null
                 linkingDuplicateTransaction = txToEdit
+            },
+            onCreateAccount = { name, bankName, accountType, lastFour, balance, creditLimit, linkedBankId, linkedBankName, spendLimit, billingCycleDay ->
+                viewModel.saveFinancialAccount(
+                    name = name,
+                    bankName = bankName,
+                    accountType = accountType,
+                    lastFourDigits = lastFour,
+                    balance = balance,
+                    creditLimit = creditLimit,
+                    isSharedVisible = true,
+                    linkedBankAccountId = linkedBankId,
+                    linkedBankAccountName = linkedBankName,
+                    monthlySpendLimit = spendLimit,
+                    billingCycleDay = billingCycleDay,
+                    context = context
+                )
             },
             onSaveExcluded = { pendingEditExcluded = it },
             onSave = { title, amount, type, category, accountName, paymentMode, tagsInput, notes, txDateMillis, targetShared ->

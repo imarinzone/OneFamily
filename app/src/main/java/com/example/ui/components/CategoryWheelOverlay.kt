@@ -134,13 +134,26 @@ class CategoryWheelController(
         availableCategories: List<String>,
         emojiMap: Map<String, String>
     ) {
+        val isIncomeTx = transaction.type.equals("INCOME", ignoreCase = true) ||
+            ExpenseCategories.isIncomeCategory(transaction.category)
         val resolved = (availableCategories + listOf(transaction.category))
+            .map { ExpenseCategories.normalizeCategory(it) }
             .filter { it.isNotBlank() }
             .distinctBy { it.lowercase() }
-            .ifEmpty { ExpenseCategories.ALL }
+            .filter { cat ->
+                if (isIncomeTx) {
+                    ExpenseCategories.isIncomeCategory(cat)
+                } else {
+                    !ExpenseCategories.isIncomeCategory(cat)
+                }
+            }
+            .ifEmpty {
+                if (isIncomeTx) ExpenseCategories.INCOME_CATEGORIES else ExpenseCategories.EXPENSE_ONLY
+            }
 
+        val normCurrent = ExpenseCategories.normalizeCategory(transaction.category)
         val initialIdx = resolved.indexOfFirst {
-            it.equals(transaction.category, ignoreCase = true)
+            it.equals(normCurrent, ignoreCase = true)
         }.coerceAtLeast(0)
 
         activeTransaction = transaction
@@ -564,12 +577,24 @@ fun NotificationQuickCategoryWheelOverlay(
     val density = LocalDensity.current
     val customEmojis = rememberCustomCategoryEmojis()
 
-    val categories = remember(availableCategories, initialCategory) {
+    val isIncomeTx = remember(initialCategory) {
+        ExpenseCategories.isIncomeCategory(initialCategory)
+    }
+    val categories = remember(availableCategories, initialCategory, isIncomeTx) {
         (availableCategories + listOf(initialCategory))
             .map { ExpenseCategories.normalizeCategory(it) }
             .filter { it.isNotBlank() }
             .distinctBy { it.lowercase() }
-            .ifEmpty { ExpenseCategories.ALL }
+            .filter { cat ->
+                if (isIncomeTx) {
+                    ExpenseCategories.isIncomeCategory(cat)
+                } else {
+                    !ExpenseCategories.isIncomeCategory(cat)
+                }
+            }
+            .ifEmpty {
+                if (isIncomeTx) ExpenseCategories.INCOME_CATEGORIES else ExpenseCategories.EXPENSE_ONLY
+            }
     }
     val initialIndex = remember(categories, initialCategory) {
         val norm = ExpenseCategories.normalizeCategory(initialCategory)

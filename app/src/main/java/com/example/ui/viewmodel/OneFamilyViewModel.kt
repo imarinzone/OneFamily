@@ -1,8 +1,11 @@
 package com.example.ui.viewmodel
 
+import android.Manifest
 import android.app.Activity
 import android.content.Context
 import android.content.ContextWrapper
+import android.content.pm.PackageManager
+import androidx.core.content.ContextCompat
 import androidx.credentials.ClearCredentialStateRequest
 import androidx.credentials.CredentialManager
 import androidx.credentials.CustomCredential
@@ -41,9 +44,11 @@ import java.util.Calendar
 import java.util.Locale
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicReference
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -65,6 +70,7 @@ import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 
 enum class DateRangePreset(val label: String) {
     MONTH("Current Month"),
@@ -722,6 +728,7 @@ data class OneFamilyDashboardUiState(
     val categoryProgressList: List<CategorySpendProgress> = emptyList(),
     val incomeCategoryProgressList: List<CategorySpendProgress> = emptyList(),
     val monthlyTrendBars: List<MonthlySpendBar> = emptyList(),
+    val filteredMonthlyTrendBars: List<MonthlySpendBar> = emptyList(),
     val totalMonthlySpent: Double = 0.0,
     val totalMonthlyIncome: Double = 0.0,
     val totalMonthlyExcluded: Double = 0.0,
@@ -1380,30 +1387,8 @@ class OneFamilyViewModel(
             return listOf(derived)
         }
 
-        val tagSpendMap = mutableMapOf<String, Double>()
-        periodExpensesOnly.forEach { tx ->
-            effectiveTagsForTransaction(tx).forEach { tag ->
-                tagSpendMap[tag] = (tagSpendMap[tag] ?: 0.0) + tx.amount
-            }
-        }
-        val allTagsWithSpend = tagSpendMap.entries
-            .sortedByDescending { it.value }
-            .map { it.key to it.value }
-
-        val topMerchants = periodExpensesOnly
-            .groupBy { it.title }
-            .mapValues { entry -> entry.value.sumOf { it.amount } }
-            .entries
-            .sortedByDescending { it.value }
-            .take(25)
-            .map { it.key to it.value }
-
-        val memberSpendMap = periodExpensesOnly
-            .groupBy { it.userName.ifBlank { "Member" } }
-            .mapValues { entry -> entry.value.sumOf { it.amount } }
-
         val cleanTagFilter = filter.tag.trim().removePrefix("#")
-        val filteredUnsorted = periodTransactions.filter { tx ->
+        fun matchesNonDateFilters(tx: ExpenseTransaction): Boolean {
             val matchesQuery = filter.query.isBlank() ||
                 tx.title.contains(filter.query, ignoreCase = true) ||
                 tx.notes.contains(filter.query, ignoreCase = true) ||
@@ -1435,8 +1420,64 @@ class OneFamilyViewModel(
                 MerchantCategoryUpdatePrompt.normalizeMerchantKey(filter.merchant)
             val matchesMem = filter.member == "All" || tx.userName.equals(filter.member, ignoreCase = true)
 
-            matchesQuery && matchesType && matchesCat && matchesMode && matchesAcc && matchesTag && matchesMerchant && matchesMem
+            return matchesQuery && matchesType && matchesCat && matchesMode && matchesAcc && matchesTag && matchesMerchant && matchesMem
         }
+
+        val hasNonDateFilter = filter.query.isNotBlank() ||
+            filter.type != "All" ||
+            filter.category != "All" ||
+            filter.paymentMode != "All" ||
+            filter.account != "All" ||
+            filter.tag != "All" ||
+            filter.merchant != "All" ||
+            filter.member != "All"
+
+        val filteredMonthlyTrendBars = if (!hasNonDateFilter) {
+            monthlyTrendBars
+        } else {
+            monthWindowList.map { ym ->
+                val matchingMonthTxs = allScopedTransactions.filter {
+                    YearMonthPeriod.fromMillis(it.transactionDateMillis) == ym && matchesNonDateFilters(it)
+                }
+                val expSum = if (filter.type.equals("EXCLUDED", ignoreCase = true)) {
+                    matchingMonthTxs.filter { it.isExcludedFromExpense }.sumOf { it.amount }
+                } else {
+                    matchingMonthTxs.filter { !isIncomeTransaction(it) && !it.isExcludedFromExpense }.sumOf { it.amount }
+                }
+                val incSum = matchingMonthTxs.filter { isIncomeTransaction(it) }.sumOf { it.amount }
+                MonthlySpendBar(
+                    period = ym,
+                    label = ym.formatShortMonth(),
+                    expenseTotal = expSum,
+                    incomeTotal = incSum,
+                    isSelected = dateRangePreset == DateRangePreset.MONTH && selectedPeriod == ym
+                )
+            }
+        }
+
+        val tagSpendMap = mutableMapOf<String, Double>()
+        periodExpensesOnly.forEach { tx ->
+            effectiveTagsForTransaction(tx).forEach { tag ->
+                tagSpendMap[tag] = (tagSpendMap[tag] ?: 0.0) + tx.amount
+            }
+        }
+        val allTagsWithSpend = tagSpendMap.entries
+            .sortedByDescending { it.value }
+            .map { it.key to it.value }
+
+        val topMerchants = periodExpensesOnly
+            .groupBy { it.title }
+            .mapValues { entry -> entry.value.sumOf { it.amount } }
+            .entries
+            .sortedByDescending { it.value }
+            .take(25)
+            .map { it.key to it.value }
+
+        val memberSpendMap = periodExpensesOnly
+            .groupBy { it.userName.ifBlank { "Member" } }
+            .mapValues { entry -> entry.value.sumOf { it.amount } }
+
+        val filteredUnsorted = periodTransactions.filter(::matchesNonDateFilters)
 
         val filtered = when (filter.sortOrder) {
             "OLDEST" -> filteredUnsorted.sortedBy { it.transactionDateMillis }
@@ -1486,6 +1527,7 @@ class OneFamilyViewModel(
             categoryProgressList = categoryProgressList,
             incomeCategoryProgressList = incomeCategoryProgressList,
             monthlyTrendBars = monthlyTrendBars,
+            filteredMonthlyTrendBars = filteredMonthlyTrendBars,
             totalMonthlySpent = totalSpent,
             totalMonthlyIncome = totalIncome,
             totalMonthlyExcluded = totalExcluded,
@@ -1683,6 +1725,14 @@ class OneFamilyViewModel(
 
     private val syncProgressLock = Any()
     private val smsSyncActiveGuard = java.util.concurrent.atomic.AtomicBoolean(false)
+    private var smsSyncJob: Job? = null
+
+    fun cancelSmsSync() {
+        smsSyncJob?.cancel()
+        smsSyncJob = null
+        smsSyncActiveGuard.set(false)
+        resetSmsSyncProgress()
+    }
 
     fun resetSmsSyncProgress() {
         _smsSyncProgress.value = SmsSyncProgressState(
@@ -1742,6 +1792,7 @@ class OneFamilyViewModel(
         val candidateBatchChannel = Channel<List<SmsCandidate>>(Channel.UNLIMITED)
         val savedCounter = AtomicInteger(0)
         val processedBatchCounter = AtomicInteger(0)
+        val writerError = AtomicReference<Throwable?>(null)
 
         val writerExecutor = Executors.newFixedThreadPool(effectiveWriterThreads) { runnable ->
             Thread(runnable, "TxWriterPool-Worker").apply { isDaemon = true }
@@ -1755,12 +1806,19 @@ class OneFamilyViewModel(
                     var workerSaved = 0
                     for (batchToSave in candidateBatchChannel) {
                         if (batchToSave.isNotEmpty()) {
-                            val imported = repository.batchImportSmsCandidates(
+                            val importResult = repository.batchImportSmsCandidates(
                                 candidates = batchToSave,
                                 userName = userName,
                                 household = household,
-                                shareByDefault = true
-                            ).getOrDefault(0)
+                                shareByDefault = true,
+                                preloadedExistingSignatures = existingSignatures
+                            )
+                            importResult.onFailure { err ->
+                                if (err !is CancellationException) {
+                                    writerError.compareAndSet(null, err)
+                                }
+                            }
+                            val imported = importResult.getOrDefault(0)
                             workerSaved += imported
                             val totalSavedNow = savedCounter.addAndGet(imported)
                             val latestInBatch = batchToSave.lastOrNull()
@@ -1894,6 +1952,11 @@ class OneFamilyViewModel(
             candidateBatchChannel.close()
             writerJobs.awaitAll()
 
+            val firstWriterErr = writerError.get()
+            if (discovered.isNotEmpty() && savedCounter.get() == 0 && firstWriterErr != null) {
+                _errorMessage.value = firstWriterErr.localizedMessage ?: "Failed to save synced SMS receipts."
+            }
+
             discovered to savedCounter.get()
         } finally {
             runCatching { candidateBatchChannel.close() }
@@ -1908,8 +1971,22 @@ class OneFamilyViewModel(
         notifyNewest: Boolean = true,
         onComplete: (() -> Unit)? = null
     ) {
+        if (context != null &&
+            ContextCompat.checkSelfPermission(context, Manifest.permission.READ_SMS) != PackageManager.PERMISSION_GRANTED
+        ) {
+            if (!silentIfEmpty) {
+                _errorMessage.value =
+                    "SMS permission is required to read bank & UPI alerts. Grant SMS permission or enable Restricted Settings in App Info."
+                _smsSyncProgress.value = SmsSyncProgressState(
+                    isSyncing = false,
+                    isCompleted = false,
+                    statusMessage = "SMS permission required."
+                )
+            }
+            return
+        }
         if (!smsSyncActiveGuard.compareAndSet(false, true)) return
-        viewModelScope.launch(Dispatchers.IO) {
+        smsSyncJob = viewModelScope.launch(Dispatchers.IO) {
             try {
                 val configuredReaders = SmsInboxReader.DEFAULT_PARALLEL_READER_THREADS
                 val configuredWriters = SmsInboxReader.DEFAULT_PARALLEL_WRITER_THREADS
@@ -1924,25 +2001,31 @@ class OneFamilyViewModel(
                     savedTransactionsCount = 0,
                     readerThreadCount = configuredReaders,
                     writerThreadCount = configuredWriters,
-                    currentReadingTransactionTitle = "Scanning Bank & UPI SMS...",
+                    currentReadingTransactionTitle = "Preparing SMS scanner...",
                     currentReadingBank = "SMS Inbox",
                     currentReadingCategory = "Unknown",
-                    statusMessage = "Scanning SMS inbox..."
+                    statusMessage = "Connecting & checking existing receipts..."
                 )
 
-                // Ensure profile exists before syncing SMS
-                runCatching {
-                    repository.ensureUserProfile(
-                        displayName = currentUserName,
-                        email = currentUserEmail
-                    )
+                // Bound pre-scan Firestore checks so offline / stalled network never freezes SMS reading
+                withTimeoutOrNull(4_000L) {
+                    runCatching {
+                        repository.ensureUserProfile(
+                            displayName = currentUserName,
+                            email = currentUserEmail
+                        )
+                    }
                 }
 
                 val state = uiState.value
-                val household = state.household ?: repository.getUserProfileOnce()
-                    ?.activeHouseholdId
-                    ?.takeIf { it.isNotBlank() }
-                    ?.let { repository.getHouseholdOnce(it) }
+                val household = state.household ?: withTimeoutOrNull(4_000L) {
+                    runCatching {
+                        repository.getUserProfileOnce()
+                            ?.activeHouseholdId
+                            ?.takeIf { it.isNotBlank() }
+                            ?.let { repository.getHouseholdOnce(it) }
+                    }.getOrNull()
+                }
 
                 val stateSignatures = (state.personalExpenses + state.sharedExpenses)
                     .flatMap { tx ->
@@ -1963,14 +2046,23 @@ class OneFamilyViewModel(
                     .flatMap { listOf(it, it.removePrefix("sms_")) }
                     .toSet()
 
-                val repoSignatures = runCatching {
-                    repository.getAllExistingSmsSignatures(household?.id)
-                }.getOrDefault(emptySet())
+                val repoSignatures = withTimeoutOrNull(4_000L) {
+                    runCatching {
+                        repository.getAllExistingSmsSignatures(household?.id)
+                    }.getOrDefault(emptySet())
+                } ?: LocalAccountDataStore.getAllExistingSmsSignatures(currentUserId)
 
                 val existingSignatures = stateSignatures + repoSignatures
                 val userName = currentUserName.ifBlank { state.userProfile?.displayName ?: "Me" }
                 val (minTimestampMillis, maxTimestampMillis) = _smsSyncPeriodOption.value
                     .computeBoundsMillis(_smsSyncCustomRange.value)
+
+                synchronized(syncProgressLock) {
+                    _smsSyncProgress.value = _smsSyncProgress.value.copy(
+                        currentReadingTransactionTitle = "Scanning Bank & UPI SMS...",
+                        statusMessage = "Scanning SMS inbox..."
+                    )
+                }
 
                 val smoothBatchDelayMs = if (android.os.Build.FINGERPRINT.equals("robolectric", ignoreCase = true)) {
                     15L
@@ -2074,6 +2166,18 @@ class OneFamilyViewModel(
                         }
                     )
                 }
+            } catch (sec: SecurityException) {
+                if (!silentIfEmpty) {
+                    _errorMessage.value =
+                        "SMS permission denied by Android. Open App Settings -> Permissions -> SMS (or Allow restricted settings) and retry."
+                }
+                synchronized(syncProgressLock) {
+                    _smsSyncProgress.value = _smsSyncProgress.value.copy(
+                        isSyncing = false,
+                        isCompleted = false,
+                        statusMessage = "SMS permission required."
+                    )
+                }
             } catch (e: kotlinx.coroutines.CancellationException) {
                 synchronized(syncProgressLock) {
                     _smsSyncProgress.value = _smsSyncProgress.value.copy(
@@ -2089,10 +2193,11 @@ class OneFamilyViewModel(
                     _smsSyncProgress.value = _smsSyncProgress.value.copy(
                         isSyncing = false,
                         isCompleted = true,
-                        statusMessage = "Sync finished."
+                        statusMessage = e.localizedMessage ?: "Sync finished."
                     )
                 }
             } finally {
+                smsSyncJob = null
                 smsSyncActiveGuard.set(false)
                 if (onComplete != null) {
                     withContext(Dispatchers.Main) {

@@ -268,13 +268,14 @@ fun onGoogleSignInClicked(
             val msg = e.message.orEmpty()
             Log.w(TAG, "Google Sign-In cancelled or dismissed: $msg", e)
             if (msg.contains("28444") || msg.contains("Developer console", ignoreCase = true) || msg.contains("10:")) {
-                onAuthError("Google Sign-In failed ($msg). You can also sign in with your email/username above.")
+                onAuthError("Google Sign-In configuration error ($msg). You can sign in directly with your email (e.g. arindamzipper@gmail.com) and password in the form above.")
             } else {
                 onAuthCancelled()
             }
         } catch (e: Exception) {
             Log.e(TAG, "Google Sign-In failed", e)
-            onAuthError(e.localizedMessage ?: "Sign in failed. Please try again.")
+            val detail = e.localizedMessage?.takeIf { it.isNotBlank() } ?: "No Google account credential available on this device."
+            onAuthError("Google Sign-In failed: $detail You can also enter your email & password in the form above to sign in immediately.")
         }
     }
 }

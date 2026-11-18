@@ -30,6 +30,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.tasks.await
+import kotlinx.coroutines.withTimeoutOrNull
 
 class OneFamilyRepository(
     private val dbProvider: () -> FirebaseFirestore,
@@ -104,9 +105,15 @@ class OneFamilyRepository(
         }
         val uid = currentFirebaseUser?.uid ?: return null
         return runCatching {
-            val snap = db.collection("users").document(uid).get().await()
-            if (snap.exists()) snap.toObject(UserProfile::class.java, DocumentSnapshot.ServerTimestampBehavior.ESTIMATE) else null
-        }.getOrNull()
+            val snap = withTimeoutOrNull(4_000L) {
+                db.collection("users").document(uid).get().await()
+            }
+            if (snap != null && snap.exists()) {
+                snap.toObject(UserProfile::class.java, DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
+            } else {
+                LocalAccountDataStore.getUserProfileOnce(uid)
+            }
+        }.getOrNull() ?: LocalAccountDataStore.getUserProfileOnce(uid)
     }
 
     suspend fun getHouseholdOnce(householdId: String): Household? {
@@ -115,9 +122,15 @@ class OneFamilyRepository(
             return LocalAccountDataStore.getHouseholdOnce(householdId)
         }
         return runCatching {
-            val snap = db.collection("households").document(householdId).get().await()
-            if (snap.exists()) snap.toObject(Household::class.java, DocumentSnapshot.ServerTimestampBehavior.ESTIMATE) else null
-        }.getOrNull()
+            val snap = withTimeoutOrNull(4_000L) {
+                db.collection("households").document(householdId).get().await()
+            }
+            if (snap != null && snap.exists()) {
+                snap.toObject(Household::class.java, DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
+            } else {
+                LocalAccountDataStore.getHouseholdOnce(householdId)
+            }
+        }.getOrNull() ?: LocalAccountDataStore.getHouseholdOnce(householdId)
     }
 
     suspend fun ensureUserProfile(
@@ -132,8 +145,17 @@ class OneFamilyRepository(
         val uid = requireUserId()
         val docRef = db.collection("users").document(uid)
         try {
-            val existing = docRef.get().await()
-            if (existing.exists()) {
+            val existing = withTimeoutOrNull(4_000L) { docRef.get().await() }
+            if (existing == null) {
+                // Firestore read timed out (offline or degraded connectivity): return local fallback
+                // immediately without wiping local state or blocking SMS sync.
+                LocalAccountDataStore.ensureUserProfile(
+                    uid = uid,
+                    displayName = displayName.ifBlank { "Family Member" },
+                    email = email,
+                    photoUrl = photoUrl
+                )
+            } else if (existing.exists()) {
                 val loaded = existing.toObject(UserProfile::class.java, DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
                     ?: UserProfile(id = uid, uid = uid, displayName = displayName, email = email)
                 LocalAccountDataStore.ensureUserProfile(
@@ -144,12 +166,13 @@ class OneFamilyRepository(
                 )
                 loaded
             } else {
-                // Brand-new Firestore user document (first-time login or re-login after account deletion)
-                appContext?.let { ctx ->
+                // Confirmed brand-new Firestore user document (first-time login or re-login after deletion)
+                val wasReset = appContext?.let { ctx ->
                     LocalAccountSessionManager.prepareUserLoginAfterAuth(ctx, uid, email)
-                    LocalAccountSessionManager.setInitialSmsSyncCompleted(ctx, uid, false)
+                } ?: false
+                if (wasReset) {
+                    LocalAccountDataStore.deleteAllUserData(uid, email)
                 }
-                LocalAccountDataStore.deleteAllUserData(uid, email)
                 val payload = mapOf(
                     "uid" to uid,
                     "email" to email.take(200),
@@ -161,7 +184,9 @@ class OneFamilyRepository(
                     "createdAt" to FieldValue.serverTimestamp(),
                     "updatedAt" to FieldValue.serverTimestamp()
                 )
-                docRef.set(payload).await()
+                // Enqueue write in Firestore persistence cache immediately; bound server ACK wait so UI/SMS sync never hangs offline
+                val setTask = docRef.set(payload)
+                withTimeoutOrNull(4_000L) { setTask.await() }
                 LocalAccountDataStore.ensureUserProfile(
                     uid = uid,
                     displayName = displayName.ifBlank { "Family Member" },
@@ -833,9 +858,13 @@ class OneFamilyRepository(
             }
         }
 
+        signatures.addAll(LocalAccountDataStore.getAllExistingSmsSignatures(uid))
+
         runCatching {
-            val pSnap = db.collection("users").document(uid).collection("personal_expenses").get().await()
-            pSnap.documents.forEach(::extractDocSignatures)
+            val pSnap = withTimeoutOrNull(4_000L) {
+                db.collection("users").document(uid).collection("personal_expenses").get().await()
+            }
+            pSnap?.documents?.forEach(::extractDocSignatures)
         }
 
         val effectiveHhId = householdId?.takeIf { it.isNotBlank() }
@@ -843,11 +872,13 @@ class OneFamilyRepository(
 
         if (effectiveHhId.isNotBlank()) {
             runCatching {
-                val sSnap = db.collection("households").document(effectiveHhId).collection("shared_expenses")
-                    .whereArrayContains("memberUids", uid)
-                    .get()
-                    .await()
-                sSnap.documents.forEach(::extractDocSignatures)
+                val sSnap = withTimeoutOrNull(4_000L) {
+                    db.collection("households").document(effectiveHhId).collection("shared_expenses")
+                        .whereArrayContains("memberUids", uid)
+                        .get()
+                        .await()
+                }
+                sSnap?.documents?.forEach(::extractDocSignatures)
             }
         }
         return signatures
@@ -861,7 +892,8 @@ class OneFamilyRepository(
         candidates: List<SmsCandidate>,
         userName: String,
         household: Household?,
-        shareByDefault: Boolean = true
+        shareByDefault: Boolean = true,
+        preloadedExistingSignatures: Set<String>? = null
     ): Result<Int> = runCatching {
         if (isLocalMode()) {
             val uid = requireLocalUserId()
@@ -891,8 +923,13 @@ class OneFamilyRepository(
                 db.collection("users").document(uid).collection("personal_expenses")
             }
 
-            // Query existing SMS signatures from personal & shared collections so we never overwrite or duplicate existing/edited SMS receipts
-            val existingServerSignatures = getAllExistingSmsSignatures(household?.id).toMutableSet()
+            // Use preloaded signatures + local cache when supplied by pipelined SMS sync so
+            // parallel batches do not re-download full Firestore collections on every 25-row chunk.
+            val existingServerSignatures = if (preloadedExistingSignatures != null) {
+                (preloadedExistingSignatures + LocalAccountDataStore.getAllExistingSmsSignatures(uid)).toMutableSet()
+            } else {
+                getAllExistingSmsSignatures(household?.id).toMutableSet()
+            }
             val batchBodyTimestamps = mutableMapOf<String, MutableList<Long>>()
             val reservedInFlightKeys = mutableListOf<String>()
 
@@ -1002,7 +1039,8 @@ class OneFamilyRepository(
                         }
                     }
                     try {
-                        batch.commit().await()
+                        val commitTask = batch.commit()
+                        withTimeoutOrNull(8_000L) { commitTask.await() }
                     } catch (e: CancellationException) {
                         throw e
                     } catch (e: Exception) {
@@ -1777,27 +1815,27 @@ class OneFamilyRepository(
 
         val docRef = db.collection("users").document(uid).collection("accounts").document(docKey)
         try {
-            val existingSnap = docRef.get().await()
-            val resolvedLinkedId = (linkedBankAccountId ?: existingSnap.getString("linkedBankAccountId") ?: "")
+            val existingSnap = withTimeoutOrNull(3_000L) { docRef.get().await() }
+            val resolvedLinkedId = (linkedBankAccountId ?: existingSnap?.getString("linkedBankAccountId") ?: "")
                 .trim()
                 .take(128)
-            val resolvedLinkedName = (linkedBankAccountName ?: existingSnap.getString("linkedBankAccountName") ?: "")
+            val resolvedLinkedName = (linkedBankAccountName ?: existingSnap?.getString("linkedBankAccountName") ?: "")
                 .trim()
                 .take(100)
-            val resolvedSpendLimit = (monthlySpendLimit ?: existingSnap.getDouble("monthlySpendLimit") ?: 0.0)
+            val resolvedSpendLimit = (monthlySpendLimit ?: existingSnap?.getDouble("monthlySpendLimit") ?: 0.0)
                 .coerceAtLeast(0.0)
-            val resolvedCycleDay = (billingCycleDay?.toLong() ?: existingSnap.getLong("billingCycleDay") ?: 1L)
+            val resolvedCycleDay = (billingCycleDay?.toLong() ?: existingSnap?.getLong("billingCycleDay") ?: 1L)
                 .coerceIn(1L, 31L)
             val resolvedPeriod = com.example.data.model.AccountLimitPeriod.fromRaw(
-                spendLimitPeriod ?: existingSnap.getString("spendLimitPeriod")
+                spendLimitPeriod ?: existingSnap?.getString("spendLimitPeriod")
             ).name
-            val resolvedStartMillis = (spendLimitStartMillis ?: existingSnap.getLong("spendLimitStartMillis") ?: 0L)
+            val resolvedStartMillis = (spendLimitStartMillis ?: existingSnap?.getLong("spendLimitStartMillis") ?: 0L)
                 .coerceAtLeast(0L)
-            val resolvedEndMillis = (spendLimitEndMillis ?: existingSnap.getLong("spendLimitEndMillis") ?: 0L)
+            val resolvedEndMillis = (spendLimitEndMillis ?: existingSnap?.getLong("spendLimitEndMillis") ?: 0L)
                 .coerceAtLeast(0L)
-            val resolvedAlertPct = (alertThresholdPercent?.toLong() ?: existingSnap.getLong("alertThresholdPercent") ?: 80L)
+            val resolvedAlertPct = (alertThresholdPercent?.toLong() ?: existingSnap?.getLong("alertThresholdPercent") ?: 80L)
                 .coerceIn(1L, 100L)
-            val resolvedHidden = isHidden ?: existingSnap.getBoolean("isHidden") ?: false
+            val resolvedHidden = isHidden ?: existingSnap?.getBoolean("isHidden") ?: false
 
             val payload = hashMapOf<String, Any>(
                 "userId" to uid,
@@ -1817,10 +1855,11 @@ class OneFamilyRepository(
                 "alertThresholdPercent" to resolvedAlertPct,
                 "isHidden" to resolvedHidden,
                 "isSharedVisible" to isSharedVisible,
-                "createdAt" to (existingSnap.getTimestamp("createdAt") ?: FieldValue.serverTimestamp()),
+                "createdAt" to (existingSnap?.getTimestamp("createdAt") ?: FieldValue.serverTimestamp()),
                 "updatedAt" to FieldValue.serverTimestamp()
             )
-            docRef.set(payload).await()
+            val setTask = docRef.set(payload)
+            withTimeoutOrNull(4_000L) { setTask.await() }
             docRef.id
         } catch (e: CancellationException) {
             throw e

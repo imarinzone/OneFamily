@@ -89,7 +89,6 @@ import com.example.data.model.FinancialAccount
 import com.example.ui.components.BillingCycleCalendarGrid
 import com.example.ui.components.CircularTonalIconButton
 import com.example.ui.components.CustomDateRangePickerModal
-import com.example.ui.components.EditorialScreenHeader
 import com.example.ui.components.PerforatedSectionHeader
 import com.example.ui.components.ReceiptDashedDividerLine
 import com.example.ui.components.ReceiptTicketCard
@@ -243,18 +242,35 @@ fun AccountsTabScreen(
         contentPadding = PaddingValues(top = 6.dp, bottom = 36.dp),
         verticalArrangement = Arrangement.spacedBy(0.dp)
     ) {
-        // 0. Editorial M3 Header
+        // 0. Compact Action Strip (no duplicate Accounts title or month/year)
         item {
-            EditorialScreenHeader(
-                title = "Accounts",
-                countPillText = if (hiddenAccountCount > 0) {
-                    "${visibleAccountSummaries.size} shown • $hiddenAccountCount hidden"
-                } else {
-                    "${visibleAccountSummaries.size} accounts"
-                },
-                subtitle = uiState.periodLabel,
-                modifier = Modifier.padding(bottom = 8.dp),
-                actions = {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = dimens.horizontalPadding, vertical = 6.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Surface(
+                    shape = RoundedCornerShape(50),
+                    color = MaterialTheme.colorScheme.surfaceContainerHigh
+                ) {
+                    Text(
+                        text = if (hiddenAccountCount > 0) {
+                            "${visibleAccountSummaries.size} shown • $hiddenAccountCount hidden"
+                        } else {
+                            "${visibleAccountSummaries.size} accounts"
+                        },
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                    )
+                }
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
                     CircularTonalIconButton(
                         icon = Icons.Default.FilterList,
                         contentDescription = "Account Filters",
@@ -278,7 +294,7 @@ fun AccountsTabScreen(
                         modifier = Modifier.testTag("accounts_add_account_button")
                     )
                 }
-            )
+            }
         }
 
         // 1. Scope Switcher (same as Home/Budgets when Household feature is enabled)
@@ -597,7 +613,6 @@ fun AccountsTabScreen(
                         AccountCardWithTransactions(
                             summary = summary,
                             currency = currency,
-                            periodLabel = uiState.periodLabel,
                             safeTag = safeTag,
                             cardShape = stackShape,
                             isEditingLimit = isEditingLimit,
@@ -866,7 +881,6 @@ fun AccountsTabScreen(
 private fun AccountCardWithTransactions(
     summary: AccountSpendSummary,
     currency: String,
-    periodLabel: String,
     safeTag: String,
     cardShape: RoundedCornerShape,
     isEditingLimit: Boolean,
@@ -1311,8 +1325,6 @@ private fun AccountCardWithTransactions(
                             append(if (count == 1) "1 transaction" else "$count transactions")
                             if (summary.section == AccountSectionType.CREDIT_CARD) {
                                 append(" • Cycle Day ${account.billingCycleDay.coerceIn(1, 31)}")
-                            } else {
-                                append(" in $periodLabel")
                             }
                         },
                         style = MaterialTheme.typography.labelMedium,

@@ -228,7 +228,9 @@ object TransactionNotificationHelper {
             normalized.contains("health") || normalized.contains("fitness") -> R.drawable.ic_cat_health
             normalized.contains("entertain") -> R.drawable.ic_cat_entertainment
             normalized.contains("invest") -> R.drawable.ic_cat_investments
-            normalized.contains("cashback") || normalized.contains("salary") || normalized.contains("income") -> R.drawable.ic_cat_income
+            normalized.contains("cashback") || normalized.contains("cash back") -> R.drawable.ic_cat_cashback
+            normalized == "income" -> R.drawable.ic_cat_income
+            normalized.contains("salary") || normalized.contains("income") -> R.drawable.ic_cat_salary
             else -> R.drawable.ic_cat_custom
         }
     }
@@ -406,7 +408,7 @@ object TransactionNotificationHelper {
         )
 
         val quickCandidates = if (isIncome) {
-            listOf("Income", "Cashback", "Salary & Income")
+            listOf("Salary & Income", "Cashback")
         } else {
             listOf("Food & Dining", "Groceries", "Shopping", "Bills & Utilities", "Fuel & Travel")
         }

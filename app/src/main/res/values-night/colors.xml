@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Material Expressive 3 Launcher Icon Palette (Dark System Theme Fallback < API 31) -->
+    <color name="ic_launcher_bg">#FF1A213D</color>
+    <color name="ic_launcher_bg_accent">#FF28335C</color>
+    <color name="ic_launcher_primary">#FFB8C4FF</color>
+    <color name="ic_launcher_secondary">#FF8CA6FF</color>
+    <color name="ic_launcher_on_primary">#FF121A3A</color>
+</resources>

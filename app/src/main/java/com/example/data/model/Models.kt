@@ -349,10 +349,19 @@ data class StabilityDiagnosticEntry(
     val deviceModel: String
 )
 
+data class BillReminder(
+    val id: String = "",
+    val title: String = "",
+    val amount: Double = 0.0,
+    val dueDayOfMonth: Int = 1,
+    val category: String = "Bills & Utilities",
+    val accountName: String = "",
+    val isPaidCurrentCycle: Boolean = false
+)
+
 object ExpenseCategories {
     val INCOME_CATEGORIES = listOf(
         "Salary & Income",
-        "Income",
         "Cashback"
     )
 
@@ -380,7 +389,6 @@ object ExpenseCategories {
         "Entertainment",
         "Investments",
         "Salary & Income",
-        "Income",
         "Cashback",
         "Unknown"
     )
@@ -392,7 +400,7 @@ object ExpenseCategories {
 
     /**
      * Normalizes category names so legacy "General", blank strings, and duplicate default aliases
-     * ("Salary", "Utilities", "Transportation", "Health & Medical") resolve to their single
+     * ("Salary", "Income", "Utilities", "Transportation", "Health & Medical") resolve to their single
      * canonical category in [ALL], while preserving genuine custom user categories.
      */
     fun normalizeCategory(raw: String): String {
@@ -400,8 +408,7 @@ object ExpenseCategories {
         if (cleaned.isBlank()) return "Unknown"
         return when (cleaned.lowercase()) {
             "general", "unknown", "uncategorized", "other", "misc", "miscellaneous" -> "Unknown"
-            "salary", "salary & income", "payroll" -> "Salary & Income"
-            "income", "other income", "interest", "dividend", "refund" -> "Income"
+            "salary", "salary & income", "payroll", "income", "other income", "interest", "dividend", "refund" -> "Salary & Income"
             "cashback", "cash back", "reward", "rewards" -> "Cashback"
             "utilities", "bills", "bills & utilities" -> "Bills & Utilities"
             "transportation", "transport", "fuel", "travel", "fuel & travel" -> "Fuel & Travel"

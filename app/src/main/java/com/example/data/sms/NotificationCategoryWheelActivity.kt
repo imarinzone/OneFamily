@@ -73,11 +73,26 @@ class NotificationCategoryWheelActivity : ComponentActivity() {
                 }
             }
 
-            val allCategories = remember(customCategories, currentCategory) {
+            val isIncomeTx = remember(loadedTx, currentCategory) {
+                loadedTx?.type?.equals("INCOME", ignoreCase = true)
+                    ?: ExpenseCategories.isIncomeCategory(currentCategory)
+            }
+
+            val allCategories = remember(customCategories, currentCategory, isIncomeTx) {
                 (ExpenseCategories.ALL + customCategories + listOf(currentCategory))
                     .map { ExpenseCategories.normalizeCategory(it) }
                     .filter { it.isNotBlank() }
                     .distinctBy { it.lowercase() }
+                    .filter { cat ->
+                        if (isIncomeTx) {
+                            ExpenseCategories.isIncomeCategory(cat)
+                        } else {
+                            !ExpenseCategories.isIncomeCategory(cat)
+                        }
+                    }
+                    .ifEmpty {
+                        if (isIncomeTx) ExpenseCategories.INCOME_CATEGORIES else ExpenseCategories.EXPENSE_ONLY
+                    }
             }
 
             OneFamilyTheme {

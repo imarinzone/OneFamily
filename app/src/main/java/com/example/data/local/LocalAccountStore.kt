@@ -3,6 +3,7 @@ package com.example.data.local
 import android.content.Context
 import android.content.SharedPreferences
 import android.os.Build
+import com.example.data.model.BillReminder
 import com.example.data.model.CategoryBudget
 import com.example.data.model.CrashlyticsSettings
 import com.example.data.model.ExpertFeatureFlagsSettings
@@ -59,6 +60,7 @@ object LocalAccountSessionManager {
     private const val KEY_HIDDEN_VIRTUAL_ACCOUNTS = "hidden_virtual_accounts_json"
     private const val KEY_UNTRACKED_VIRTUAL_ACCOUNTS = "untracked_virtual_accounts_json"
     private const val KEY_DELETED_RESET_KEYS = "deleted_account_reset_keys_json"
+    private const val KEY_BILL_REMINDERS = "bill_reminders_json"
 
     const val DEFAULT_TEST_USERNAME = "test"
     const val DEFAULT_TEST_PASSWORD = "pass"
@@ -113,6 +115,9 @@ object LocalAccountSessionManager {
     private val _untrackedVirtualAccountIds = MutableStateFlow<Set<String>>(emptySet())
     val untrackedVirtualAccountIds: StateFlow<Set<String>> = _untrackedVirtualAccountIds.asStateFlow()
 
+    private val _billReminders = MutableStateFlow<List<BillReminder>>(emptyList())
+    val billReminders: StateFlow<List<BillReminder>> = _billReminders.asStateFlow()
+
     private var initialized = false
     private var uncaughtHandlerInstalled = false
 
@@ -149,9 +154,76 @@ object LocalAccountSessionManager {
             _hapticFeedbackEnabled.value = prefs.getBoolean(KEY_HAPTIC_FEEDBACK_ENABLED, true)
             _hiddenVirtualAccountIds.value = decodeStringSet(prefs.getString(KEY_HIDDEN_VIRTUAL_ACCOUNTS, null))
             _untrackedVirtualAccountIds.value = decodeStringSet(prefs.getString(KEY_UNTRACKED_VIRTUAL_ACCOUNTS, null))
+            _billReminders.value = decodeBillReminders(prefs.getString(KEY_BILL_REMINDERS, null))
             initialized = true
         }
     }
+
+    fun addOrUpdateBillReminder(context: Context, reminder: BillReminder) {
+        ensureInitialized(context)
+        val cleanTitle = reminder.title.trim().take(60)
+        if (cleanTitle.isBlank()) return
+        val id = reminder.id.ifBlank { "bill_${UUID.randomUUID().toString().take(8)}" }
+        val normalized = reminder.copy(
+            id = id,
+            title = cleanTitle,
+            amount = reminder.amount.coerceAtLeast(0.0),
+            dueDayOfMonth = reminder.dueDayOfMonth.coerceIn(1, 31)
+        )
+        val existing = _billReminders.value.filterNot { it.id == id }
+        val updated = (existing + normalized).sortedBy { it.dueDayOfMonth }
+        _billReminders.value = updated
+        saveBillReminders(context, updated)
+    }
+
+    fun deleteBillReminder(context: Context, reminderId: String) {
+        ensureInitialized(context)
+        val updated = _billReminders.value.filterNot { it.id == reminderId }
+        _billReminders.value = updated
+        saveBillReminders(context, updated)
+    }
+
+    private fun saveBillReminders(context: Context, items: List<BillReminder>) {
+        val arr = JSONArray()
+        items.forEach { item ->
+            arr.put(
+                JSONObject().apply {
+                    put("id", item.id)
+                    put("title", item.title)
+                    put("amount", item.amount)
+                    put("dueDayOfMonth", item.dueDayOfMonth.coerceIn(1, 31))
+                    put("category", item.category)
+                    put("accountName", item.accountName)
+                    put("isPaidCurrentCycle", item.isPaidCurrentCycle)
+                }
+            )
+        }
+        prefs(context).edit().putString(KEY_BILL_REMINDERS, arr.toString()).apply()
+    }
+
+    private fun decodeBillReminders(raw: String?): List<BillReminder> = runCatching {
+        if (raw.isNullOrBlank()) return emptyList()
+        val arr = JSONArray(raw)
+        buildList {
+            for (i in 0 until arr.length()) {
+                val o = arr.getJSONObject(i)
+                val title = o.optString("title", "").trim()
+                if (title.isNotBlank()) {
+                    add(
+                        BillReminder(
+                            id = o.optString("id", "bill_$i"),
+                            title = title,
+                            amount = o.optDouble("amount", 0.0),
+                            dueDayOfMonth = o.optInt("dueDayOfMonth", 1).coerceIn(1, 31),
+                            category = o.optString("category", "Bills & Utilities"),
+                            accountName = o.optString("accountName", ""),
+                            isPaidCurrentCycle = o.optBoolean("isPaidCurrentCycle", false)
+                        )
+                    )
+                }
+            }
+        }
+    }.getOrDefault(emptyList())
 
     fun setVirtualAccountHidden(context: Context, virtualId: String, hidden: Boolean) {
         if (virtualId.isBlank()) return

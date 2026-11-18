@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Pure monochrome silhouette with transparent cutouts (evenOdd) for Android 13+ Material You Themed Icons -->
+    <path
+        android:fillColor="#FF000000"
+        android:fillType="evenOdd"
+        android:pathData="M38,26 H62 C65.31,26 68,28.69 68,32 V49.5 C60.2,50.1 54,56.6 54,64.5 C54,69.6 56.5,74.1 60.4,76.8 L56,78 L50,73.5 L44,78 L38,73.5 L32,78 V32 C32,28.69 34.69,26 38,26 Z
+                          M41,35 H59 A2.5,2.5 0 0,1 59,40 H41 A2.5,2.5 0 0,1 41,35 Z
+                          M41,44 H55 A2.5,2.5 0 0,1 55,49 H41 A2.5,2.5 0 0,1 41,44 Z
+                          M41,53 H49 A2.5,2.5 0 0,1 49,58 H41 A2.5,2.5 0 0,1 41,53 Z" />
+
+    <!-- Coin seal with negative-space checkmark cutout -->
+    <path
+        android:fillColor="#FF000000"
+        android:fillType="evenOdd"
+        android:pathData="M69,53.5 A12.5,12.5 0 1,1 68.9,53.5 Z
+                          M67.2,71.2 L75.8,62.6 C76.5,61.9 76.5,60.8 75.8,60.1 C75.1,59.4 74,59.4 73.3,60.1 L67.2,66.2 L64.7,63.7 C64,63 62.9,63 62.2,63.7 C61.5,64.4 61.5,65.5 62.2,66.2 L67.2,71.2 Z" />
+</vector>

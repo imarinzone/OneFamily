@@ -1341,7 +1341,7 @@ fun MonthlyBudgetPulseCard(
     currencySymbol: String,
     periodLabel: String,
     @Suppress("UNUSED_PARAMETER") household: Household?,
-    monthlyTrendBars: List<MonthlySpendBar> = emptyList(),
+    @Suppress("UNUSED_PARAMETER") monthlyTrendBars: List<MonthlySpendBar> = emptyList(),
     onEditBudgetClick: () -> Unit
 ) {
     val dimens = LocalAppDimens.current
@@ -1401,7 +1401,7 @@ fun MonthlyBudgetPulseCard(
                         modifier = Modifier.size(16.dp)
                     )
                     Text(
-                        text = "RECEIPT SUMMARY • ${periodLabel.uppercase(Locale.getDefault())}",
+                        text = "RECEIPT SUMMARY",
                         style = MaterialTheme.typography.labelSmall.copy(fontFamily = ReceiptMonoFontFamily),
                         fontWeight = FontWeight.Bold,
                         color = MaterialTheme.colorScheme.primary,
@@ -1540,192 +1540,6 @@ fun MonthlyBudgetPulseCard(
                         text = "${formatCurrency(dailySafeSpend, currencySymbol)}/d",
                         accentColor = MaterialTheme.colorScheme.primary
                     )
-                }
-            }
-
-            val hasTrendData = hasAssignedBudget || monthlyTrendBars.any { it.incomeTotal > 0.0 }
-            if (hasTrendData && monthlyTrendBars.isNotEmpty()) {
-                Spacer(modifier = Modifier.height(dimens.itemSpacing * 0.75f))
-                ReceiptDashedDividerLine()
-                HomeBudgetTrendMiniStrip(
-                    bars = monthlyTrendBars.takeLast(6),
-                    overallBudget = monthlyBudget,
-                    currencySymbol = currencySymbol
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun HomeBudgetTrendMiniStrip(
-    bars: List<MonthlySpendBar>,
-    overallBudget: Double,
-    currencySymbol: String
-) {
-    val dimens = LocalAppDimens.current
-    val hasOverallBudget = overallBudget > 0.0
-    val hasIncome = bars.any { it.incomeTotal > 0.0 }
-    val maxIncome = bars.maxOfOrNull { it.incomeTotal } ?: 0.0
-    val maxRef = maxOf(
-        bars.maxOfOrNull { it.expenseTotal } ?: 1.0,
-        if (hasOverallBudget) overallBudget * 1.15 else 0.0,
-        if (hasIncome) maxIncome * 1.12 else 0.0,
-        1.0
-    )
-    val selectedBar = bars.firstOrNull { it.isSelected } ?: bars.lastOrNull()
-    val selectedActual = selectedBar?.expenseTotal ?: 0.0
-    val selectedIncome = selectedBar?.incomeTotal?.takeIf { it > 0.0 }
-        ?: bars.lastOrNull { it.incomeTotal > 0.0 }?.incomeTotal
-        ?: 0.0
-    val isSelectedAbove = hasOverallBudget && selectedActual > overallBudget
-    val primaryColor = MaterialTheme.colorScheme.primary
-    val surfaceColor = MaterialTheme.colorScheme.surfaceContainer
-    val outlineColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
-
-    Surface(
-        modifier = Modifier
-            .fillMaxWidth()
-            .testTag("home_budget_trend_line_section"),
-        shape = RoundedCornerShape(16.dp),
-        color = MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.85f)
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 12.dp, vertical = 10.dp)
-        ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    if (hasOverallBudget) {
-                        Text(
-                            text = "Budget ${formatCompactCurrency(overallBudget, currencySymbol)}",
-                            style = MaterialTheme.typography.labelSmall.copy(fontFamily = ReceiptMonoFontFamily),
-                            fontWeight = FontWeight.SemiBold,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                    if (hasIncome) {
-                        Text(
-                            text = "● Income ${formatCompactCurrency(selectedIncome, currencySymbol)}",
-                            style = MaterialTheme.typography.labelSmall.copy(fontFamily = ReceiptMonoFontFamily),
-                            fontWeight = FontWeight.Bold,
-                            color = PersonalBadgeTeal
-                        )
-                    }
-                }
-                if (hasOverallBudget) {
-                    Text(
-                        text = if (isSelectedAbove) "▲ Above Budget" else "▼ Below Budget",
-                        style = MaterialTheme.typography.labelSmall,
-                        fontWeight = FontWeight.Bold,
-                        color = if (isSelectedAbove) BudgetDangerCoral else BudgetSafeGreen
-                    )
-                }
-            }
-            Spacer(modifier = Modifier.height(dimens.itemSpacing * 0.35f))
-            Canvas(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(42.dp)
-                    .testTag("home_budget_trend_canvas")
-            ) {
-                val topPad = 6.dp.toPx()
-                val bottomPad = 6.dp.toPx()
-                val usableH = (size.height - topPad - bottomPad).coerceAtLeast(8f)
-
-                if (hasOverallBudget) {
-                    val budgetFraction = (overallBudget / maxRef).toFloat().coerceIn(0.06f, 0.96f)
-                    val budgetY = size.height - bottomPad - usableH * budgetFraction
-                    drawLine(
-                        color = outlineColor,
-                        start = Offset(0f, budgetY),
-                        end = Offset(size.width, budgetY),
-                        strokeWidth = 1.6.dp.toPx(),
-                        pathEffect = PathEffect.dashPathEffect(floatArrayOf(10f, 7f), 0f)
-                    )
-                }
-
-                val count = bars.size.coerceAtLeast(1)
-                val slotW = size.width / count
-
-                if (hasIncome) {
-                    val incomePts = bars.mapIndexed { idx, bar ->
-                        val frac = if (bar.incomeTotal > 0.0) {
-                            (bar.incomeTotal / maxRef).toFloat().coerceIn(0.06f, 0.98f)
-                        } else {
-                            0.04f
-                        }
-                        val x = slotW * (idx + 0.5f)
-                        val y = size.height - bottomPad - usableH * frac
-                        Offset(x, y)
-                    }
-                    if (incomePts.size >= 2) {
-                        val areaPath = buildSmoothAreaPath(incomePts, size.height - bottomPad)
-                        drawPath(
-                            path = areaPath,
-                            brush = Brush.verticalGradient(
-                                colors = listOf(PersonalBadgeTeal.copy(alpha = 0.20f), Color.Transparent),
-                                startY = topPad,
-                                endY = size.height
-                            )
-                        )
-                        drawPath(
-                            path = buildSmoothBezierPath(incomePts),
-                            color = PersonalBadgeTeal,
-                            style = Stroke(width = 2.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round)
-                        )
-                    }
-                    incomePts.forEachIndexed { idx, pt ->
-                        if (bars[idx].incomeTotal > 0.0) {
-                            val r = if (bars[idx].isSelected) 4.dp.toPx() else 2.8.dp.toPx()
-                            drawCircle(color = surfaceColor, radius = r + 1.2.dp.toPx(), center = pt)
-                            drawCircle(color = PersonalBadgeTeal, radius = r, center = pt)
-                        }
-                    }
-                }
-
-                val points = bars.mapIndexed { idx, bar ->
-                    val frac = (bar.expenseTotal / maxRef).toFloat().coerceIn(0.04f, 1f)
-                    val x = slotW * (idx + 0.5f)
-                    val y = size.height - bottomPad - usableH * frac
-                    Offset(x, y)
-                }
-
-                if (points.size >= 2) {
-                    val areaPath = buildSmoothAreaPath(points, size.height - bottomPad)
-                    drawPath(
-                        path = areaPath,
-                        brush = Brush.verticalGradient(
-                            colors = listOf(primaryColor.copy(alpha = 0.24f), Color.Transparent),
-                            startY = topPad,
-                            endY = size.height
-                        )
-                    )
-                    drawPath(
-                        path = buildSmoothBezierPath(points),
-                        color = primaryColor,
-                        style = Stroke(width = 2.2.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round)
-                    )
-                }
-
-                points.forEachIndexed { idx, pt ->
-                    val bar = bars[idx]
-                    val nodeColor = if (hasOverallBudget && bar.expenseTotal > overallBudget) {
-                        BudgetDangerCoral
-                    } else {
-                        BudgetSafeGreen
-                    }
-                    val radius = if (bar.isSelected) 4.8.dp.toPx() else 3.4.dp.toPx()
-                    drawCircle(color = surfaceColor, radius = radius + 1.5.dp.toPx(), center = pt)
-                    drawCircle(color = nodeColor, radius = radius, center = pt)
                 }
             }
         }
@@ -4216,17 +4030,19 @@ fun TransactionPageSubTabBar(
 @Composable
 fun AxioMonthlySpendBarStrip(
     bars: List<MonthlySpendBar>,
-    currencySymbol: String,
+    @Suppress("UNUSED_PARAMETER") currencySymbol: String,
     onSelectMonth: (YearMonthPeriod) -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    useIncomeBars: Boolean = false
 ) {
     if (bars.isEmpty()) return
     val performHaptic = rememberAppHapticPerformer()
     val scrollState = rememberScrollState()
     val density = LocalDensity.current
-    val maxExpense = remember(bars) {
-        (bars.maxOfOrNull { it.expenseTotal } ?: 1.0).coerceAtLeast(1.0)
+    val maxMetric = remember(bars, useIncomeBars) {
+        (bars.maxOfOrNull { if (useIncomeBars) it.incomeTotal else it.expenseTotal } ?: 1.0).coerceAtLeast(1.0)
     }
+    val barColor = if (useIncomeBars) BudgetSafeGreen else Color(0xFF4C6EF5)
 
     LaunchedEffect(bars.size) {
         val selectedIdx = bars.indexOfFirst { it.isSelected }.takeIf { it >= 0 } ?: (bars.size - 1)
@@ -4244,10 +4060,15 @@ fun AxioMonthlySpendBarStrip(
         verticalAlignment = Alignment.Bottom
     ) {
         bars.forEach { bar ->
-            val fraction = (bar.expenseTotal / maxExpense).toFloat().coerceIn(0.10f, 1f)
-            val barHeight = (74.dp * fraction).coerceAtLeast(10.dp)
-            val amountCompact = if (bar.expenseTotal > 0.0) {
-                formatCompactCurrency(bar.expenseTotal, "").trim()
+            val metricValue = if (useIncomeBars) bar.incomeTotal else bar.expenseTotal
+            val fraction = if (metricValue > 0.0) {
+                (metricValue / maxMetric).toFloat().coerceIn(0.10f, 1f)
+            } else {
+                0.08f
+            }
+            val barHeight = (74.dp * fraction).coerceAtLeast(8.dp)
+            val amountCompact = if (metricValue > 0.0) {
+                formatCompactCurrency(metricValue, "").trim()
             } else {
                 "0"
             }
@@ -4290,9 +4111,9 @@ fun AxioMonthlySpendBarStrip(
                         .clip(RoundedCornerShape(50))
                         .background(
                             if (bar.isSelected) {
-                                Color(0xFF4C6EF5)
+                                barColor
                             } else {
-                                Color(0xFF4C6EF5).copy(alpha = 0.82f)
+                                barColor.copy(alpha = 0.82f)
                             }
                         )
                 )
@@ -4588,6 +4409,9 @@ fun TransactionCategoriesSubTabContent(
     onCategoryClick: (String) -> Unit,
     onSetCategoryBudgetClick: (String, Double) -> Unit,
     onEditMonthlyBudgetClick: () -> Unit = {},
+    onAddCustomCategoryClick: () -> Unit = {},
+    incomeCategories: List<CategorySubTabItem> = emptyList(),
+    totalIncome: Double = 0.0,
     modifier: Modifier = Modifier
 ) {
     val dimens = LocalAppDimens.current
@@ -4721,7 +4545,15 @@ fun TransactionCategoriesSubTabContent(
             }
         }
 
-        // 2. Spends | Budget Two-Column Summary Row
+        // 2. Spends | Budget Two-Column Summary Row (adapts to selected category when drilled in)
+        val hasSelectedCat = selectedCategory != "All" && selectedCategory.isNotBlank()
+        val selectedExpenseCat = if (hasSelectedCat) {
+            categories.firstOrNull { it.category.equals(selectedCategory, ignoreCase = true) }
+        } else null
+        val selectedIncomeCat = if (hasSelectedCat) {
+            incomeCategories.firstOrNull { it.category.equals(selectedCategory, ignoreCase = true) }
+        } else null
+
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -4733,16 +4565,29 @@ fun TransactionCategoriesSubTabContent(
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 Text(
-                    text = "Spends",
+                    text = when {
+                        selectedIncomeCat != null -> selectedIncomeCat.category
+                        selectedExpenseCat != null -> selectedExpenseCat.category
+                        hasSelectedCat -> selectedCategory
+                        else -> "Spends"
+                    },
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
                 )
                 Spacer(modifier = Modifier.height(2.dp))
+                val displayedTotal = when {
+                    selectedIncomeCat != null -> selectedIncomeCat.spent
+                    selectedExpenseCat != null -> selectedExpenseCat.spent
+                    hasSelectedCat -> 0.0
+                    else -> totalSpent
+                }
                 Text(
-                    text = formatCurrency(totalSpent, currencySymbol),
+                    text = formatCurrency(displayedTotal, currencySymbol),
                     style = MaterialTheme.typography.titleMedium.copy(fontFamily = ReceiptMonoFontFamily),
                     fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.onSurface
+                    color = if (selectedIncomeCat != null) BudgetSafeGreen else MaterialTheme.colorScheme.onSurface
                 )
             }
 
@@ -4759,29 +4604,89 @@ fun TransactionCategoriesSubTabContent(
                     .clip(RoundedCornerShape(12.dp))
                     .clickable {
                         performHaptic()
-                        onEditMonthlyBudgetClick()
+                        when {
+                            selectedExpenseCat != null -> onSetCategoryBudgetClick(
+                                selectedExpenseCat.category,
+                                selectedExpenseCat.budgetLimit
+                            )
+                            selectedIncomeCat == null && !hasSelectedCat -> onEditMonthlyBudgetClick()
+                        }
                     }
                     .padding(vertical = 4.dp)
                     .testTag("tx_categories_monthly_budget_button"),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                Text(
-                    text = "Budget",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Spacer(modifier = Modifier.height(2.dp))
-                Text(
-                    text = if (monthlyBudget > 0.0) formatCurrency(monthlyBudget, currencySymbol) else "Set budget >",
-                    style = MaterialTheme.typography.titleMedium.copy(fontFamily = ReceiptMonoFontFamily),
-                    fontWeight = FontWeight.Bold,
-                    color = if (monthlyBudget > 0.0) MaterialTheme.colorScheme.onSurface else BudgetSafeGreen
-                )
+                if (selectedIncomeCat != null) {
+                    Text(
+                        text = "Entries",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Text(
+                        text = "${selectedIncomeCat.spendCount}",
+                        style = MaterialTheme.typography.titleMedium.copy(fontFamily = ReceiptMonoFontFamily),
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                } else {
+                    val activeCap = selectedExpenseCat?.budgetLimit ?: monthlyBudget
+                    Text(
+                        text = "Budget",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Text(
+                        text = if (activeCap > 0.0) formatCurrency(activeCap, currencySymbol) else "Set budget >",
+                        style = MaterialTheme.typography.titleMedium.copy(fontFamily = ReceiptMonoFontFamily),
+                        fontWeight = FontWeight.Bold,
+                        color = if (activeCap > 0.0) MaterialTheme.colorScheme.onSurface else BudgetSafeGreen
+                    )
+                }
             }
         }
 
-        // 3. Category Cards List
-        categories.forEach { item ->
+        // 2B. Category Budgets & Custom Category Action Strip
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 2.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = "Tap any category limit to set or edit its budget",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.weight(1f)
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            FilledTonalButton(
+                onClick = {
+                    performHaptic()
+                    onAddCustomCategoryClick()
+                },
+                shape = RoundedCornerShape(50),
+                modifier = Modifier.testTag("add_category_budget_button")
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Add,
+                    contentDescription = "Add Custom Category",
+                    modifier = Modifier.size(16.dp)
+                )
+                Spacer(modifier = Modifier.width(6.dp))
+                Text("Custom Category")
+            }
+        }
+
+        // 3. Category Cards List (when a category is selected, show ONLY that category's card)
+        val displayedExpenseCategories = if (hasSelectedCat) {
+            categories.filter { it.category.equals(selectedCategory, ignoreCase = true) }
+        } else {
+            categories
+        }
+        displayedExpenseCategories.forEach { item ->
             val catColor = categoryAccentColor(item.category)
             val customEmoji = customEmojis[item.category.trim().lowercase()]
             val isOverLimit = item.budgetLimit > 0.0 && item.spent > item.budgetLimit
@@ -4883,6 +4788,185 @@ fun TransactionCategoriesSubTabContent(
                 }
             }
         }
+
+        // 4. Income vs Spend & Cashback Breakdown (filtered cleanly when a category is selected)
+        val displayedIncomeCategories = if (hasSelectedCat) {
+            incomeCategories.filter { it.category.equals(selectedCategory, ignoreCase = true) }
+        } else {
+            incomeCategories
+        }
+        if (!hasSelectedCat && (incomeCategories.isNotEmpty() || totalIncome > 0.0)) {
+            val resolvedIncomeTotal = if (totalIncome > 0.0) totalIncome else incomeCategories.sumOf { it.spent }
+            val netFlow = resolvedIncomeTotal - totalSpent
+            Surface(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("analytics_income_spend_division_card"),
+                shape = RoundedCornerShape(22.dp),
+                color = MaterialTheme.colorScheme.surfaceContainerLow
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "Income vs Spend",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Surface(
+                            shape = RoundedCornerShape(50),
+                            color = if (netFlow >= 0.0) {
+                                BudgetSafeGreen.copy(alpha = 0.14f)
+                            } else {
+                                BudgetDangerCoral.copy(alpha = 0.14f)
+                            }
+                        ) {
+                            Text(
+                                text = if (netFlow >= 0.0) {
+                                    "Net +${formatCurrency(netFlow, currencySymbol)}"
+                                } else {
+                                    "Net -${formatCurrency(-netFlow, currencySymbol)}"
+                                },
+                                style = MaterialTheme.typography.labelMedium.copy(fontFamily = ReceiptMonoFontFamily),
+                                fontWeight = FontWeight.Bold,
+                                color = if (netFlow >= 0.0) BudgetSafeGreen else BudgetDangerCoral,
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                            )
+                        }
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Surface(
+                            modifier = Modifier.weight(1f),
+                            shape = RoundedCornerShape(16.dp),
+                            color = BudgetSafeGreen.copy(alpha = 0.12f)
+                        ) {
+                            Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp)) {
+                                Text(
+                                    text = "Income & Cashback",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = BudgetSafeGreen,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Text(
+                                    text = "+${formatCurrency(resolvedIncomeTotal, currencySymbol)}",
+                                    style = MaterialTheme.typography.titleMedium.copy(fontFamily = ReceiptMonoFontFamily),
+                                    fontWeight = FontWeight.Bold,
+                                    color = BudgetSafeGreen,
+                                    modifier = Modifier.testTag("analytics_division_income_total")
+                                )
+                            }
+                        }
+                        Surface(
+                            modifier = Modifier.weight(1f),
+                            shape = RoundedCornerShape(16.dp),
+                            color = MaterialTheme.colorScheme.primaryContainer
+                        ) {
+                            Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp)) {
+                                Text(
+                                    text = "Total Spend",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Text(
+                                    text = "-${formatCurrency(totalSpent, currencySymbol)}",
+                                    style = MaterialTheme.typography.titleMedium.copy(fontFamily = ReceiptMonoFontFamily),
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                    modifier = Modifier.testTag("analytics_division_spend_total")
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if (displayedIncomeCategories.isNotEmpty()) {
+            Text(
+                text = "Income & Cashback Breakdown",
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier
+                    .padding(top = 4.dp)
+                    .testTag("analytics_income_categories_section")
+            )
+            displayedIncomeCategories.forEach { item ->
+                    val catColor = categoryAccentColor(item.category)
+                    val customEmoji = customEmojis[item.category.trim().lowercase()]
+                    val safeCatId = item.category.lowercase().replace(Regex("[^a-z0-9]+"), "_").trim('_')
+                    Surface(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(22.dp))
+                            .clickable {
+                                performHaptic()
+                                onCategoryClick(item.category)
+                            }
+                            .testTag("analysis_income_category_card_$safeCatId"),
+                        shape = RoundedCornerShape(22.dp),
+                        color = MaterialTheme.colorScheme.surfaceContainerLow,
+                        border = BorderStroke(
+                            width = 1.dp,
+                            color = if (selectedCategory.equals(item.category, ignoreCase = true)) {
+                                catColor
+                            } else {
+                                MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.38f)
+                            }
+                        )
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp, vertical = 14.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            SquircleIconBadge(
+                                icon = categoryIcon(item.category),
+                                tint = catColor,
+                                containerColor = catColor.copy(alpha = 0.16f),
+                                size = 44.dp,
+                                iconSize = 22.dp,
+                                emoji = customEmoji
+                            )
+                            Spacer(modifier = Modifier.width(14.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = item.category,
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                                Spacer(modifier = Modifier.height(2.dp))
+                                Text(
+                                    text = "${item.spendCount} ${if (item.spendCount == 1) "Entry" else "Entries"}",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            Text(
+                                text = "+${formatCurrency(item.spent, currencySymbol)}",
+                                style = MaterialTheme.typography.titleMedium.copy(fontFamily = ReceiptMonoFontFamily),
+                                fontWeight = FontWeight.Bold,
+                                color = BudgetSafeGreen
+                            )
+                        }
+                    }
+                }
+            }
     }
 }
 
@@ -4909,6 +4993,18 @@ fun TransactionMerchantsSubTabContent(
     val dimens = LocalAppDimens.current
     val performHaptic = rememberAppHapticPerformer()
 
+    val hasSelectedMerchant = selectedMerchant != "All" && selectedMerchant.isNotBlank()
+    val normalizedSelectedKey = selectedMerchant.trim().replace(Regex("\\s+"), " ").lowercase()
+    val displayedMerchants = remember(merchants, selectedMerchant, hasSelectedMerchant, normalizedSelectedKey) {
+        if (hasSelectedMerchant) {
+            merchants.filter {
+                it.merchantName.trim().replace(Regex("\\s+"), " ").lowercase() == normalizedSelectedKey
+            }
+        } else {
+            merchants
+        }
+    }
+
     Column(
         modifier = modifier
             .fillMaxWidth()
@@ -4916,7 +5012,7 @@ fun TransactionMerchantsSubTabContent(
             .testTag("tx_merchants_subtab_content"),
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
-        if (merchants.isEmpty()) {
+        if (displayedMerchants.isEmpty() && !hasSelectedMerchant) {
             Surface(
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(22.dp),
@@ -4936,7 +5032,7 @@ fun TransactionMerchantsSubTabContent(
                 }
             }
         } else {
-            merchants.forEach { item ->
+            displayedMerchants.forEach { item ->
                 val safeMerchantId = item.merchantName.lowercase().replace(Regex("[^a-z0-9]+"), "_").trim('_')
                 val isSelected = selectedMerchant != "All" &&
                     selectedMerchant.equals(item.merchantName, ignoreCase = true)

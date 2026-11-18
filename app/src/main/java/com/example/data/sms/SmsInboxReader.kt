@@ -259,6 +259,8 @@ class SmsInboxReader(private val context: Context) {
         )
 
         var processedAnyUri = false
+        var hadSecurityException = false
+        var securityError: SecurityException? = null
         for (uri: Uri in urisToTry) {
             if (processedAnyUri) break
             try {
@@ -297,6 +299,7 @@ class SmsInboxReader(private val context: Context) {
                     if (effectiveTotal == 0) return@use
 
                     processedAnyUri = true
+                    onProgress(0, effectiveTotal, 0)
                     val seenRawKeys = mutableSetOf<String>()
                     var cursorRead = 0
                     while (cursor.moveToNext() && cursorRead < effectiveTotal) {
@@ -310,7 +313,8 @@ class SmsInboxReader(private val context: Context) {
                             runCatching {
                                 val sender = cursor.getString(addressIdx).orEmpty()
                                 val body = cursor.getString(bodyIdx).orEmpty()
-                                val timestamp = cursor.getLong(dateIdx)
+                                val rawTs = cursor.getLong(dateIdx)
+                                val timestamp = if (rawTs in 1_000_000_000L..9_999_999_999L) rawTs * 1000L else rawTs
                                 val withinRange = (minTimestampMillis == null || timestamp >= minTimestampMillis) &&
                                     (maxTimestampMillis == null || timestamp <= maxTimestampMillis)
                                 val key = "$sender|$timestamp|${body.trim()}"
@@ -321,8 +325,9 @@ class SmsInboxReader(private val context: Context) {
                         }
                     }
                 }
-            } catch (_: SecurityException) {
-                // Handled by caller when READ_SMS is not granted
+            } catch (sec: SecurityException) {
+                hadSecurityException = true
+                if (securityError == null) securityError = sec
             } catch (e: Exception) {
                 com.example.data.local.LocalAccountSessionManager.recordDiagnostic(
                     context = context,
@@ -331,6 +336,10 @@ class SmsInboxReader(private val context: Context) {
                     message = "Guarded SMS provider query on $uri: ${e.javaClass.simpleName}"
                 )
             }
+        }
+
+        if (hadSecurityException && !processedAnyUri && rawRows.isEmpty()) {
+            throw securityError ?: SecurityException("READ_SMS permission denied by system.")
         }
 
         parseSmsBatchesInParallel(

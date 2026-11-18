@@ -62,8 +62,6 @@ import com.example.ui.screens.AddAccountDialog
 import com.example.ui.screens.AddCustomCategoryDialog
 import com.example.ui.screens.AddTransactionDialog
 import com.example.ui.screens.AllTransactionsScreen
-import com.example.ui.screens.AnalyticsTabScreen
-import com.example.ui.screens.BudgetsTabScreen
 import com.example.ui.screens.ExportTransactionsCsvDialog
 import com.example.ui.screens.FirstTimeSmsSyncScreen
 import com.example.ui.screens.HomeTabScreen
@@ -940,11 +938,10 @@ class ExampleRobolectricTest {
             }
         }
 
-        // Verify transaction displays with the selected family currency ($)
-        composeTestRule.onNodeWithText("Whole Foods Market").assertIsDisplayed()
-        composeTestRule.onNodeWithText("-$325").assertIsDisplayed()
+        // Verify Home budget pulse card displays with the selected family currency ($)
+        composeTestRule.onNodeWithText("$325").assertIsDisplayed()
 
-        // Simulate an unwanted swipe-left delete on the Home screen
+        // Simulate an unwanted swipe-left delete and verify Home Undo Swipe bar
         currentUiState = currentUiState.copy(
             filteredExpenses = emptyList(),
             statusBannerMessage = "Deleted 'Whole Foods Market'.",
@@ -956,12 +953,12 @@ class ExampleRobolectricTest {
         composeTestRule.onNodeWithTag("home_undo_swipe_bar").assertIsDisplayed()
         composeTestRule.onNodeWithTag("home_undo_swipe_button").assertIsDisplayed()
 
-        // Tap Undo Swipe button and verify the transaction is restored on the Home screen
+        // Tap Undo Swipe button and verify the undo callback fires
         composeTestRule.onNodeWithTag("home_undo_swipe_button").performClick()
         composeTestRule.waitForIdle()
 
-        composeTestRule.onNodeWithText("Whole Foods Market").assertIsDisplayed()
-        composeTestRule.onNodeWithText("-$325").assertIsDisplayed()
+        assertTrue(composeTestRule.onAllNodesWithTag("home_undo_swipe_bar").fetchSemanticsNodes().isEmpty())
+        composeTestRule.onNodeWithText("$325").assertIsDisplayed()
 
         // Change family preferred currency to € and verify the Home screen updates immediately
         currentUiState = currentUiState.copy(
@@ -969,7 +966,7 @@ class ExampleRobolectricTest {
             household = currentUiState.household?.copy(currencySymbol = "€")
         )
         composeTestRule.waitForIdle()
-        composeTestRule.onNodeWithText("-€325").assertIsDisplayed()
+        composeTestRule.onNodeWithText("€325").assertIsDisplayed()
     }
 
     @Test
@@ -1208,29 +1205,32 @@ class ExampleRobolectricTest {
         composeTestRule.waitForIdle()
         assertEquals(AppThemeMode.SYSTEM, LocalAccountSessionManager.themeMode.value)
 
-        // 2. Scroll to Advanced Settings card and verify Crashlytics and FCM Push cards are hidden when OFF
+        // 2. Verify FCM Push Notifications is unified inside Notifications card (not hidden behind Advanced Settings),
+        // while Advanced Settings controls Crash Analytics only
+        composeTestRule.onNodeWithTag("household_tab_list")
+            .performScrollToNode(hasTestTag("notification_preferences_card"))
+        composeTestRule.onNodeWithTag("notification_preferences_card").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("household_tab_list")
+            .performScrollToNode(hasTestTag("fcm_push_settings_card"))
+        composeTestRule.onNodeWithTag("fcm_push_settings_card").assertExists()
+
         composeTestRule.onNodeWithTag("household_tab_list")
             .performScrollToNode(hasTestTag("expert_feature_flag_card"))
         composeTestRule.onNodeWithTag("expert_feature_flag_card").assertIsDisplayed()
         composeTestRule.onNodeWithText("Advanced Settings").assertIsDisplayed()
         assertTrue(composeTestRule.onAllNodesWithTag("crashlytics_settings_card").fetchSemanticsNodes().isEmpty())
-        assertTrue(composeTestRule.onAllNodesWithTag("fcm_push_settings_card").fetchSemanticsNodes().isEmpty())
 
         // 3. Enable the Master Expert Feature Flag switch
         composeTestRule.onNodeWithTag("expert_feature_flag_switch").performClick()
         composeTestRule.waitForIdle()
         assertTrue(LocalAccountSessionManager.expertFeatureFlags.value.expertModeEnabled)
 
-        // 4. Verify diagnostic cards expand cleanly without clutter chips/test/diagnostic buttons or bug-guard toggles
+        // 4. Verify Crash Analytics card expands cleanly without clutter chips/test/diagnostic buttons or bug-guard toggles
         assertTrue(composeTestRule.onAllNodesWithTag("expert_subflags_row").fetchSemanticsNodes().isEmpty())
         assertTrue(composeTestRule.onAllNodesWithTag("expert_flag_crashlytics_chip").fetchSemanticsNodes().isEmpty())
         assertTrue(composeTestRule.onAllNodesWithTag("expert_flag_fcm_chip").fetchSemanticsNodes().isEmpty())
         assertTrue(composeTestRule.onAllNodesWithTag("fcm_test_push_button").fetchSemanticsNodes().isEmpty())
         assertTrue(composeTestRule.onAllNodesWithTag("crashlytics_run_check_button").fetchSemanticsNodes().isEmpty())
-        composeTestRule.onNodeWithTag("household_tab_list")
-            .performScrollToNode(hasTestTag("fcm_push_settings_card"))
-        composeTestRule.onNodeWithTag("fcm_push_settings_card").assertExists()
-
         composeTestRule.onNodeWithTag("household_tab_list")
             .performScrollToNode(hasTestTag("crashlytics_settings_card"))
         composeTestRule.onNodeWithTag("crashlytics_settings_card").assertExists()
@@ -1383,6 +1383,8 @@ class ExampleRobolectricTest {
         assertEquals("Unknown", ExpenseCategories.normalizeCategory(""))
         assertEquals("Unknown", ExpenseCategories.normalizeCategory("General"))
         assertEquals("Salary & Income", ExpenseCategories.normalizeCategory("Salary"))
+        assertEquals("Salary & Income", ExpenseCategories.normalizeCategory("Income"))
+        assertFalse(ExpenseCategories.ALL.any { it.equals("Income", ignoreCase = true) })
         assertEquals("Bills & Utilities", ExpenseCategories.normalizeCategory("Utilities"))
         assertEquals("Fuel & Travel", ExpenseCategories.normalizeCategory("Transportation"))
         assertEquals("Health & Fitness", ExpenseCategories.normalizeCategory("Health & Medical"))
@@ -1921,10 +1923,21 @@ class ExampleRobolectricTest {
     }
 
     @Test
-    fun `test BudgetsTabScreen supports inline category budget editing, removes duplicate trend graph, and supports custom category with optional budget`() {
+    fun `test AllTransactionsScreen supports category budget editing and custom category creation after removing Budgets section`() {
         var savedCategoryAndLimit: Pair<String, Double>? = null
         var showCustomDialog by mutableStateOf(false)
         var createdCustomCategory: Triple<String, String, Double?>? = null
+        val now = System.currentTimeMillis()
+        val sampleTx = ExpenseTransaction(
+            id = "tx_b1",
+            userId = "local_user_budget",
+            userName = "Alex",
+            title = "FreshMart",
+            amount = 4200.0,
+            type = "EXPENSE",
+            category = "Groceries",
+            transactionDateMillis = now
+        )
 
         var uiState by mutableStateOf(
             OneFamilyDashboardUiState(
@@ -1935,6 +1948,11 @@ class ExampleRobolectricTest {
                     personalMonthlyBudget = 45000.0,
                     currencySymbol = "₹"
                 ),
+                activeExpenses = listOf(sampleTx),
+                allScopedExpenses = listOf(sampleTx),
+                filteredExpenses = listOf(sampleTx),
+                totalMonthlySpent = 6700.0,
+                activeMonthlyBudget = 45000.0,
                 categoryProgressList = listOf(
                     CategorySpendProgress(
                         category = "Groceries",
@@ -1967,9 +1985,9 @@ class ExampleRobolectricTest {
 
         composeTestRule.setContent {
             OneFamilyTheme {
-                BudgetsTabScreen(
+                AllTransactionsScreen(
                     uiState = uiState,
-                    onEditOverallBudgetClick = {},
+                    onEditMonthlyBudget = {},
                     onSaveCategoryBudgetInline = { category, limit ->
                         savedCategoryAndLimit = category to limit
                         uiState = uiState.copy(
@@ -1996,40 +2014,24 @@ class ExampleRobolectricTest {
         }
         composeTestRule.waitForIdle()
 
-        // 1. Duplicate MonthlyBarGraph must NOT be rendered on BudgetsTabScreen
-        assertTrue(composeTestRule.onAllNodesWithTag("monthly_bar_graph_scroll_container").fetchSemanticsNodes().isEmpty())
-        assertTrue(composeTestRule.onAllNodesWithTag("salary_income_trend_canvas").fetchSemanticsNodes().isEmpty())
-
-        // 2. User taps Set Budget on Groceries -> expands inline numeric field without any tick button; auto-saves automatically
-        composeTestRule.onNodeWithTag("budgets_tab_list")
-            .performScrollToNode(hasTestTag("category_budget_card_groceries"))
-        composeTestRule.onNodeWithTag("set_category_budget_groceries").performClick()
+        // 1. Switch to Categories sub-tab on AllTransactionsScreen where all category budget functions live
+        composeTestRule.onNodeWithTag("tx_subtab_categories").performClick()
         composeTestRule.waitForIdle()
 
-        assertTrue(composeTestRule.onAllNodesWithTag("add_custom_category_dialog").fetchSemanticsNodes().isEmpty())
-        assertTrue(composeTestRule.onAllNodesWithTag("category_budget_limit_input").fetchSemanticsNodes().isEmpty())
-        composeTestRule.onNodeWithTag("budgets_tab_list")
-            .performScrollToNode(hasTestTag("inline_clear_category_budget_groceries"))
-        composeTestRule.onNodeWithTag("inline_category_budget_input_groceries").assertIsDisplayed()
-        assertTrue(
-            "Tick save button must be removed so budgets auto-save",
-            composeTestRule.onAllNodesWithTag("inline_save_category_budget_groceries").fetchSemanticsNodes().isEmpty()
-        )
-        composeTestRule.onNodeWithTag("inline_clear_category_budget_groceries").assertIsDisplayed()
+        // 2. Tap "Set budget" on Groceries -> opens InlineCategoryBudgetDialog and saves ₹12,000
+        composeTestRule.onNodeWithTag("all_transactions_screen_list")
+            .performScrollToNode(hasTestTag("tx_category_set_budget_groceries"))
+        composeTestRule.onNodeWithTag("tx_category_set_budget_groceries").performClick()
+        composeTestRule.waitForIdle()
 
-        composeTestRule.onNodeWithTag("inline_category_budget_input_groceries")
+        composeTestRule.onNodeWithTag("inline_category_budget_dialog_input")
             .performTextReplacement("12000")
-        composeTestRule.mainClock.advanceTimeBy(500)
+        composeTestRule.onNodeWithTag("inline_category_budget_dialog_save").performClick()
         composeTestRule.waitForIdle()
         assertEquals("Groceries" to 12000.0, savedCategoryAndLimit)
 
-        // Delete/Remove budget button clears limit back to 0.0
-        composeTestRule.onNodeWithTag("inline_clear_category_budget_groceries").performClick()
-        composeTestRule.waitForIdle()
-        assertEquals("Groceries" to 0.0, savedCategoryAndLimit)
-
         // 3. Tapping "Custom Category" opens AddCustomCategoryDialog with emoji selection and optional Monthly Budget
-        composeTestRule.onNodeWithTag("budgets_tab_list")
+        composeTestRule.onNodeWithTag("all_transactions_screen_list")
             .performScrollToNode(hasTestTag("add_category_budget_button"))
         composeTestRule.onNodeWithTag("add_category_budget_button").performClick()
         composeTestRule.waitForIdle()
@@ -2037,7 +2039,6 @@ class ExampleRobolectricTest {
         composeTestRule.onNodeWithTag("add_custom_category_dialog").assertIsDisplayed()
         composeTestRule.onNodeWithTag("custom_category_emoji_input").performTextReplacement("🐶")
         composeTestRule.onNodeWithTag("custom_category_name_input").performTextReplacement("Pet Care")
-        // Leave optional budget blank -> saves with null optional limit and chosen emoji
         composeTestRule.onNodeWithTag("save_custom_category_button").performClick()
         composeTestRule.waitForIdle()
         assertEquals(Triple("Pet Care", "🐶", null), createdCustomCategory)
@@ -2172,6 +2173,7 @@ class ExampleRobolectricTest {
         var selectedPeriod by mutableStateOf(novPeriod)
         var savedFromDialogType: String? = null
         var showAddSheet by mutableStateOf(true)
+        var showTransactionsScreen by mutableStateOf(false)
 
         composeTestRule.setContent {
             val activeMonthTxs = allTxs.filter { YearMonthPeriod.fromMillis(it.transactionDateMillis) == selectedPeriod }
@@ -2197,12 +2199,21 @@ class ExampleRobolectricTest {
                 totalMonthlyIncome = activeMonthTxs.filter { it.type == "INCOME" }.sumOf { it.amount }
             )
             OneFamilyTheme {
-                AnalyticsTabScreen(
-                    uiState = state,
-                    onStepMonth = {},
-                    onSelectPeriod = { if (it != null) selectedPeriod = it },
-                    onSelectCategory = {}
-                )
+                if (showTransactionsScreen) {
+                    AllTransactionsScreen(
+                        uiState = state,
+                        onBackClick = { showTransactionsScreen = false },
+                        onSelectPeriod = { if (it != null) selectedPeriod = it }
+                    )
+                } else {
+                    HomeTabScreen(
+                        uiState = state,
+                        onScopeSelected = {},
+                        onStepMonth = {},
+                        onSelectPeriod = { if (it != null) selectedPeriod = it },
+                        onOpenAllTransactionsPage = { showTransactionsScreen = true }
+                    )
+                }
                 if (showAddSheet) {
                     AddTransactionDialog(
                         hasHousehold = false,
@@ -2221,16 +2232,20 @@ class ExampleRobolectricTest {
         }
         composeTestRule.waitForIdle()
 
-        // 1. Verify selecting "Salary & Income" category in AddTransactionDialog auto-switches type to INCOME
+        // 1. Verify switching to Income shows "Salary & Income" category in AddTransactionDialog and saves as INCOME
         composeTestRule.onNodeWithTag("add_tx_amount_input").performTextReplacement("85000")
         composeTestRule.onNodeWithTag("add_tx_title_input").performTextReplacement("Employer Payroll")
+        composeTestRule.onNodeWithTag("receipt_type_chip_income").performScrollTo().performClick()
+        composeTestRule.waitForIdle()
         composeTestRule.onNodeWithTag("receipt_category_chip_salary_income").performScrollTo().performClick()
         composeTestRule.waitForIdle()
         composeTestRule.onNodeWithTag("save_transaction_button").performScrollTo().performClick()
         composeTestRule.waitForIdle()
         assertEquals("INCOME", savedFromDialogType)
 
-        // 2. Verify Salary / Income bar and trend canvas render in MonthlyBarGraph
+        // 2. Verify Salary / Income bar and trend canvas render in MonthlyBarGraph on HomeTabScreen
+        composeTestRule.onNodeWithTag("home_tab_list")
+            .performScrollToNode(hasTestTag("home_monthly_trend_card"))
         composeTestRule.onNodeWithTag("monthly_income_trend_legend").assertIsDisplayed()
         composeTestRule.onNodeWithTag("salary_income_trend_canvas").assertIsDisplayed()
         composeTestRule.onNodeWithTag("month_income_bar_2026_10", useUnmergedTree = true).assertExists()
@@ -2245,24 +2260,21 @@ class ExampleRobolectricTest {
             novPeriod,
             selectedPeriod
         )
-        composeTestRule.onNodeWithTag("analytics_tab_list")
-            .performScrollToNode(hasTestTag("analytics_selected_month_transactions_card"))
-        composeTestRule.onNodeWithText("November Organic Groceries").assertExists()
 
-        // 4. Tap October's month column -> selectedPeriod updates to Oct 2026 and shows October's transactions!
-        composeTestRule.onNodeWithTag("analytics_tab_list")
-            .performScrollToNode(hasTestTag("monthly_bar_graph_scroll_container"))
+        // 4. Tap October's month column -> selectedPeriod updates to Oct 2026, and opening Transactions shows October's receipt!
         composeTestRule.onNodeWithTag("month_bar_column_2026_9").performScrollTo().performClick()
         composeTestRule.waitForIdle()
         assertEquals(octPeriod, selectedPeriod)
 
-        composeTestRule.onNodeWithTag("analytics_tab_list")
-            .performScrollToNode(hasTestTag("analytics_selected_month_transactions_card"))
+        composeTestRule.onNodeWithTag("view_all_transactions_footer_button").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("all_transactions_screen_list")
+            .performScrollToNode(hasTestTag("expense_card_oct_tx_1"))
         composeTestRule.onNodeWithText("October Diwali Shopping").assertIsDisplayed()
     }
 
     @Test
-    fun `test Home screen budget action navigates to Budgets tab instead of opening budget dialog and Settings toggle gates Household UI`() {
+    fun `test Home screen budget action opens EditOverallBudgetDialog after Budgets tab removal and Settings toggle gates Household UI`() {
         val context = ApplicationProvider.getApplicationContext<Context>()
         LocalAccountSessionManager.ensureInitialized(context)
         LocalAccountSessionManager.signInWithUsernamePassword(context, "test", "pass")
@@ -2286,18 +2298,17 @@ class ExampleRobolectricTest {
         shadowOf(Looper.getMainLooper()).idle()
         composeTestRule.waitForIdle()
 
-        // 1. With Household feature OFF by default, Home screen does NOT show Household scope chips even when user has a household
+        // 1. Verify Budgets tab is removed from bottom navigation bar and Household scope chips are hidden when OFF
+        assertTrue(composeTestRule.onAllNodesWithTag("nav_tab_budgets").fetchSemanticsNodes().isEmpty())
         assertTrue(composeTestRule.onAllNodesWithTag("scope_chip_household").fetchSemanticsNodes().isEmpty())
 
-        // 2. Tapping Set Budget / Budgets button on Home navigates to Budgets tab instead of opening EditOverallBudgetDialog
+        // 2. Tapping Set Budget / Budgets button on Home opens EditOverallBudgetDialog directly
         composeTestRule.onNodeWithTag("edit_monthly_budget_button").performClick()
         composeTestRule.waitForIdle()
 
-        assertTrue(
-            "Home screen must not open EditOverallBudgetDialog directly",
-            composeTestRule.onAllNodesWithTag("overall_personal_budget_input").fetchSemanticsNodes().isEmpty()
-        )
-        composeTestRule.onNodeWithTag("budgets_tab_list").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("overall_personal_budget_input").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Cancel").performClick()
+        composeTestRule.waitForIdle()
 
         // 3. Navigate to Settings tab and verify Household cards are hidden when Household toggle is OFF
         composeTestRule.onNodeWithTag("nav_tab_account").performClick()
@@ -2460,12 +2471,13 @@ class ExampleRobolectricTest {
         composeTestRule.onNodeWithTag("floating_bottom_nav_bar").assertIsDisplayed()
         composeTestRule.onNodeWithTag("fab_add_expense").assertIsDisplayed()
 
-        // Navigate to Trends and Budgets tabs -> ExtendedFAB is hidden off Home tab
-        composeTestRule.onNodeWithTag("nav_tab_analysis").performClick()
+        // Navigate to Transactions and Accounts tabs -> ExtendedFAB is hidden off Home tab, and Budgets tab is removed
+        assertTrue(composeTestRule.onAllNodesWithTag("nav_tab_budgets").fetchSemanticsNodes().isEmpty())
+        composeTestRule.onNodeWithTag("nav_tab_transactions").performClick()
         composeTestRule.waitForIdle()
         assertTrue(composeTestRule.onAllNodesWithTag("fab_add_expense").fetchSemanticsNodes().isEmpty())
 
-        composeTestRule.onNodeWithTag("nav_tab_budgets").performClick()
+        composeTestRule.onNodeWithTag("nav_tab_accounts").performClick()
         composeTestRule.waitForIdle()
         assertTrue(composeTestRule.onAllNodesWithTag("fab_add_expense").fetchSemanticsNodes().isEmpty())
 
@@ -2815,65 +2827,84 @@ class ExampleRobolectricTest {
         var selectedCatFilter by mutableStateOf("All")
 
         composeTestRule.setContent {
+            val filtered = allTxs.filter {
+                selectedCatFilter == "All" || it.category.equals(selectedCatFilter, ignoreCase = true)
+            }
             val state = OneFamilyDashboardUiState(
                 isLoading = false,
                 activeExpenses = allTxs,
                 allScopedExpenses = allTxs,
-                filteredExpenses = allTxs,
+                filteredExpenses = filtered,
                 categoryProgressList = categoryProgress,
                 selectedCategoryFilter = selectedCatFilter,
                 totalMonthlySpent = 3050.0
             )
             OneFamilyTheme {
-                AnalyticsTabScreen(
+                AllTransactionsScreen(
                     uiState = state,
-                    onStepMonth = {},
-                    onSelectPeriod = {},
                     onSelectCategory = { selectedCatFilter = it }
                 )
             }
         }
         composeTestRule.waitForIdle()
 
-        // Initially both transactions are visible in analytics_selected_month_transactions_card
-        composeTestRule.onNodeWithTag("analytics_tab_list")
-            .performScrollToNode(hasTestTag("analytics_selected_month_transactions_card"))
+        // Initially both transactions are visible in AllTransactionsScreen
+        composeTestRule.onNodeWithTag("all_transactions_screen_list")
+            .performScrollToNode(hasTestTag("expense_card_tx_cat_groc"))
         composeTestRule.onNodeWithText("Nature's Basket Groceries").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("all_transactions_screen_list")
+            .performScrollToNode(hasTestTag("expense_card_tx_cat_dine"))
         composeTestRule.onNodeWithText("Blue Tokai Coffee").assertIsDisplayed()
 
-        // Click "Groceries" category row in Category Breakdown
-        composeTestRule.onNodeWithTag("analytics_tab_list")
-            .performScrollToNode(hasTestTag("category_breakdown_row_groceries"))
-        composeTestRule.onNodeWithTag("category_breakdown_row_groceries").performClick()
+        // Switch to Categories sub-tab and click "Groceries" category card
+        composeTestRule.onNodeWithTag("all_transactions_screen_list").performScrollToIndex(0)
+        composeTestRule.onNodeWithTag("tx_subtab_categories").performClick()
+        composeTestRule.waitForIdle()
+
+        composeTestRule.onNodeWithTag("all_transactions_screen_list")
+            .performScrollToNode(hasTestTag("tx_category_card_groceries"))
+        composeTestRule.onNodeWithTag("tx_category_card_groceries").performClick()
         composeTestRule.waitForIdle()
 
         assertEquals("Groceries", selectedCatFilter)
-        composeTestRule.onNodeWithTag("analytics_tab_list")
-            .performScrollToNode(hasTestTag("analytics_active_category_filter_banner"))
-        composeTestRule.onNodeWithTag("analytics_active_category_filter_banner").assertIsDisplayed()
-
-        // Verify ONLY Groceries transaction is shown and Food & Dining transaction is hidden
-        composeTestRule.onNodeWithTag("analytics_tab_list")
-            .performScrollToNode(hasTestTag("analytics_selected_month_transactions_card"))
-        composeTestRule.onNodeWithTag("analytics_month_tx_row_tx_cat_groc").assertIsDisplayed()
+        // Stays on Categories sub-tab (no redirect to Transactions) and renders only Groceries + its transactions inline
+        composeTestRule.onNodeWithTag("all_transactions_screen_list")
+            .performScrollToNode(hasTestTag("tx_categories_subtab_content"))
+        composeTestRule.onNodeWithTag("tx_categories_subtab_content").assertIsDisplayed()
         assertTrue(
-            "Non-matching category transaction must not be shown when a category is selected on Analysis page",
-            composeTestRule.onAllNodesWithTag("analytics_month_tx_row_tx_cat_dine").fetchSemanticsNodes().isEmpty()
+            "Non-matching category card must be hidden when Groceries is selected",
+            composeTestRule.onAllNodesWithTag("tx_category_card_food_&_dining").fetchSemanticsNodes().isEmpty()
         )
+        composeTestRule.onNodeWithTag("all_transactions_screen_list")
+            .performScrollToNode(hasTestTag("all_tx_active_category_pill"))
+        composeTestRule.onNodeWithTag("all_tx_active_category_pill").assertIsDisplayed()
+
+        // Verify ONLY Groceries transaction is shown inline and Food & Dining transaction is hidden
+        composeTestRule.onNodeWithTag("all_transactions_screen_list")
+            .performScrollToNode(hasTestTag("expense_card_tx_cat_groc"))
+        composeTestRule.onNodeWithTag("expense_card_tx_cat_groc").assertIsDisplayed()
         assertTrue(
-            "Non-matching category breakdown card must be hidden when a category is selected",
-            composeTestRule.onAllNodesWithTag("analysis_category_card_food_&_dining").fetchSemanticsNodes().isEmpty()
+            "Non-matching category transaction must not be shown when a category is selected",
+            composeTestRule.onAllNodesWithTag("expense_card_tx_cat_dine").fetchSemanticsNodes().isEmpty()
         )
 
-        // Tap "Show All" on the active category filter banner -> restores all transactions
-        composeTestRule.onNodeWithTag("analytics_tab_list")
-            .performScrollToNode(hasTestTag("analytics_clear_category_filter_button"))
-        composeTestRule.onNodeWithTag("analytics_clear_category_filter_button").performClick()
+        // Tap active category filter pill -> restores all category cards on Categories sub-tab; Transactions tab shows all transactions
+        composeTestRule.onNodeWithTag("all_transactions_screen_list")
+            .performScrollToNode(hasTestTag("all_tx_active_category_pill"))
+        composeTestRule.onNodeWithTag("all_tx_active_category_pill").performClick()
         composeTestRule.waitForIdle()
         assertEquals("All", selectedCatFilter)
-        composeTestRule.onNodeWithTag("analytics_tab_list")
-            .performScrollToNode(hasTestTag("analytics_selected_month_transactions_card"))
-        composeTestRule.onNodeWithTag("analytics_month_tx_row_tx_cat_dine").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("all_transactions_screen_list")
+            .performScrollToNode(hasTestTag("tx_category_card_food_&_dining"))
+        composeTestRule.onNodeWithTag("tx_category_card_food_&_dining").assertIsDisplayed()
+
+        composeTestRule.onNodeWithTag("all_transactions_screen_list")
+            .performScrollToNode(hasTestTag("tx_subtab_transactions"))
+        composeTestRule.onNodeWithTag("tx_subtab_transactions").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("all_transactions_screen_list")
+            .performScrollToNode(hasTestTag("expense_card_tx_cat_dine"))
+        composeTestRule.onNodeWithTag("expense_card_tx_cat_dine").assertIsDisplayed()
     }
 
     @Test
@@ -2971,23 +3002,26 @@ class ExampleRobolectricTest {
         }
         composeTestRule.waitForIdle()
 
-        // 1. Top "All Transactions" buttons are removed; Search, Filter & Export sit down with Transactions
+        // 1. Home page no longer lists transactions directly; tapping Transactions button on Monthly Trend opens AllTransactionsScreen
         assertTrue(
             "Top All Transactions button must be removed from Home",
             composeTestRule.onAllNodesWithTag("open_all_transactions_page_button").fetchSemanticsNodes().isEmpty()
         )
         assertTrue(
-            "Header All Transactions icon button must be removed from Home",
-            composeTestRule.onAllNodesWithTag("home_open_transactions_page_button").fetchSemanticsNodes().isEmpty()
+            "Transactions list must be moved off Home onto the Transactions page",
+            composeTestRule.onAllNodesWithTag("expense_card_tx_wheel_1").fetchSemanticsNodes().isEmpty()
         )
         composeTestRule.onNodeWithTag("home_tab_list")
-            .performScrollToNode(hasTestTag("toggle_search_button"))
-        composeTestRule.onNodeWithTag("toggle_search_button").assertIsDisplayed()
-        composeTestRule.onNodeWithTag("toggle_filters_button").assertIsDisplayed()
-        composeTestRule.onNodeWithTag("home_export_csv_button").assertIsDisplayed()
+            .performScrollToNode(hasTestTag("view_all_transactions_footer_button"))
+        composeTestRule.onNodeWithTag("view_all_transactions_footer_button").performClick()
+        composeTestRule.waitForIdle()
+
+        composeTestRule.onNodeWithTag("all_transactions_toggle_search_button").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("all_transactions_toggle_filters_button").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("all_transactions_export_csv_button").assertIsDisplayed()
 
         // 2. Single long-press + slide + release on category icon commits without a second click
-        composeTestRule.onNodeWithTag("home_tab_list")
+        composeTestRule.onNodeWithTag("all_transactions_screen_list")
             .performScrollToNode(hasTestTag("category_pill_tx_wheel_1"))
         composeTestRule.onNodeWithTag("category_pill_tx_wheel_1")
             .performTouchInput {
@@ -3022,21 +3056,21 @@ class ExampleRobolectricTest {
         composeTestRule.onNodeWithTag("excluded_tx_badge_tx_wheel_1", useUnmergedTree = true).assertExists()
 
         // 4. Filter by "Expenses" directly from the Transactions filter strip -> excluded transaction is hidden
-        composeTestRule.onNodeWithTag("home_tab_list")
+        composeTestRule.onNodeWithTag("all_transactions_screen_list")
             .performScrollToNode(hasTestTag("quick_type_filter_chip_expense"))
         composeTestRule.onNodeWithTag("quick_type_filter_chip_expense").performClick()
         composeTestRule.waitForIdle()
         assertTrue(composeTestRule.onAllNodesWithText("Client Dinner Reimbursement").fetchSemanticsNodes().isEmpty())
-        composeTestRule.onNodeWithTag("home_tab_list")
+        composeTestRule.onNodeWithTag("all_transactions_screen_list")
             .performScrollToNode(hasTestTag("expense_card_tx_normal_2"))
         composeTestRule.onNodeWithText("Daily Milk & Bread").assertIsDisplayed()
 
         // 5. Filter by "Excluded" -> shows ONLY the excluded transaction!
-        composeTestRule.onNodeWithTag("home_tab_list")
+        composeTestRule.onNodeWithTag("all_transactions_screen_list")
             .performScrollToNode(hasTestTag("quick_excluded_filter_chip"))
         composeTestRule.onNodeWithTag("quick_excluded_filter_chip").performClick()
         composeTestRule.waitForIdle()
-        composeTestRule.onNodeWithTag("home_tab_list")
+        composeTestRule.onNodeWithTag("all_transactions_screen_list")
             .performScrollToNode(hasTestTag("expense_card_tx_wheel_1"))
         composeTestRule.onNodeWithText("Client Dinner Reimbursement").assertIsDisplayed()
         assertTrue(composeTestRule.onAllNodesWithText("Daily Milk & Bread").fetchSemanticsNodes().isEmpty())
@@ -3551,20 +3585,27 @@ class ExampleRobolectricTest {
         showSettingsScreen = true
         composeTestRule.waitForIdle()
 
+        // Verify extra preset/custom toggle buttons are removed and custom timing inputs appear directly under each category
         composeTestRule.onNodeWithTag("household_tab_list")
             .performScrollToNode(hasTestTag("notif_category_timing_panel_daily_summary"))
-        composeTestRule.onNodeWithTag("notif_category_time_chip_daily_summary_9_0").performScrollTo().performClick()
+        assertTrue(composeTestRule.onAllNodesWithTag("notif_category_time_chip_daily_summary_9_0").fetchSemanticsNodes().isEmpty())
+        assertTrue(composeTestRule.onAllNodesWithTag("notif_category_custom_time_button_daily_summary").fetchSemanticsNodes().isEmpty())
+        composeTestRule.onNodeWithTag("notif_category_hour_input_daily_summary").performScrollTo().performTextReplacement("9")
+        composeTestRule.onNodeWithTag("notif_category_minute_input_daily_summary").performScrollTo().performTextReplacement("00")
+        composeTestRule.onNodeWithTag("notif_category_save_time_button_daily_summary").performScrollTo().performClick()
         composeTestRule.waitForIdle()
 
         composeTestRule.onNodeWithTag("household_tab_list")
             .performScrollToNode(hasTestTag("notif_category_timing_panel_weekly_summary"))
-        composeTestRule.onNodeWithTag("notif_category_time_chip_weekly_summary_20_0").performScrollTo().performClick()
+        assertTrue(composeTestRule.onAllNodesWithTag("notif_category_custom_time_button_weekly_summary").fetchSemanticsNodes().isEmpty())
+        composeTestRule.onNodeWithTag("notif_category_hour_input_weekly_summary").performScrollTo().performTextReplacement("20")
+        composeTestRule.onNodeWithTag("notif_category_minute_input_weekly_summary").performScrollTo().performTextReplacement("00")
+        composeTestRule.onNodeWithTag("notif_category_save_time_button_weekly_summary").performScrollTo().performClick()
         composeTestRule.waitForIdle()
 
         composeTestRule.onNodeWithTag("household_tab_list")
             .performScrollToNode(hasTestTag("notif_category_timing_panel_monthly_summary"))
-        composeTestRule.onNodeWithTag("notif_category_custom_time_button_monthly_summary").performScrollTo().performClick()
-        composeTestRule.waitForIdle()
+        assertTrue(composeTestRule.onAllNodesWithTag("notif_category_custom_time_button_monthly_summary").fetchSemanticsNodes().isEmpty())
         composeTestRule.onNodeWithTag("notif_category_hour_input_monthly_summary").performScrollTo().performTextReplacement("7")
         composeTestRule.onNodeWithTag("notif_category_minute_input_monthly_summary").performScrollTo().performTextReplacement("30")
         composeTestRule.onNodeWithTag("notif_category_save_time_button_monthly_summary").performScrollTo().performClick()
@@ -3710,40 +3751,110 @@ class ExampleRobolectricTest {
     }
 
     @Test
-    fun `test transaction dialog save icon at top and Income plus Cashback category division`() {
+    fun `test transaction dialog save icon at top, wheel-style icon-only category division by type, and account popup picker`() {
         var savedTuple: Triple<String, String, Double>? = null
+        var savedAccountName: String? = null
+        var accountsState by mutableStateOf(
+            listOf(
+                FinancialAccount(
+                    id = "acc_hdfc_1",
+                    name = "HDFC Savings",
+                    bankName = "HDFC Bank",
+                    accountType = AccountSectionType.BANK.name,
+                    lastFourDigits = "4821"
+                )
+            )
+        )
 
         composeTestRule.setContent {
             OneFamilyTheme {
                 AddTransactionDialog(
                     hasHousehold = false,
                     defaultShared = false,
-                    accounts = emptyList(),
+                    accounts = accountsState,
                     availableCategories = ExpenseCategories.ALL,
                     currencySymbol = "₹",
                     onDismiss = {},
-                    onSave = { title, amount, type, category, _, _, _, _, _, _ ->
+                    onCreateAccount = { name, bankName, accountType, lastFour, balance, limit, _, _, spendLimit, cycleDay ->
+                        accountsState = accountsState + FinancialAccount(
+                            id = "acc_new_${accountsState.size + 1}",
+                            name = name,
+                            bankName = bankName,
+                            accountType = accountType,
+                            lastFourDigits = lastFour,
+                            balance = balance,
+                            creditLimit = limit,
+                            monthlySpendLimit = spendLimit,
+                            billingCycleDay = cycleDay
+                        )
+                    },
+                    onSave = { title, amount, type, category, accountName, _, _, _, _, _ ->
                         savedTuple = Triple(type, category, amount)
+                        savedAccountName = accountName
                     }
                 )
             }
         }
         composeTestRule.waitForIdle()
 
-        // Both Spend and Income & Cashback category divisions render distinctly
+        // 1. Default mode is EXPENSE: only Spend category division renders; Income division is hidden
         composeTestRule.onNodeWithTag("receipt_category_division_spend").performScrollTo().assertIsDisplayed()
-        composeTestRule.onNodeWithTag("receipt_category_division_income").performScrollTo().assertIsDisplayed()
-        composeTestRule.onNodeWithTag("receipt_category_chip_income").performScrollTo().assertIsDisplayed()
-        composeTestRule.onNodeWithTag("receipt_category_chip_cashback").performScrollTo().assertIsDisplayed()
+        assertTrue(
+            "Income category division must be hidden when transaction type is EXPENSE",
+            composeTestRule.onAllNodesWithTag("receipt_category_division_income").fetchSemanticsNodes().isEmpty()
+        )
+        // Selected category ("Groceries") shows its text label in the selected pill, while unselected categories show only icons (no text label)
+        composeTestRule.onNodeWithTag("receipt_selected_category_pill", useUnmergedTree = true).assertIsDisplayed()
+        composeTestRule.onNodeWithText("Groceries").assertExists()
+        assertTrue(
+            "Unselected category 'Travel' must only show its icon without a text label",
+            composeTestRule.onAllNodesWithText("Travel").fetchSemanticsNodes().isEmpty()
+        )
 
-        // Selecting Cashback auto-switches transaction type to INCOME and saves via top icon button
+        // 2. Switch to INCOME (+ Income): only Income & Cashback division renders; Spend division is hidden, and duplicate 'Income' is gone
+        composeTestRule.onNodeWithTag("receipt_type_chip_income").performScrollTo().performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("receipt_category_division_income").performScrollTo().assertIsDisplayed()
+        assertTrue(
+            "Spend category division must be hidden when transaction type is INCOME",
+            composeTestRule.onAllNodesWithTag("receipt_category_division_spend").fetchSemanticsNodes().isEmpty()
+        )
+        composeTestRule.onNodeWithTag("receipt_category_chip_salary_income").performScrollTo().assertIsDisplayed()
+        composeTestRule.onNodeWithTag("receipt_category_chip_cashback").performScrollTo().assertIsDisplayed()
+        assertTrue(
+            "Duplicate 'Income' category chip must not exist",
+            composeTestRule.onAllNodesWithTag("receipt_category_chip_income").fetchSemanticsNodes().isEmpty()
+        )
+        // Selecting Cashback updates selected label to Cashback and hides unselected 'Salary & Income' text label
         composeTestRule.onNodeWithTag("receipt_category_chip_cashback").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithText("Cashback").assertExists()
+        assertTrue(
+            "Unselected 'Salary & Income' category must only show its icon without a text label",
+            composeTestRule.onAllNodesWithText("Salary & Income").fetchSemanticsNodes().isEmpty()
+        )
+
+        // 3. Account/Card uses popup picker (no free-text input) and supports adding & selecting a new account
+        composeTestRule.onNodeWithTag("tx_account_picker_button").performScrollTo().performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("tx_account_picker_dialog").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("tx_picker_account_option_hdfc_savings").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("tx_picker_add_new_account_button").performClick()
+        composeTestRule.waitForIdle()
+
+        composeTestRule.onNodeWithTag("add_account_name_input").performScrollTo().performTextReplacement("ICICI Bank")
+        composeTestRule.onNodeWithTag("add_account_last_four_input").performScrollTo().performTextReplacement("9012")
+        composeTestRule.onNodeWithTag("add_account_balance_input").performScrollTo().performTextReplacement("15000")
+        composeTestRule.onNodeWithTag("save_account_button").performScrollTo().performClick()
+        composeTestRule.waitForIdle()
+
         composeTestRule.onNodeWithTag("add_tx_amount_input").performScrollTo().performTextReplacement("250")
         composeTestRule.onNodeWithTag("add_tx_title_input").performScrollTo().performTextReplacement("Amazon Pay Cashback")
         composeTestRule.onNodeWithTag("save_transaction_button").performScrollTo().performClick()
         composeTestRule.waitForIdle()
 
         assertEquals(Triple("INCOME", "Cashback", 250.0), savedTuple)
+        assertEquals("ICICI Bank ••9012", savedAccountName)
     }
 
     @Test
@@ -3773,47 +3884,50 @@ class ExampleRobolectricTest {
             title = "Freelance Payout",
             amount = 15000.0,
             type = "INCOME",
-            category = "Income",
+            category = "Salary & Income",
             transactionDateMillis = now - 7_200_000L
         )
         val uiState = OneFamilyDashboardUiState(
             isLoading = false,
             activeExpenses = listOf(groceryTx, cashbackTx, incomeTx),
+            allScopedExpenses = listOf(groceryTx, cashbackTx, incomeTx),
+            filteredExpenses = listOf(groceryTx, cashbackTx, incomeTx),
+            totalMonthlySpent = 1800.0,
+            totalMonthlyIncome = 15450.0,
             categoryProgressList = listOf(
                 CategorySpendProgress("Groceries", 1800.0, 5000.0, 80, null, emptyMap())
             ),
             incomeCategoryProgressList = listOf(
-                CategorySpendProgress("Income", 15000.0, 0.0, 80, null, emptyMap()),
+                CategorySpendProgress("Salary & Income", 15000.0, 0.0, 80, null, emptyMap()),
                 CategorySpendProgress("Cashback", 450.0, 0.0, 80, null, emptyMap())
             )
         )
 
         composeTestRule.setContent {
             OneFamilyTheme {
-                AnalyticsTabScreen(
-                    uiState = uiState,
-                    onStepMonth = {},
-                    onSelectPeriod = {}
+                AllTransactionsScreen(
+                    uiState = uiState
                 )
             }
         }
         composeTestRule.waitForIdle()
 
-        composeTestRule.onNodeWithTag("analytics_tab_list")
-            .performScrollToNode(hasTestTag("analytics_income_spend_division_card"))
-        composeTestRule.onNodeWithTag("analytics_income_spend_division_card").assertIsDisplayed()
-        composeTestRule.onNodeWithTag("analytics_division_income_total").assertIsDisplayed()
-        composeTestRule.onNodeWithTag("analytics_division_spend_total").assertIsDisplayed()
-
-        // Filter to Income & Cashback only -> Spend tx is hidden, Cashback card is visible
-        composeTestRule.onNodeWithTag("analytics_division_chip_income").performScrollTo().performClick()
+        // Switch to Categories sub-tab on AllTransactionsScreen where all category + income/cashback analysis lives
+        composeTestRule.onNodeWithTag("tx_subtab_categories").performClick()
         composeTestRule.waitForIdle()
-        assertTrue(
-            composeTestRule.onAllNodesWithTag("analytics_month_tx_row_tx_spend_1").fetchSemanticsNodes().isEmpty()
-        )
-        composeTestRule.onNodeWithTag("analytics_tab_list")
-            .performScrollToNode(hasTestTag("analysis_income_category_card_cashback"))
-        composeTestRule.onNodeWithTag("analysis_income_category_card_cashback").assertIsDisplayed()
+
+        composeTestRule.onNodeWithTag("analytics_income_spend_division_card")
+            .performScrollTo()
+            .assertIsDisplayed()
+        composeTestRule.onNodeWithTag("analytics_division_income_total")
+            .performScrollTo()
+            .assertIsDisplayed()
+        composeTestRule.onNodeWithTag("analytics_division_spend_total")
+            .performScrollTo()
+            .assertIsDisplayed()
+        composeTestRule.onNodeWithTag("analysis_income_category_card_cashback")
+            .performScrollTo()
+            .assertIsDisplayed()
     }
 
     @Test
@@ -3897,6 +4011,12 @@ class ExampleRobolectricTest {
         )
         val allTxs = listOf(txSwiggy1, txBabitha)
 
+        val calNow = java.util.Calendar.getInstance().apply { timeInMillis = now }
+        val curYear = calNow.get(java.util.Calendar.YEAR)
+        val curMonth = calNow.get(java.util.Calendar.MONTH)
+        val curMonthBarTag = "axio_month_bar_${curYear}_$curMonth"
+        val curMonthLabel = java.text.SimpleDateFormat("MMM", java.util.Locale.ENGLISH).format(calNow.time)
+
         var selectedCategory by mutableStateOf("All")
         var selectedTag by mutableStateOf("All")
         var selectedMerchant by mutableStateOf("All")
@@ -3915,12 +4035,22 @@ class ExampleRobolectricTest {
                     uiState = OneFamilyDashboardUiState(
                         isLoading = false,
                         userProfile = UserProfile(uid = "u_axio", displayName = "Alex", currencySymbol = "₹"),
+                        selectedPeriod = YearMonthPeriod(curYear, curMonth),
                         activeExpenses = allTxs,
                         allScopedExpenses = allTxs,
                         filteredExpenses = filtered,
                         totalMonthlySpent = 29964.0,
                         totalMonthlyIncome = 0.0,
                         activeMonthlyBudget = 25000.0,
+                        monthlyTrendBars = listOf(
+                            MonthlySpendBar(
+                                period = YearMonthPeriod(curYear, curMonth),
+                                label = curMonthLabel,
+                                expenseTotal = 29964.0,
+                                incomeTotal = 0.0,
+                                isSelected = true
+                            )
+                        ),
                         selectedCategoryFilter = selectedCategory,
                         selectedTagFilter = selectedTag,
                         selectedMerchantFilter = selectedMerchant,
@@ -3965,10 +4095,12 @@ class ExampleRobolectricTest {
         }
         composeTestRule.waitForIdle()
 
-        // 1. Verify Transactions | Categories | Merchants sub-tabs and Circular Spend/Budget Ring Gauge exist
+        // 1. Verify Transactions | Categories | Merchants sub-tabs, initial top bar graph amount ("30.0k"), and Circular Ring Gauge
         composeTestRule.onNodeWithTag("tx_subtab_transactions").assertIsDisplayed()
         composeTestRule.onNodeWithTag("tx_subtab_categories").assertIsDisplayed()
         composeTestRule.onNodeWithTag("tx_subtab_merchants").assertIsDisplayed()
+        composeTestRule.onNodeWithTag(curMonthBarTag).assertIsDisplayed()
+        composeTestRule.onNodeWithText("30.0k", substring = true).assertExists()
         composeTestRule.onNodeWithTag("all_transactions_screen_list")
             .performScrollToNode(hasTestTag("tx_page_spend_ring_gauge"))
         composeTestRule.onNodeWithTag("tx_page_spend_ring_gauge").assertIsDisplayed()
@@ -3991,7 +4123,8 @@ class ExampleRobolectricTest {
         composeTestRule.waitForIdle()
         assertEquals("All", selectedTag)
 
-        // 3. Switch to Categories sub-tab -> verify Donut chart & Category cards -> click Travel card to filter by Travel
+        // 3. Switch to Categories sub-tab -> click Travel card -> stays on Categories (no redirect),
+        // shows ONLY Travel + its inline transaction, and updates top bar graph amount to 29.0k
         composeTestRule.onNodeWithTag("all_transactions_screen_list")
             .performScrollToNode(hasTestTag("tx_subtab_categories"))
         composeTestRule.onNodeWithTag("tx_subtab_categories").performClick()
@@ -4003,14 +4136,38 @@ class ExampleRobolectricTest {
         composeTestRule.waitForIdle()
         assertEquals("Travel", selectedCategory)
 
-        // Clear category filter
+        composeTestRule.onNodeWithTag("all_transactions_screen_list").performScrollToIndex(0)
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag(curMonthBarTag).assertIsDisplayed()
+        composeTestRule.onNodeWithText("29.0k", substring = true).assertExists()
+
+        composeTestRule.onNodeWithTag("all_transactions_screen_list")
+            .performScrollToNode(hasTestTag("tx_categories_subtab_content"))
+        composeTestRule.onNodeWithTag("tx_categories_subtab_content").assertIsDisplayed()
+        assertTrue(
+            "Food & Dining category card should be hidden when Travel category is selected",
+            composeTestRule.onAllNodesWithTag("tx_category_card_food_&_dining").fetchSemanticsNodes().isEmpty()
+        )
+        composeTestRule.onNodeWithTag("all_transactions_screen_list")
+            .performScrollToNode(hasTestTag("expense_card_tx_axio_2"))
+        composeTestRule.onNodeWithTag("expense_card_tx_axio_2").assertIsDisplayed()
+        assertTrue(
+            "Swiggy transaction must be hidden when Travel category is selected",
+            composeTestRule.onAllNodesWithTag("expense_card_tx_axio_1").fetchSemanticsNodes().isEmpty()
+        )
+
+        // Clear category filter -> restores 30.0k in top bar graph
         composeTestRule.onNodeWithTag("all_transactions_screen_list")
             .performScrollToNode(hasTestTag("all_tx_active_category_pill"))
         composeTestRule.onNodeWithTag("all_tx_active_category_pill").performClick()
         composeTestRule.waitForIdle()
         assertEquals("All", selectedCategory)
+        composeTestRule.onNodeWithTag("all_transactions_screen_list").performScrollToIndex(0)
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithText("30.0k", substring = true).assertExists()
 
-        // 4. Switch to Merchants sub-tab -> click Babitha merchant card -> filters transactions to Babitha
+        // 4. Switch to Merchants sub-tab -> click Babitha merchant card -> stays on Merchants (no redirect),
+        // shows ONLY Babitha + its inline transaction, and updates top bar graph amount to 29.0k
         composeTestRule.onNodeWithTag("all_transactions_screen_list")
             .performScrollToNode(hasTestTag("tx_subtab_merchants"))
         composeTestRule.onNodeWithTag("tx_subtab_merchants").performClick()
@@ -4021,6 +4178,22 @@ class ExampleRobolectricTest {
         composeTestRule.onNodeWithTag("tx_merchant_card_babitha").performClick()
         composeTestRule.waitForIdle()
         assertEquals("Babitha", selectedMerchant)
+
+        composeTestRule.onNodeWithTag("all_transactions_screen_list").performScrollToIndex(0)
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag(curMonthBarTag).assertIsDisplayed()
+        composeTestRule.onNodeWithText("29.0k", substring = true).assertExists()
+
+        composeTestRule.onNodeWithTag("all_transactions_screen_list")
+            .performScrollToNode(hasTestTag("tx_merchants_subtab_content"))
+        composeTestRule.onNodeWithTag("tx_merchants_subtab_content").assertIsDisplayed()
+        assertTrue(
+            "Swiggy merchant card should be hidden when Babitha merchant is selected",
+            composeTestRule.onAllNodesWithTag("tx_merchant_card_swiggy").fetchSemanticsNodes().isEmpty()
+        )
+        composeTestRule.onNodeWithTag("all_transactions_screen_list")
+            .performScrollToNode(hasTestTag("expense_card_tx_axio_2"))
+        composeTestRule.onNodeWithTag("expense_card_tx_axio_2").assertIsDisplayed()
         assertTrue(
             "Swiggy transaction should be filtered out when Babitha merchant filter is active",
             composeTestRule.onAllNodesWithTag("expense_card_tx_axio_1").fetchSemanticsNodes().isEmpty()
@@ -4443,7 +4616,232 @@ class ExampleRobolectricTest {
 
         assertEquals(22, savedCycleDay)
     }
+
+    @Test
+    fun `test FirstTimeSmsSyncScreen permission warning, live skip during sync, and ViewModel READ_SMS denial guard`() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val shadowApp = shadowOf(context as android.app.Application)
+        shadowApp.denyPermissions(Manifest.permission.READ_SMS)
+
+        LocalAccountSessionManager.ensureInitialized(context)
+        val user = LocalAccountSessionManager.signInWithUsernamePassword(
+            context = context,
+            rawUsername = "arindamzipper@gmail.com",
+            rawPassword = "password123"
+        ).getOrThrow()
+
+        val vm = OneFamilyViewModel(
+            repository = OneFamilyRepository(context),
+            smsInboxReader = SmsInboxReader(context),
+            currentUserId = user.uid,
+            currentUserName = user.displayName,
+            currentUserEmail = user.email
+        )
+
+        // Calling scanDeviceSmsInbox without READ_SMS must abort cleanly without locking isSyncing = true
+        vm.scanDeviceSmsInbox(context = context, silentIfEmpty = false)
+        assertFalse(vm.smsSyncProgress.value.isSyncing)
+        assertEquals("SMS permission required.", vm.smsSyncProgress.value.statusMessage)
+
+        var syncState by mutableStateOf(
+            SmsSyncProgressState(
+                isSyncing = false,
+                isCompleted = false
+            )
+        )
+        var warningMsg by mutableStateOf<String?>(
+            "SMS permission was denied or restricted by Android. Tap Start SMS Sync Now to retry, or open App Settings -> Permissions -> SMS."
+        )
+        var openedSettings = false
+        var skippedWhileSyncing = false
+
+        composeTestRule.setContent {
+            OneFamilyTheme {
+                FirstTimeSmsSyncScreen(
+                    syncState = syncState,
+                    onStartSyncClick = {},
+                    onContinueToAppClick = {},
+                    onSkipClick = {
+                        vm.cancelSmsSync()
+                        skippedWhileSyncing = true
+                    },
+                    permissionWarningMessage = warningMsg,
+                    onOpenAppSettingsClick = { openedSettings = true }
+                )
+            }
+        }
+        composeTestRule.waitForIdle()
+
+        composeTestRule.onNodeWithTag("sms_permission_warning_card").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("open_sms_app_settings_button").performScrollTo().performClick()
+        assertTrue(openedSettings)
+
+        // Switch to active syncing state -> status message and Skip & Enter App button are visible
+        warningMsg = null
+        syncState = SmsSyncProgressState(
+            isSyncing = true,
+            isCompleted = false,
+            totalSmsCount = 120,
+            readSmsCount = 0,
+            statusMessage = "Connecting & checking existing receipts..."
+        )
+        composeTestRule.waitForIdle()
+
+        composeTestRule.onNodeWithTag("sms_sync_status_message").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Connecting & checking existing receipts...").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("skip_during_sms_sync_button").performScrollTo().performClick()
+        assertTrue(skippedWhileSyncing)
+        assertFalse(vm.smsSyncProgress.value.isSyncing)
+
+        LocalAccountSessionManager.signOut(context)
+    }
+
+    @Test
+    fun `test Material Expressive 3 adaptive icon resources and removal of redundant page titles and month year labels`() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+
+        // 1. Verify M3 Expressive adaptive launcher icon drawables & monochrome themed icon resolve cleanly
+        assertNotNull(androidx.core.content.ContextCompat.getDrawable(context, R.mipmap.ic_launcher))
+        assertNotNull(androidx.core.content.ContextCompat.getDrawable(context, R.mipmap.ic_launcher_round))
+        assertNotNull(androidx.core.content.ContextCompat.getDrawable(context, R.drawable.ic_launcher_background))
+        assertNotNull(androidx.core.content.ContextCompat.getDrawable(context, R.drawable.ic_launcher_foreground))
+        assertNotNull(androidx.core.content.ContextCompat.getDrawable(context, R.drawable.ic_launcher_monochrome))
+
+        val now = System.currentTimeMillis()
+        val uniquePeriodLabel = "November 2026"
+        val sampleTx = ExpenseTransaction(
+            id = "tx_clean_1",
+            userId = "u_clean",
+            userName = "Arindam",
+            title = "Swiggy",
+            amount = 480.0,
+            category = "Food & Dining",
+            type = "EXPENSE",
+            paymentMode = "UPI",
+            accountName = "HDFC Bank",
+            transactionDateMillis = now
+        )
+        val uiState = OneFamilyDashboardUiState(
+            isLoading = false,
+            userProfile = UserProfile(uid = "u_clean", displayName = "Arindam", email = "arindamzipper@gmail.com", currencySymbol = "₹"),
+            periodLabel = uniquePeriodLabel,
+            activeExpenses = listOf(sampleTx),
+            allScopedExpenses = listOf(sampleTx),
+            filteredExpenses = listOf(sampleTx),
+            totalMonthlySpent = 480.0,
+            totalMonthlyIncome = 50000.0,
+            activeMonthlyBudget = 20000.0,
+            monthlyTrendBars = listOf(
+                MonthlySpendBar(
+                    period = YearMonthPeriod(2026, 11),
+                    label = "Nov",
+                    expenseTotal = 480.0,
+                    incomeTotal = 50000.0,
+                    isSelected = true
+                )
+            ),
+            accountSummaries = listOf(
+                AccountSpendSummary(
+                    account = FinancialAccount(
+                        id = "acc_clean_1",
+                        userId = "u_clean",
+                        name = "HDFC Bank",
+                        accountType = AccountSectionType.BANK.name,
+                        monthlySpendLimit = 10000.0
+                    ),
+                    section = AccountSectionType.BANK,
+                    linkedBankDisplayName = "",
+                    spent = 480.0,
+                    income = 50000.0,
+                    limit = 10000.0,
+                    alertThresholdPercent = 80,
+                    transactions = listOf(sampleTx),
+                    allTransactions = listOf(sampleTx),
+                    limitPeriodLabel = uniquePeriodLabel
+                )
+            )
+        )
+
+        var screenMode by mutableStateOf("HOME")
+        composeTestRule.setContent {
+            OneFamilyTheme {
+                when (screenMode) {
+                    "HOME" -> HomeTabScreen(uiState = uiState, onScopeSelected = {})
+                    "ACCOUNTS" -> AccountsTabScreen(uiState = uiState, onScopeSelected = {})
+                    "SETTINGS" -> HouseholdTabScreen(
+                        uiState = uiState,
+                        currentUserName = "Arindam",
+                        currentUserEmail = "arindamzipper@gmail.com",
+                        onCreateHousehold = { _, _ -> },
+                        onJoinByCode = {},
+                        onInviteByEmail = {},
+                        onAcceptEmailInvite = {}
+                    )
+                    "TRANSACTIONS" -> AllTransactionsScreen(uiState = uiState)
+                }
+            }
+        }
+        composeTestRule.waitForIdle()
+
+        // HomeTabScreen: no "One Family" page title, no duplicate periodLabel, only single graph (no home_budget_trend_line_section),
+        // and renders Monthly Trend, Bill Reminders, and Active Limits
+        assertTrue(composeTestRule.onAllNodesWithText("One Family").fetchSemanticsNodes().isEmpty())
+        assertTrue(composeTestRule.onAllNodesWithText(uniquePeriodLabel, substring = true).fetchSemanticsNodes().isEmpty())
+        assertTrue(
+            "Home screen must not render a second duplicate trend graph inside budget card",
+            composeTestRule.onAllNodesWithTag("home_budget_trend_line_section").fetchSemanticsNodes().isEmpty()
+        )
+        composeTestRule.onNodeWithTag("home_tab_list")
+            .performScrollToNode(hasTestTag("home_monthly_trend_card"))
+        composeTestRule.onNodeWithTag("home_monthly_trend_card").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("home_tab_list")
+            .performScrollToNode(hasTestTag("home_bill_reminders_card"))
+        composeTestRule.onNodeWithTag("home_bill_reminders_card").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("home_add_bill_reminder_button").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("bill_reminder_title_input").performTextReplacement("Electricity Bill")
+        composeTestRule.onNodeWithTag("bill_reminder_amount_input").performTextReplacement("1850")
+        composeTestRule.onNodeWithTag("bill_reminder_due_day_input").performTextReplacement("12")
+        composeTestRule.onNodeWithTag("bill_reminder_save_button").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithText("Electricity Bill").assertIsDisplayed()
+
+        composeTestRule.onNodeWithTag("home_tab_list")
+            .performScrollToNode(hasTestTag("home_active_limits_card"))
+        composeTestRule.onNodeWithTag("home_active_limits_card").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("home_limit_item_overall_budget").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("home_limit_item_account_acc_clean_1").assertIsDisplayed()
+
+        // AccountsTabScreen: no "Accounts" page title and no duplicate periodLabel
+        screenMode = "ACCOUNTS"
+        composeTestRule.waitForIdle()
+        assertTrue(composeTestRule.onAllNodesWithText("Accounts").fetchSemanticsNodes().isEmpty())
+        assertTrue(composeTestRule.onAllNodesWithText(uniquePeriodLabel, substring = true).fetchSemanticsNodes().isEmpty())
+
+        // HouseholdTabScreen: no "Settings" page title header
+        screenMode = "SETTINGS"
+        composeTestRule.waitForIdle()
+        assertTrue(composeTestRule.onAllNodesWithText("Settings").fetchSemanticsNodes().isEmpty())
+
+        // AllTransactionsScreen: no "All transactions" page title, no duplicate periodLabel, Axio strip + 3 sub-tabs + ring gauge visible, search collapsed until toggled
+        screenMode = "TRANSACTIONS"
+        composeTestRule.waitForIdle()
+        assertTrue(composeTestRule.onAllNodesWithText("All transactions").fetchSemanticsNodes().isEmpty())
+        assertTrue(composeTestRule.onAllNodesWithText(uniquePeriodLabel, substring = true).fetchSemanticsNodes().isEmpty())
+        composeTestRule.onNodeWithTag("axio_monthly_spend_bar_strip").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("tx_subtab_transactions").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("tx_subtab_categories").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("tx_subtab_merchants").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("all_transactions_screen_list")
+            .performScrollToNode(hasTestTag("tx_page_spend_ring_gauge"))
+        composeTestRule.onNodeWithTag("tx_page_spend_ring_gauge").assertIsDisplayed()
+        assertTrue(composeTestRule.onAllNodesWithTag("all_transactions_search_input").fetchSemanticsNodes().isEmpty())
+        composeTestRule.onNodeWithTag("all_transactions_screen_list").performScrollToIndex(0)
+        composeTestRule.onNodeWithTag("all_transactions_toggle_search_button").performClick()
+        composeTestRule.mainClock.advanceTimeBy(500)
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("all_transactions_screen_list")
+            .performScrollToNode(hasTestTag("all_transactions_search_input"))
+        composeTestRule.onNodeWithTag("all_transactions_search_input").assertIsDisplayed()
+    }
 }
-
-
-
