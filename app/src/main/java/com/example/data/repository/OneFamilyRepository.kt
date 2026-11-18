@@ -2063,8 +2063,11 @@ class OneFamilyRepository(
      */
     suspend fun deleteAllUserData(uidOverride: String? = null): Result<Unit> = runCatching {
         val uid = uidOverride?.takeIf { it.isNotBlank() } ?: requireUserId()
+        val capturedEmail = currentFirebaseUser?.email
+            ?.takeIf { it.isNotBlank() }
+            ?: LocalAccountSessionManager.getCurrentUser()?.email.orEmpty()
         if (isLocalMode(uid)) {
-            LocalAccountDataStore.deleteAllUserData(uid)
+            LocalAccountDataStore.deleteAllUserData(uid, capturedEmail)
             return@runCatching
         }
 
@@ -2074,197 +2077,227 @@ class OneFamilyRepository(
                 val batch = db.batch()
                 chunk.forEach { batch.delete(it.reference) }
                 try {
-                    batch.commit().await()
+                    withTimeoutOrNull(3_000L) { batch.commit().await() }
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: Exception) {
                     handleFirestoreError(e, OperationType.DELETE, pathForError)
-                    throw e
                 }
             }
         }
 
-        val userRef = db.collection("users").document(uid)
+        try {
+            val userRef = db.collection("users").document(uid)
 
-        // 1. Hard-delete all personal subcollections
-        val personalExpensesPath = "users/$uid/personal_expenses"
-        val personalExpensesDocs = try {
-            userRef.collection("personal_expenses").get().await().documents
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            handleFirestoreError(e, OperationType.LIST, personalExpensesPath)
-            throw e
-        }
-        deleteDocsInBatches(personalExpensesDocs, personalExpensesPath)
-
-        val personalBudgetsPath = "users/$uid/personal_budgets"
-        val personalBudgetsDocs = try {
-            userRef.collection("personal_budgets").get().await().documents
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            handleFirestoreError(e, OperationType.LIST, personalBudgetsPath)
-            throw e
-        }
-        deleteDocsInBatches(personalBudgetsDocs, personalBudgetsPath)
-
-        val accountsPath = "users/$uid/accounts"
-        val accountsDocs = try {
-            userRef.collection("accounts").get().await().documents
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            handleFirestoreError(e, OperationType.LIST, accountsPath)
-            throw e
-        }
-        deleteDocsInBatches(accountsDocs, accountsPath)
-
-        // 2. Discover all households where user is a member (plus activeHouseholdId if set)
-        val userSnap = try {
-            userRef.get().await()
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            handleFirestoreError(e, OperationType.GET, userRef.path)
-            throw e
-        }
-        val activeHid = userSnap.getString("activeHouseholdId").orEmpty()
-
-        val queriedHouseholds = try {
-            db.collection("households")
-                .whereArrayContains("memberUids", uid)
-                .get()
-                .await()
-                .documents
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            handleFirestoreError(e, OperationType.LIST, "households")
-            throw e
-        }
-
-        val householdDocsById = queriedHouseholds.associateBy { it.id }.toMutableMap()
-        if (activeHid.isNotBlank() && !householdDocsById.containsKey(activeHid)) {
-            runCatching {
-                val activeSnap = db.collection("households").document(activeHid).get().await()
-                if (activeSnap.exists()) {
-                    householdDocsById[activeHid] = activeSnap
-                }
-            }
-        }
-
-        for ((hid, hhSnap) in householdDocsById) {
-            val hh = hhSnap.toObject(Household::class.java, DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
-                ?: continue
-            if (uid !in hh.memberUids && hh.ownerUid != uid) continue
-
-            val sharedExpPath = "households/$hid/shared_expenses"
-            val sharedExpDocs = try {
-                db.collection("households").document(hid)
-                    .collection("shared_expenses")
-                    .whereArrayContains("memberUids", uid)
-                    .get()
-                    .await()
-                    .documents
+            // 1. Hard-delete all personal subcollections (each bounded so offline/stalled backend never hangs)
+            val personalExpensesPath = "users/$uid/personal_expenses"
+            val personalExpensesDocs = try {
+                withTimeoutOrNull(4_000L) {
+                    userRef.collection("personal_expenses").get().await().documents
+                }.orEmpty()
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                handleFirestoreError(e, OperationType.LIST, sharedExpPath)
-                throw e
+                handleFirestoreError(e, OperationType.LIST, personalExpensesPath)
+                emptyList()
             }
+            deleteDocsInBatches(personalExpensesDocs, personalExpensesPath)
 
-            val sharedBudPath = "households/$hid/category_budgets"
-            val sharedBudDocs = try {
-                db.collection("households").document(hid)
-                    .collection("category_budgets")
-                    .whereArrayContains("memberUids", uid)
-                    .get()
-                    .await()
-                    .documents
+            val personalBudgetsPath = "users/$uid/personal_budgets"
+            val personalBudgetsDocs = try {
+                withTimeoutOrNull(4_000L) {
+                    userRef.collection("personal_budgets").get().await().documents
+                }.orEmpty()
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                handleFirestoreError(e, OperationType.LIST, sharedBudPath)
+                handleFirestoreError(e, OperationType.LIST, personalBudgetsPath)
+                emptyList()
+            }
+            deleteDocsInBatches(personalBudgetsDocs, personalBudgetsPath)
+
+            val accountsPath = "users/$uid/accounts"
+            val accountsDocs = try {
+                withTimeoutOrNull(4_000L) {
+                    userRef.collection("accounts").get().await().documents
+                }.orEmpty()
+            } catch (e: CancellationException) {
                 throw e
+            } catch (e: Exception) {
+                handleFirestoreError(e, OperationType.LIST, accountsPath)
+                emptyList()
+            }
+            deleteDocsInBatches(accountsDocs, accountsPath)
+
+            // 2. Discover all households where user is a member (plus activeHouseholdId if set)
+            val userSnap = try {
+                withTimeoutOrNull(3_000L) { userRef.get().await() }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                handleFirestoreError(e, OperationType.GET, userRef.path)
+                null
+            }
+            val activeHid = userSnap?.getString("activeHouseholdId").orEmpty()
+
+            val queriedHouseholds = try {
+                withTimeoutOrNull(4_000L) {
+                    db.collection("households")
+                        .whereArrayContains("memberUids", uid)
+                        .get()
+                        .await()
+                        .documents
+                }.orEmpty()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                handleFirestoreError(e, OperationType.LIST, "households")
+                emptyList()
             }
 
-            val remainingMembers = hh.memberUids.filter { it.isNotBlank() && it != uid }
-            if (remainingMembers.isEmpty()) {
-                deleteDocsInBatches(sharedExpDocs, sharedExpPath)
-                deleteDocsInBatches(sharedBudDocs, sharedBudPath)
-
-                if (hh.joinCode.isNotBlank() && hh.ownerUid == uid) {
-                    val codeRef = db.collection("household_codes").document(hh.joinCode)
-                    runCatching { codeRef.delete().await() }
-                }
-                if (hh.ownerUid == uid) {
-                    val hhRef = db.collection("households").document(hid)
-                    try {
-                        hhRef.delete().await()
-                    } catch (e: CancellationException) {
-                        throw e
-                    } catch (e: Exception) {
-                        handleFirestoreError(e, OperationType.DELETE, hhRef.path)
-                        throw e
-                    }
-                }
-            } else {
-                val userAuthoredSharedExpenses = sharedExpDocs.filter { it.getString("userId") == uid }
-                val userAuthoredSharedBudgets = sharedBudDocs.filter { it.getString("userId") == uid }
-                deleteDocsInBatches(userAuthoredSharedExpenses, sharedExpPath)
-                deleteDocsInBatches(userAuthoredSharedBudgets, sharedBudPath)
-
-                val newOwnerUid = if (hh.ownerUid == uid) remainingMembers.first() else hh.ownerUid
-                if (hh.ownerUid == uid && hh.joinCode.isNotBlank()) {
-                    val codeRef = db.collection("household_codes").document(hh.joinCode)
-                    runCatching {
-                        codeRef.update(
-                            mapOf(
-                                "ownerUid" to newOwnerUid,
-                                "updatedAt" to FieldValue.serverTimestamp()
-                            )
-                        ).await()
-                    }
-                }
-
-                val hhRef = db.collection("households").document(hid)
-                val updatedNames = hh.memberNames.filterKeys { it != uid }
-                val updatedEmails = hh.memberEmails.filterKeys { it != uid }
-                val currentEmail = hh.memberEmails[uid].orEmpty()
-                val updatedInvites = if (currentEmail.isNotBlank()) {
-                    hh.invitedEmails.filterNot { it.equals(currentEmail, ignoreCase = true) }
-                } else {
-                    hh.invitedEmails
-                }
+            val householdDocsById = queriedHouseholds.associateBy { it.id }.toMutableMap()
+            if (activeHid.isNotBlank() && !householdDocsById.containsKey(activeHid)) {
                 try {
-                    hhRef.update(
-                        mapOf(
-                            "ownerUid" to newOwnerUid,
-                            "memberUids" to remainingMembers,
-                            "memberNames" to updatedNames,
-                            "memberEmails" to updatedEmails,
-                            "invitedEmails" to updatedInvites,
-                            "updatedAt" to FieldValue.serverTimestamp()
-                        )
-                    ).await()
+                    val activeSnap = withTimeoutOrNull(3_000L) {
+                        db.collection("households").document(activeHid).get().await()
+                    }
+                    if (activeSnap != null && activeSnap.exists()) {
+                        householdDocsById[activeHid] = activeSnap
+                    }
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (_: Exception) {
+                }
+            }
+
+            for ((hid, hhSnap) in householdDocsById) {
+                val hh = hhSnap.toObject(Household::class.java, DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
+                    ?: continue
+                if (uid !in hh.memberUids && hh.ownerUid != uid) continue
+
+                val sharedExpPath = "households/$hid/shared_expenses"
+                val sharedExpDocs = try {
+                    withTimeoutOrNull(4_000L) {
+                        db.collection("households").document(hid)
+                            .collection("shared_expenses")
+                            .whereArrayContains("memberUids", uid)
+                            .get()
+                            .await()
+                            .documents
+                    }.orEmpty()
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: Exception) {
-                    handleFirestoreError(e, OperationType.UPDATE, hhRef.path)
+                    handleFirestoreError(e, OperationType.LIST, sharedExpPath)
+                    emptyList()
+                }
+
+                val sharedBudPath = "households/$hid/category_budgets"
+                val sharedBudDocs = try {
+                    withTimeoutOrNull(4_000L) {
+                        db.collection("households").document(hid)
+                            .collection("category_budgets")
+                            .whereArrayContains("memberUids", uid)
+                            .get()
+                            .await()
+                            .documents
+                    }.orEmpty()
+                } catch (e: CancellationException) {
                     throw e
+                } catch (e: Exception) {
+                    handleFirestoreError(e, OperationType.LIST, sharedBudPath)
+                    emptyList()
+                }
+
+                val remainingMembers = hh.memberUids.filter { it.isNotBlank() && it != uid }
+                if (remainingMembers.isEmpty()) {
+                    deleteDocsInBatches(sharedExpDocs, sharedExpPath)
+                    deleteDocsInBatches(sharedBudDocs, sharedBudPath)
+
+                    if (hh.joinCode.isNotBlank() && hh.ownerUid == uid) {
+                        val codeRef = db.collection("household_codes").document(hh.joinCode)
+                        try {
+                            withTimeoutOrNull(3_000L) { codeRef.delete().await() }
+                        } catch (e: CancellationException) {
+                            throw e
+                        } catch (_: Exception) {
+                        }
+                    }
+                    if (hh.ownerUid == uid) {
+                        val hhRef = db.collection("households").document(hid)
+                        try {
+                            withTimeoutOrNull(3_000L) { hhRef.delete().await() }
+                        } catch (e: CancellationException) {
+                            throw e
+                        } catch (e: Exception) {
+                            handleFirestoreError(e, OperationType.DELETE, hhRef.path)
+                        }
+                    }
+                } else {
+                    val userAuthoredSharedExpenses = sharedExpDocs.filter { it.getString("userId") == uid }
+                    val userAuthoredSharedBudgets = sharedBudDocs.filter { it.getString("userId") == uid }
+                    deleteDocsInBatches(userAuthoredSharedExpenses, sharedExpPath)
+                    deleteDocsInBatches(userAuthoredSharedBudgets, sharedBudPath)
+
+                    val newOwnerUid = if (hh.ownerUid == uid) remainingMembers.first() else hh.ownerUid
+                    if (hh.ownerUid == uid && hh.joinCode.isNotBlank()) {
+                        val codeRef = db.collection("household_codes").document(hh.joinCode)
+                        try {
+                            withTimeoutOrNull(3_000L) {
+                                codeRef.update(
+                                    mapOf(
+                                        "ownerUid" to newOwnerUid,
+                                        "updatedAt" to FieldValue.serverTimestamp()
+                                    )
+                                ).await()
+                            }
+                        } catch (e: CancellationException) {
+                            throw e
+                        } catch (_: Exception) {
+                        }
+                    }
+
+                    val hhRef = db.collection("households").document(hid)
+                    val updatedNames = hh.memberNames.filterKeys { it != uid }
+                    val updatedEmails = hh.memberEmails.filterKeys { it != uid }
+                    val currentEmail = hh.memberEmails[uid].orEmpty()
+                    val updatedInvites = if (currentEmail.isNotBlank()) {
+                        hh.invitedEmails.filterNot { it.equals(currentEmail, ignoreCase = true) }
+                    } else {
+                        hh.invitedEmails
+                    }
+                    try {
+                        withTimeoutOrNull(3_000L) {
+                            hhRef.update(
+                                mapOf(
+                                    "ownerUid" to newOwnerUid,
+                                    "memberUids" to remainingMembers,
+                                    "memberNames" to updatedNames,
+                                    "memberEmails" to updatedEmails,
+                                    "invitedEmails" to updatedInvites,
+                                    "updatedAt" to FieldValue.serverTimestamp()
+                                )
+                            ).await()
+                        }
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        handleFirestoreError(e, OperationType.UPDATE, hhRef.path)
+                    }
                 }
             }
-        }
 
-        // 3. Hard-delete user profile document
-        runCatching {
-            userRef.delete().await()
+            // 3. Hard-delete user profile document
+            try {
+                withTimeoutOrNull(3_000L) { userRef.delete().await() }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+            }
+        } finally {
+            firestoreAccountTimestampMap.clear()
+            LocalAccountDataStore.deleteAllUserData(uid, capturedEmail)
         }
-
-        firestoreAccountTimestampMap.clear()
-        val userEmail = currentFirebaseUser?.email.orEmpty()
-        LocalAccountDataStore.deleteAllUserData(uid, userEmail)
     }
 
     private fun generateJoinCode(): String {

@@ -64,6 +64,7 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.NonCancellable
@@ -1544,11 +1545,12 @@ class OneFamilyViewModel(
             canUndoLastAction = filter.canUndo,
             householdFeatureEnabled = householdEnabled
         )
-    }.stateIn(
-        scope = viewModelScope,
-        started = SharingStarted.Eagerly,
-        initialValue = OneFamilyDashboardUiState()
-    )
+    }.flowOn(Dispatchers.Default)
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.Eagerly,
+            initialValue = OneFamilyDashboardUiState()
+        )
 
     // --- PERIOD, DATE RANGE & FILTER CONTROLS ---
 
@@ -3061,6 +3063,15 @@ class OneFamilyViewModel(
         }
     }
 
+    private var deleteAccountJob: Job? = null
+
+    fun prepareForSignOut() {
+        cancelSmsSync()
+        deleteAccountJob?.cancel()
+        deleteAccountJob = null
+        _isDeletingAccount.value = false
+    }
+
     /**
      * Permanently hard-deletes all user data from Firebase Firestore (and local storage),
      * deletes the Firebase Auth account (re-authenticating via Google CredentialManager if
@@ -3073,69 +3084,98 @@ class OneFamilyViewModel(
     ) {
         if (_isDeletingAccount.value) return
         _isDeletingAccount.value = true
+        cancelSmsSync()
 
-        viewModelScope.launch {
-            withContext(NonCancellable) {
-                try {
-                    // 1. Clear notification deduplication cache for this user
-                    TransactionNotificationHelper.clearNotifiedStateForUser(currentUserId)
+        val appContext = context.applicationContext
+        val uid = currentUserId
+        val email = currentUserEmail
 
-                    // 2. Permanently delete all Firestore documents & local records while authenticated
+        deleteAccountJob = viewModelScope.launch(Dispatchers.IO) {
+            var completedNormally = false
+            try {
+                // 1. Clear notification deduplication cache for this user off the Main Thread
+                TransactionNotificationHelper.clearNotifiedStateForUser(uid)
+
+                // 2. Permanently delete all Firestore documents & local records while authenticated (bounded so stalled backend never freezes UI)
+                withTimeoutOrNull(8_000L) {
                     runCatching {
-                        repository.deleteAllUserData(currentUserId).getOrThrow()
+                        repository.deleteAllUserData(uid).getOrThrow()
                     }
+                }
 
-                    // 3. Delete local account credentials & mark user/email as fresh on next login
-                    LocalAccountSessionManager.deleteLocalUserAccount(
-                        context = context,
-                        uid = currentUserId,
-                        email = currentUserEmail
-                    )
+                // 3. Delete local account credentials & mark user/email as fresh on next login
+                LocalAccountSessionManager.deleteLocalUserAccount(
+                    context = appContext,
+                    uid = uid,
+                    email = email
+                )
 
-                    // 4. Delete the Firebase Auth account if backed by Firebase Authentication
-                    val firebaseUser = runCatching { Firebase.auth.currentUser }.getOrNull()
-                    if (firebaseUser != null && firebaseUser.uid == currentUserId) {
-                        try {
+                // 4. Delete the Firebase Auth account if backed by Firebase Authentication
+                val firebaseUser = runCatching { Firebase.auth.currentUser }.getOrNull()
+                if (firebaseUser != null && firebaseUser.uid == uid) {
+                    try {
+                        withTimeoutOrNull(6_000L) {
                             firebaseUser.delete().await()
-                        } catch (_: FirebaseAuthRecentLoginRequiredException) {
-                            runCatching {
-                                val clientId = context.getString(R.string.default_web_client_id)
-                                    .takeIf { it.isNotBlank() }
-                                if (clientId != null) {
+                        }
+                    } catch (_: FirebaseAuthRecentLoginRequiredException) {
+                        val activityCtx = context.findHostActivity()
+                        if (activityCtx != null) {
+                            val clientId = runCatching {
+                                appContext.getString(R.string.default_web_client_id).takeIf { it.isNotBlank() }
+                            }.getOrNull()
+                            if (clientId != null) {
+                                runCatching {
                                     val signInOption = GetSignInWithGoogleOption.Builder(serverClientId = clientId).build()
                                     val request = GetCredentialRequest.Builder()
                                         .addCredentialOption(signInOption)
                                         .build()
-                                    val activityCtx = context.findHostActivity() ?: context
-                                    val credResult = credentialManager.getCredential(activityCtx, request)
-                                    val cred = credResult.credential
+                                    val credResult = withContext(Dispatchers.Main) {
+                                        withTimeoutOrNull(20_000L) {
+                                            credentialManager.getCredential(activityCtx, request)
+                                        }
+                                    }
+                                    val cred = credResult?.credential
                                     if (cred is CustomCredential && cred.type == TYPE_GOOGLE_ID_TOKEN_CREDENTIAL) {
                                         val idToken = GoogleIdTokenCredential.createFrom(cred.data).idToken
                                         val authCred = GoogleAuthProvider.getCredential(idToken, null)
-                                        firebaseUser.reauthenticate(authCred).await()
-                                        firebaseUser.delete().await()
+                                        withTimeoutOrNull(6_000L) {
+                                            firebaseUser.reauthenticate(authCred).await()
+                                            firebaseUser.delete().await()
+                                        }
                                     }
                                 }
                             }
-                        } catch (_: Exception) {
-                            // Proceed with sign-out and credential state cleanup even if network auth delete fails
+                        }
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (_: Exception) {
+                        // Proceed cleanly with local wipe and sign-out even if network auth deletion fails
+                    }
+                }
+
+                completedNormally = true
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                _errorMessage.value = e.localizedMessage
+                    ?: "Could not permanently delete account and data. Please try again."
+            } finally {
+                withContext(NonCancellable + Dispatchers.IO) {
+                    // 5. Clear CredentialManager with strict timeout so Play Services IPC never hangs logout
+                    withTimeoutOrNull(1_200L) {
+                        runCatching {
+                            credentialManager.clearCredentialState(ClearCredentialStateRequest())
                         }
                     }
-
-                    // 5. Clear CredentialManager & sign out cleanly
-                    runCatching {
-                        credentialManager.clearCredentialState(ClearCredentialStateRequest())
-                    }
-                    LocalAccountSessionManager.signOut(context)
-                    runCatching { Firebase.auth.signOut() }
-                    _isDeletingAccount.value = false
+                    LocalAccountSessionManager.signOut(appContext)
                     withContext(Dispatchers.Main) {
-                        onAccountDeleted()
+                        runCatching { Firebase.auth.signOut() }
+                        _isDeletingAccount.value = false
+                        deleteAccountJob = null
+                        if (completedNormally) {
+                            onAccountDeleted()
+                        }
                     }
-                } catch (e: Exception) {
-                    _isDeletingAccount.value = false
-                    _errorMessage.value = e.localizedMessage
-                        ?: "Could not permanently delete account and data. Please try again."
                 }
             }
         }

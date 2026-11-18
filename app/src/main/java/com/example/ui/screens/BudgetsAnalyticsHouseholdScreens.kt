@@ -4379,7 +4379,6 @@ fun HouseholdTabScreen(
                             performHaptic()
                             onSignOutClick()
                         },
-                        enabled = !isDeletingAccount,
                         colors = ButtonDefaults.buttonColors(
                             containerColor = MaterialTheme.colorScheme.secondaryContainer,
                             contentColor = MaterialTheme.colorScheme.onSecondaryContainer

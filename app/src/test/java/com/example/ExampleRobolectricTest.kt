@@ -7,6 +7,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
@@ -4843,5 +4844,87 @@ class ExampleRobolectricTest {
         composeTestRule.onNodeWithTag("all_transactions_screen_list")
             .performScrollToNode(hasTestTag("all_transactions_search_input"))
         composeTestRule.onNodeWithTag("all_transactions_search_input").assertIsDisplayed()
+    }
+
+    @Test
+    fun `test delete account completes cleanly without hanging and logout stays enabled`() = kotlinx.coroutines.runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        LocalAccountSessionManager.ensureInitialized(context)
+
+        // 1. Verify Logout button remains enabled even when isDeletingAccount = true
+        var logoutClicked = false
+        composeTestRule.setContent {
+            OneFamilyTheme {
+                HouseholdTabScreen(
+                    uiState = OneFamilyDashboardUiState(isLoading = false),
+                    currentUserName = "Arindam",
+                    currentUserEmail = "arindamzipper@gmail.com",
+                    isDeletingAccount = true,
+                    onSignOutClick = { logoutClicked = true },
+                    onCreateHousehold = { _, _ -> },
+                    onJoinByCode = {},
+                    onInviteByEmail = {},
+                    onAcceptEmailInvite = {}
+                )
+            }
+        }
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("household_tab_list")
+            .performScrollToNode(hasTestTag("sign_out_button"))
+        composeTestRule.onNodeWithTag("sign_out_button").assertIsEnabled().performClick()
+        composeTestRule.waitForIdle()
+        assertTrue("Logout button must remain clickable even while deletion is running", logoutClicked)
+
+        // 2. Verify deleteAllUserDataAndAccount completes, wipes data, clears session, resets isDeletingAccount, and calls callback
+        val user = LocalAccountSessionManager.signInWithUsernamePassword(
+            context = context,
+            rawUsername = "delete_test_user@example.com",
+            rawPassword = "password123"
+        ).getOrThrow()
+
+        LocalAccountDataStore.addExpense(
+            uid = user.uid,
+            userName = user.displayName,
+            household = null,
+            title = "Coffee Shop",
+            amount = 180.0,
+            type = "EXPENSE",
+            category = "Food & Dining",
+            accountName = "HDFC Bank",
+            paymentMode = "UPI",
+            tags = emptyList(),
+            notes = "",
+            isShared = false
+        )
+        assertEquals(1, LocalAccountDataStore.observePersonalExpenses(user.uid).first().size)
+
+        val vm = OneFamilyViewModel(
+            repository = OneFamilyRepository(context),
+            smsInboxReader = SmsInboxReader(context),
+            currentUserId = user.uid,
+            currentUserName = user.displayName,
+            currentUserEmail = user.email
+        )
+        val credentialManager = androidx.credentials.CredentialManager.create(context)
+        val deletedSignal = java.util.concurrent.CountDownLatch(1)
+        vm.deleteAllUserDataAndAccount(
+            context = context,
+            credentialManager = credentialManager,
+            onAccountDeleted = { deletedSignal.countDown() }
+        )
+
+        val deadline = System.currentTimeMillis() + 5_000L
+        while (deletedSignal.count > 0 && System.currentTimeMillis() < deadline) {
+            org.robolectric.shadows.ShadowLooper.idleMainLooper()
+            kotlinx.coroutines.delay(50)
+        }
+        org.robolectric.shadows.ShadowLooper.idleMainLooper()
+
+        assertEquals("onAccountDeleted callback must be invoked promptly", 0L, deletedSignal.count)
+        assertFalse("isDeletingAccount must reset to false after deletion", vm.isDeletingAccount.value)
+        assertNull("Active user session must be cleared after deletion", LocalAccountSessionManager.getCurrentUser(context))
+        assertEquals(0, LocalAccountDataStore.observePersonalExpenses(user.uid).first().size)
+
+        LocalAccountSessionManager.signOut(context)
     }
 }

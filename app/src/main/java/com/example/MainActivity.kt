@@ -252,6 +252,7 @@ fun AppNavigation(
                 onConsumeDeepLinkExpenseId = onConsumeDeepLinkExpenseId,
                 onSignOut = {
                     LocalAccountSessionManager.signOut(context)
+                    runCatching { auth.signOut() }
                     directUser = null
                 }
             )
@@ -876,6 +877,7 @@ fun OneFamilyMainShell(
                                             viewModel.runCrashlyticsStabilityCheck(context)
                                         },
                                         onSignOutClick = {
+                                            viewModel.prepareForSignOut()
                                             signOut(
                                                 context = context,
                                                 credentialManager = credentialManager,

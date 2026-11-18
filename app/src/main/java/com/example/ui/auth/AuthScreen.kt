@@ -111,8 +111,12 @@ import com.google.firebase.Firebase
 import com.google.firebase.auth.GoogleAuthProvider
 import com.google.firebase.auth.auth
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 
 private const val TAG = "OneFamilyAuth"
 
@@ -286,16 +290,21 @@ fun signOut(
     onSignOutComplete: () -> Unit,
     scope: CoroutineScope
 ) {
+    val appContext = context.applicationContext
     scope.launch {
-        kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) {
+        withContext(NonCancellable) {
             try {
-                credentialManager.clearCredentialState(ClearCredentialStateRequest())
+                withTimeoutOrNull(1_200L) {
+                    credentialManager.clearCredentialState(ClearCredentialStateRequest())
+                }
             } catch (e: Exception) {
                 Log.w(TAG, "Failed to clear credential state: ${e.message}")
             } finally {
-                LocalAccountSessionManager.signOut(context)
-                runCatching { Firebase.auth.signOut() }
-                onSignOutComplete()
+                withContext(Dispatchers.Main) {
+                    LocalAccountSessionManager.signOut(appContext)
+                    runCatching { Firebase.auth.signOut() }
+                    onSignOutComplete()
+                }
             }
         }
     }
