@@ -2421,11 +2421,18 @@ object LocalAccountDataStore {
         }
         accountTimestampMap[docKey] = asOfTimestampMillis
 
+        val virtSlug = "virtual_${name.trim().ifBlank { bankName }.lowercase().replace(Regex("[^a-z0-9]+"), "_").trim('_')}"
         val existing = accountsFlow.value.firstOrNull { it.id == docKey }
+        val existingVirtual = if (existing == null && explicitId == null && virtSlug != docKey) {
+            accountsFlow.value.firstOrNull { it.id == virtSlug }
+        } else {
+            null
+        }
+        val baseSource = existing ?: existingVirtual
         val resolvedPeriod = com.example.data.model.AccountLimitPeriod.fromRaw(
-            spendLimitPeriod ?: existing?.spendLimitPeriod
+            spendLimitPeriod ?: baseSource?.spendLimitPeriod
         ).name
-        val resolvedCycleDay = (billingCycleDay ?: existing?.billingCycleDay ?: 1).coerceIn(1, 31)
+        val resolvedCycleDay = (billingCycleDay ?: baseSource?.billingCycleDay ?: 1).coerceIn(1, 31)
 
         val acc = FinancialAccount(
             id = docKey,
@@ -2436,21 +2443,23 @@ object LocalAccountDataStore {
             lastFourDigits = lastFourDigits.trim().take(10),
             balance = balance,
             creditLimit = creditLimit.coerceAtLeast(0.0),
-            linkedBankAccountId = (linkedBankAccountId ?: existing?.linkedBankAccountId ?: "").trim().take(128),
-            linkedBankAccountName = (linkedBankAccountName ?: existing?.linkedBankAccountName ?: "").trim().take(100),
-            monthlySpendLimit = (monthlySpendLimit ?: existing?.monthlySpendLimit ?: 0.0).coerceAtLeast(0.0),
+            linkedBankAccountId = (linkedBankAccountId ?: baseSource?.linkedBankAccountId ?: "").trim().take(128),
+            linkedBankAccountName = (linkedBankAccountName ?: baseSource?.linkedBankAccountName ?: "").trim().take(100),
+            monthlySpendLimit = (monthlySpendLimit ?: baseSource?.monthlySpendLimit ?: 0.0).coerceAtLeast(0.0),
             billingCycleDay = resolvedCycleDay,
             spendLimitPeriod = resolvedPeriod,
-            spendLimitStartMillis = (spendLimitStartMillis ?: existing?.spendLimitStartMillis ?: 0L).coerceAtLeast(0L),
-            spendLimitEndMillis = (spendLimitEndMillis ?: existing?.spendLimitEndMillis ?: 0L).coerceAtLeast(0L),
-            alertThresholdPercent = (alertThresholdPercent?.toLong() ?: existing?.alertThresholdPercent ?: 80L).coerceIn(1L, 100L),
-            isHidden = isHidden ?: existing?.isHidden ?: false,
+            spendLimitStartMillis = (spendLimitStartMillis ?: baseSource?.spendLimitStartMillis ?: 0L).coerceAtLeast(0L),
+            spendLimitEndMillis = (spendLimitEndMillis ?: baseSource?.spendLimitEndMillis ?: 0L).coerceAtLeast(0L),
+            alertThresholdPercent = (alertThresholdPercent?.toLong() ?: baseSource?.alertThresholdPercent ?: 80L).coerceIn(1L, 100L),
+            isHidden = isHidden ?: baseSource?.isHidden ?: false,
             isSharedVisible = isSharedVisible,
-            createdAt = existing?.createdAt ?: Timestamp.now(),
+            createdAt = baseSource?.createdAt ?: Timestamp.now(),
             updatedAt = Timestamp.now()
         )
 
-        val updated = accountsFlow.value.filterNot { it.id == docKey } + acc
+        val updated = accountsFlow.value.filterNot {
+            it.id == docKey || (existingVirtual != null && it.id == existingVirtual.id)
+        } + acc
         accountsFlow.value = updated
         saveAccounts(updated)
         return docKey

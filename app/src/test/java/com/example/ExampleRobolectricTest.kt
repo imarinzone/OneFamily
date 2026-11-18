@@ -1,6 +1,7 @@
 package com.example
 
 import android.content.Context
+import androidx.compose.foundation.layout.requiredWidth
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableDoubleStateOf
 import androidx.compose.runtime.mutableIntStateOf
@@ -8,6 +9,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
+import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
@@ -22,6 +24,9 @@ import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.printToString
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.height
+import androidx.compose.ui.unit.width
 import androidx.test.core.app.ApplicationProvider
 import android.Manifest
 import android.app.Application
@@ -58,6 +63,7 @@ import androidx.compose.ui.test.longClick
 import androidx.compose.ui.test.performTextReplacement
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.swipeRight
+import androidx.compose.ui.test.swipeUp
 import com.example.ui.screens.AccountsTabScreen
 import com.example.ui.screens.AddAccountDialog
 import com.example.ui.screens.AddCustomCategoryDialog
@@ -815,9 +821,9 @@ class ExampleRobolectricTest {
         assertEquals(1499.0, restoredAfterDelete.amount, 0.001)
         assertEquals("sms_sig_undo_delete_1", restoredAfterDelete.smsSignature)
         assertNull(viewModel.lastUndoableAction.value)
-        assertEquals("Restored 'Accidental Swipe Groceries'.", viewModel.statusBanner.value)
+        assertNull("Undoing delete must clear the notification banner cleanly", viewModel.statusBanner.value)
 
-        // 2. Test Unwanted Swipe-Right Link Duplicate & Undo Restoration
+        // 2. Test Link Duplicate & Privacy Toggle execute cleanly WITHOUT emitting update notifications/undo banners
         val duplicateTxId = repo.addExpense(
             userName = user.displayName,
             household = household,
@@ -841,48 +847,36 @@ class ExampleRobolectricTest {
         composeTestRule.waitForIdle()
         shadowOf(Looper.getMainLooper()).idle()
 
-        // Verify duplicate was merged & removed, and undo state is active
+        // Verify duplicate was merged & removed without showing a status/undo banner
         assertNull(
             repo.observeSharedExpenses(household.id, user.uid).first()
                 .firstOrNull { it.id == duplicateTxId }
         )
-        assertNotNull(viewModel.lastUndoableAction.value)
-
-        // Trigger Undo for the unwanted swipe-right link duplicate
-        viewModel.undoLastSwipeAction()
-        composeTestRule.waitForIdle()
-        shadowOf(Looper.getMainLooper()).idle()
-
-        val expensesAfterUnlink = repo.observeSharedExpenses(household.id, user.uid).first()
-        val restoredPrimary = expensesAfterUnlink.firstOrNull { it.id == swipeDeleteTxId }
-        val restoredDuplicate = expensesAfterUnlink.firstOrNull { it.id == duplicateTxId }
-        assertNotNull("Primary transaction should be restored after undoing duplicate link", restoredPrimary)
-        assertNotNull("Duplicate transaction should be restored after undoing duplicate link", restoredDuplicate)
-        assertTrue(restoredPrimary!!.linkedSmsSignatures.isEmpty())
-        assertEquals("Duplicate UPI Alert Groceries", restoredDuplicate!!.title)
         assertNull(viewModel.lastUndoableAction.value)
+        assertNull(viewModel.statusBanner.value)
 
-        // 3. Test Unwanted Privacy Scope Toggle & Undo Restoration
-        viewModel.toggleTransactionPrivacy(restoredPrimary)
+        val linkedPrimary = repo.observeSharedExpenses(household.id, user.uid).first()
+            .firstOrNull { it.id == swipeDeleteTxId }
+        assertNotNull(linkedPrimary)
+        assertTrue(linkedPrimary!!.linkedSmsSignatures.contains("sms_sig_undo_dup_2"))
+
+        // 3. Test Privacy Scope Toggle moves transaction without emitting status banner
+        viewModel.toggleTransactionPrivacy(linkedPrimary)
         composeTestRule.waitForIdle()
         shadowOf(Looper.getMainLooper()).idle()
-        assertNotNull(viewModel.lastUndoableAction.value)
+        assertNull(viewModel.lastUndoableAction.value)
+        assertNull(viewModel.statusBanner.value)
         assertNull(
             repo.observeSharedExpenses(household.id, user.uid).first()
                 .firstOrNull { it.id == swipeDeleteTxId }
         )
-
-        viewModel.undoLastSwipeAction()
-        composeTestRule.waitForIdle()
-        shadowOf(Looper.getMainLooper()).idle()
-        val restoredSharedScope = repo.observeSharedExpenses(household.id, user.uid).first()
+        val personalScopeTx = repo.observePersonalExpenses(user.uid).first()
             .firstOrNull { it.id == swipeDeleteTxId }
-        assertNotNull("Transaction should be restored back to SHARED scope after undoing privacy toggle", restoredSharedScope)
-        assertEquals("SHARED", restoredSharedScope!!.visibility)
+        assertNotNull("Transaction should have moved to PERSONAL scope", personalScopeTx)
+        assertEquals("PERSONAL", personalScopeTx!!.visibility)
 
         // Clean up test transactions
-        repo.deleteExpense(restoredSharedScope)
-        repo.deleteExpense(restoredDuplicate)
+        repo.deleteExpense(personalScopeTx)
         LocalAccountSessionManager.signOut(context)
     }
 
@@ -2025,9 +2019,9 @@ class ExampleRobolectricTest {
         composeTestRule.onNodeWithTag("tx_category_set_budget_groceries").performClick()
         composeTestRule.waitForIdle()
 
-        composeTestRule.onNodeWithTag("inline_category_budget_dialog_input")
+        composeTestRule.onNodeWithTag("inline_category_budget_input")
             .performTextReplacement("12000")
-        composeTestRule.onNodeWithTag("inline_category_budget_dialog_save").performClick()
+        composeTestRule.onNodeWithTag("inline_category_budget_save_button").performClick()
         composeTestRule.waitForIdle()
         assertEquals("Groceries" to 12000.0, savedCategoryAndLimit)
 
@@ -2874,7 +2868,7 @@ class ExampleRobolectricTest {
         composeTestRule.onNodeWithTag("tx_categories_subtab_content").assertIsDisplayed()
         assertTrue(
             "Non-matching category card must be hidden when Groceries is selected",
-            composeTestRule.onAllNodesWithTag("tx_category_card_food_&_dining").fetchSemanticsNodes().isEmpty()
+            composeTestRule.onAllNodesWithTag("tx_category_card_food_dining").fetchSemanticsNodes().isEmpty()
         )
         composeTestRule.onNodeWithTag("all_transactions_screen_list")
             .performScrollToNode(hasTestTag("all_tx_active_category_pill"))
@@ -2896,8 +2890,8 @@ class ExampleRobolectricTest {
         composeTestRule.waitForIdle()
         assertEquals("All", selectedCatFilter)
         composeTestRule.onNodeWithTag("all_transactions_screen_list")
-            .performScrollToNode(hasTestTag("tx_category_card_food_&_dining"))
-        composeTestRule.onNodeWithTag("tx_category_card_food_&_dining").assertIsDisplayed()
+            .performScrollToNode(hasTestTag("tx_category_card_food_dining"))
+        composeTestRule.onNodeWithTag("tx_category_card_food_dining").assertIsDisplayed()
 
         composeTestRule.onNodeWithTag("all_transactions_screen_list")
             .performScrollToNode(hasTestTag("tx_subtab_transactions"))
@@ -4147,7 +4141,7 @@ class ExampleRobolectricTest {
         composeTestRule.onNodeWithTag("tx_categories_subtab_content").assertIsDisplayed()
         assertTrue(
             "Food & Dining category card should be hidden when Travel category is selected",
-            composeTestRule.onAllNodesWithTag("tx_category_card_food_&_dining").fetchSemanticsNodes().isEmpty()
+            composeTestRule.onAllNodesWithTag("tx_category_card_food_dining").fetchSemanticsNodes().isEmpty()
         )
         composeTestRule.onNodeWithTag("all_transactions_screen_list")
             .performScrollToNode(hasTestTag("expense_card_tx_axio_2"))
@@ -4926,5 +4920,640 @@ class ExampleRobolectricTest {
         assertEquals(0, LocalAccountDataStore.observePersonalExpenses(user.uid).first().size)
 
         LocalAccountSessionManager.signOut(context)
+    }
+
+    @Test
+    fun `test income transactions can be excluded from card, dialog, and totals with Excluded filter parity`() = kotlinx.coroutines.runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        LocalAccountSessionManager.ensureInitialized(context)
+
+        // 1. UI card + filter strip test for Income exclusion
+        val now = System.currentTimeMillis()
+        var txList by mutableStateOf(
+            listOf(
+                ExpenseTransaction(
+                    id = "inc_salary_1",
+                    userId = "u1",
+                    userName = "Alex",
+                    title = "Monthly Salary",
+                    amount = 50000.0,
+                    type = "INCOME",
+                    category = "Salary & Income",
+                    accountName = "HDFC Bank",
+                    paymentMode = "BANK",
+                    transactionDateMillis = now,
+                    isExcludedFromExpense = false
+                ),
+                ExpenseTransaction(
+                    id = "inc_reimburse_2",
+                    userId = "u1",
+                    userName = "Alex",
+                    title = "Self Transfer Refund",
+                    amount = 12000.0,
+                    type = "INCOME",
+                    category = "Refunds & Cashback",
+                    accountName = "HDFC Bank",
+                    paymentMode = "UPI",
+                    transactionDateMillis = now - 60_000L,
+                    isExcludedFromExpense = false
+                )
+            )
+        )
+        var selectedTypeFilter by mutableStateOf("All")
+
+        composeTestRule.setContent {
+            val activeIncome = txList.filter { !it.isExcludedFromExpense }.sumOf { it.amount }
+            val excludedSum = txList.filter { it.isExcludedFromExpense }.sumOf { it.amount }
+            val excludedCount = txList.count { it.isExcludedFromExpense }
+            val filtered = txList.filter { tx ->
+                when (selectedTypeFilter) {
+                    "INCOME" -> !tx.isExcludedFromExpense
+                    "EXCLUDED" -> tx.isExcludedFromExpense
+                    "EXPENSE" -> false
+                    else -> true
+                }
+            }
+            val uiState = OneFamilyDashboardUiState(
+                isLoading = false,
+                activeExpenses = txList,
+                allScopedExpenses = txList,
+                filteredExpenses = filtered,
+                selectedTypeFilter = selectedTypeFilter,
+                totalMonthlyIncome = activeIncome,
+                totalMonthlySpent = 0.0,
+                totalMonthlyExcluded = excludedSum,
+                excludedTransactionsCount = excludedCount
+            )
+            OneFamilyTheme {
+                AllTransactionsScreen(
+                    uiState = uiState,
+                    onBackClick = {},
+                    onSelectType = { selectedTypeFilter = it },
+                    onToggleExcludeTransaction = { target ->
+                        txList = txList.map {
+                            if (it.id == target.id) it.copy(isExcludedFromExpense = !it.isExcludedFromExpense) else it
+                        }
+                    }
+                )
+            }
+        }
+        composeTestRule.waitForIdle()
+
+        // Exclude button must be visible on Income cards too
+        composeTestRule.onNodeWithTag("all_transactions_screen_list")
+            .performScrollToNode(hasTestTag("exclude_tx_button_inc_reimburse_2"))
+        composeTestRule.onNodeWithTag("exclude_tx_button_inc_reimburse_2").performClick()
+        composeTestRule.waitForIdle()
+
+        assertTrue(txList.first { it.id == "inc_reimburse_2" }.isExcludedFromExpense)
+        composeTestRule.onNodeWithTag("excluded_tx_badge_inc_reimburse_2", useUnmergedTree = true).assertExists()
+
+        // Income filter hides excluded income while showing active salary
+        composeTestRule.onNodeWithTag("all_transactions_screen_list")
+            .performScrollToNode(hasTestTag("quick_type_filter_chip_income"))
+        composeTestRule.onNodeWithTag("quick_type_filter_chip_income").performClick()
+        composeTestRule.waitForIdle()
+        assertTrue(composeTestRule.onAllNodesWithText("Self Transfer Refund").fetchSemanticsNodes().isEmpty())
+        composeTestRule.onNodeWithText("Monthly Salary").assertIsDisplayed()
+
+        // Excluded filter displays excluded income transaction
+        composeTestRule.onNodeWithTag("all_transactions_screen_list")
+            .performScrollToNode(hasTestTag("quick_excluded_filter_chip"))
+        composeTestRule.onNodeWithTag("quick_excluded_filter_chip").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithText("Self Transfer Refund").assertIsDisplayed()
+        assertTrue(composeTestRule.onAllNodesWithText("Monthly Salary").fetchSemanticsNodes().isEmpty())
+
+        // 2. ViewModel end-to-end verification: excluded income excluded from totalMonthlyIncome
+        val user = LocalAccountSessionManager.signInWithUsernamePassword(
+            context = context,
+            rawUsername = "income_exclude_test@example.com",
+            rawPassword = "password123"
+        ).getOrThrow()
+
+        LocalAccountDataStore.addExpense(
+            uid = user.uid,
+            userName = user.displayName,
+            household = null,
+            title = "Primary Salary",
+            amount = 50000.0,
+            type = "INCOME",
+            category = "Salary & Income",
+            accountName = "HDFC Bank",
+            paymentMode = "BANK",
+            tags = emptyList(),
+            notes = "",
+            isShared = false,
+            isExcludedFromExpense = false
+        )
+        LocalAccountDataStore.addExpense(
+            uid = user.uid,
+            userName = user.displayName,
+            household = null,
+            title = "Friend Repayment",
+            amount = 15000.0,
+            type = "INCOME",
+            category = "Refunds & Cashback",
+            accountName = "HDFC Bank",
+            paymentMode = "UPI",
+            tags = emptyList(),
+            notes = "",
+            isShared = false,
+            isExcludedFromExpense = true
+        )
+
+        val vm = OneFamilyViewModel(
+            repository = OneFamilyRepository(context),
+            smsInboxReader = SmsInboxReader(context),
+            currentUserId = user.uid,
+            currentUserName = user.displayName,
+            currentUserEmail = user.email
+        )
+        val deadline = System.currentTimeMillis() + 5_000L
+        while (vm.uiState.value.activeExpenses.size < 2 && System.currentTimeMillis() < deadline) {
+            org.robolectric.shadows.ShadowLooper.idleMainLooper()
+            kotlinx.coroutines.delay(50)
+        }
+        org.robolectric.shadows.ShadowLooper.idleMainLooper()
+
+        assertEquals(50000.0, vm.uiState.value.totalMonthlyIncome, 0.01)
+        assertEquals(15000.0, vm.uiState.value.totalMonthlyExcluded, 0.01)
+        assertEquals(1, vm.uiState.value.excludedTransactionsCount)
+
+        LocalAccountSessionManager.signOut(context)
+    }
+
+    @Test
+    fun `test AddTransactionDialog with INCOME allows Exclude from Income and persists excluded flag`() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        LocalAccountSessionManager.ensureInitialized(context)
+
+        var savedExcludedResult = false
+        var savedTypeResult = ""
+        composeTestRule.setContent {
+            OneFamilyTheme {
+                AddTransactionDialog(
+                    hasHousehold = false,
+                    defaultShared = false,
+                    accounts = listOf(
+                        FinancialAccount(id = "acc_1", userId = "u1", name = "HDFC Bank", accountType = "BANK")
+                    ),
+                    availableCategories = ExpenseCategories.ALL,
+                    currencySymbol = "₹",
+                    onDismiss = {},
+                    onSaveExcluded = { savedExcludedResult = it },
+                    onSave = { _, _, type, _, _, _, _, _, _, _ -> savedTypeResult = type }
+                )
+            }
+        }
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("receipt_type_chip_income").performScrollTo().performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("transaction_exclude_expense_row").performScrollTo()
+        composeTestRule.onNodeWithText("Exclude from Income").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("transaction_exclude_expense_row").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("add_tx_amount_input").performScrollTo().performTextReplacement("2500")
+        composeTestRule.onNodeWithTag("add_tx_title_input").performScrollTo().performTextReplacement("Reimbursement")
+        composeTestRule.onNodeWithTag("save_transaction_button").performScrollTo().performClick()
+        composeTestRule.waitForIdle()
+
+        assertEquals("INCOME", savedTypeResult)
+        assertTrue("Saving an Income transaction with exclude toggled on must preserve effectiveExcluded = true", savedExcludedResult)
+    }
+
+    @Test
+    fun `test delete-only status banner suppresses add update and limit save notifications`() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        LocalAccountSessionManager.ensureInitialized(context)
+        LocalAccountSessionManager.signOut(context)
+        LocalAccountSessionManager.registerUsernamePassword(context, "banneronlyuser", "pass123", "Banner User")
+        val user = LocalAccountSessionManager.getCurrentUser(context)!!
+        val repo = OneFamilyRepository(context)
+        repo.ensureUserProfile(user.displayName, user.email)
+        val vm = OneFamilyViewModel(
+            repository = repo,
+            smsInboxReader = SmsInboxReader(context),
+            currentUserId = user.uid,
+            currentUserName = user.displayName,
+            currentUserEmail = user.email
+        )
+        composeTestRule.waitForIdle()
+        shadowOf(Looper.getMainLooper()).idle()
+
+        vm.addManualTransaction(
+            title = "Coffee Shop",
+            amount = 240.0,
+            type = "EXPENSE",
+            category = "Food & Dining",
+            accountName = "HDFC Bank",
+            paymentMode = "UPI",
+            tagsInput = "",
+            notes = "",
+            isShared = false,
+            context = context
+        )
+        composeTestRule.waitForIdle()
+        shadowOf(Looper.getMainLooper()).idle()
+        kotlinx.coroutines.delay(100)
+        shadowOf(Looper.getMainLooper()).idle()
+        assertNull("Adding a transaction must NOT show an in-app notification banner", vm.statusBanner.value)
+
+        val addedTx = repo.observePersonalExpenses(user.uid).first().first { it.title == "Coffee Shop" }
+        vm.quickUpdateTransactionCategory(addedTx, "Groceries")
+        composeTestRule.waitForIdle()
+        shadowOf(Looper.getMainLooper()).idle()
+        assertNull("Updating category must NOT show an in-app notification banner", vm.statusBanner.value)
+
+        vm.toggleTransactionExcluded(addedTx)
+        composeTestRule.waitForIdle()
+        shadowOf(Looper.getMainLooper()).idle()
+        assertNull("Toggling exclude must NOT show an in-app notification banner", vm.statusBanner.value)
+
+        vm.updateOverallMonthlyBudget(
+            personalLimit = 15000.0,
+            householdLimit = null,
+            currencySymbol = "₹"
+        )
+        composeTestRule.waitForIdle()
+        shadowOf(Looper.getMainLooper()).idle()
+        assertNull("Saving monthly budget must NOT show an in-app notification banner", vm.statusBanner.value)
+
+        vm.saveFinancialAccount(
+            name = "SBI Credit Card ••4321",
+            bankName = "SBI",
+            accountType = "CREDIT_CARD",
+            lastFourDigits = "4321",
+            balance = 5000.0,
+            creditLimit = 100000.0,
+            isSharedVisible = false,
+            monthlySpendLimit = 40000.0,
+            billingCycleDay = 10,
+            context = context
+        )
+        composeTestRule.waitForIdle()
+        shadowOf(Looper.getMainLooper()).idle()
+        assertNull("Saving credit card and limit must NOT show an in-app notification banner", vm.statusBanner.value)
+
+        vm.deleteTransaction(addedTx)
+        composeTestRule.waitForIdle()
+        shadowOf(Looper.getMainLooper()).idle()
+        kotlinx.coroutines.delay(50)
+        shadowOf(Looper.getMainLooper()).idle()
+        assertEquals("Deleted 'Coffee Shop'.", vm.statusBanner.value)
+        assertNotNull("Deleting transaction must enable undo", vm.lastUndoableAction.value)
+
+        vm.undoLastSwipeAction()
+        composeTestRule.waitForIdle()
+        shadowOf(Looper.getMainLooper()).idle()
+        assertNull("Undoing delete must clear status banner", vm.statusBanner.value)
+        assertNull(vm.lastUndoableAction.value)
+
+        LocalAccountSessionManager.signOut(context)
+    }
+
+    @Test
+    @Config(sdk = [36], qualifiers = "w320dp-h720dp")
+    fun `test AddAccountDialog credit card limit defaults from credit limit when blank and AccountsTabScreen fits 320dp`() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        LocalAccountSessionManager.ensureInitialized(context)
+
+        var savedSpendLimit = 0.0
+        var savedCycleDay = 0
+        var updatedInlineLimit = 0.0
+        var updatedInlineCycleDay = 0
+
+        val sampleCard = FinancialAccount(
+            id = "cc_hdfc_1122",
+            userId = "u_cc",
+            name = "HDFC Regalia Credit Card",
+            bankName = "HDFC",
+            accountType = "CREDIT_CARD",
+            lastFourDigits = "1122",
+            creditLimit = 250000.0,
+            monthlySpendLimit = 0.0,
+            billingCycleDay = 5
+        )
+        var currentSummary by mutableStateOf(
+            AccountSpendSummary(
+                account = sampleCard,
+                section = AccountSectionType.CREDIT_CARD,
+                linkedBankDisplayName = "",
+                spent = 12500.0,
+                income = 0.0,
+                limit = 0.0,
+                alertThresholdPercent = 80,
+                limitSpent = 12500.0,
+                limitPeriodLabel = "Cycle Day 5",
+                transactions = emptyList()
+            )
+        )
+        var showDialog by mutableStateOf(true)
+
+        composeTestRule.setContent {
+            OneFamilyTheme {
+                androidx.compose.foundation.layout.Box(
+                    modifier = androidx.compose.ui.Modifier.requiredWidth(320.dp)
+                ) {
+                    if (showDialog) {
+                        AddAccountDialog(
+                            currencySymbol = "₹",
+                            accounts = emptyList(),
+                            initialAccountType = "CREDIT_CARD",
+                            onDismiss = { showDialog = false },
+                            onSave = { _, _, _, _, _, _, _, _, _ -> },
+                            onSaveWithBillingCycle = { _, _, _, _, _, _, _, _, spLim, cycDay ->
+                                savedSpendLimit = spLim
+                                savedCycleDay = cycDay
+                                showDialog = false
+                            }
+                        )
+                    } else {
+                        AccountsTabScreen(
+                            uiState = OneFamilyDashboardUiState(
+                                isLoading = false,
+                                accountSummaries = listOf(currentSummary),
+                                accounts = listOf(currentSummary.account)
+                            ),
+                            onScopeSelected = {},
+                            onSelectDateRangePreset = {},
+                            onSelectCustomDateRange = { _, _ -> },
+                            onAddAccountClick = {},
+                            onSaveAccountSpendLimitInline = { acc, lim ->
+                                updatedInlineLimit = lim
+                                updatedInlineCycleDay = acc.billingCycleDay
+                            },
+                            onSaveAccountSpendLimitWithBillingCycle = { _, lim, cyc ->
+                                updatedInlineLimit = lim
+                                updatedInlineCycleDay = cyc
+                                currentSummary = currentSummary.copy(
+                                    account = currentSummary.account.copy(monthlySpendLimit = lim, billingCycleDay = cyc),
+                                    limit = lim,
+                                    limitPeriodLabel = "Cycle Day $cyc"
+                                )
+                            },
+                            onAccountClick = {}
+                        )
+                    }
+                }
+            }
+        }
+        composeTestRule.waitForIdle()
+
+        // Leave spend limit blank -> should automatically use Credit Limit (180000)
+        composeTestRule.onNodeWithTag("add_account_name_input").performScrollTo().performTextReplacement("Axis Reserve")
+        composeTestRule.onNodeWithTag("add_account_last_four_input").performScrollTo().performTextReplacement("9001")
+        composeTestRule.onNodeWithTag("add_account_balance_input").performScrollTo().performTextReplacement("5000")
+        composeTestRule.onNodeWithTag("add_account_credit_limit_input").performScrollTo().performTextReplacement("180000")
+        composeTestRule.onNodeWithTag("billing_cycle_calendar_day_18").performScrollTo().performClick()
+        composeTestRule.onNodeWithTag("save_account_button").performScrollTo().performClick()
+        composeTestRule.waitForIdle()
+
+        assertEquals(180000.0, savedSpendLimit, 0.01)
+        assertEquals(18, savedCycleDay)
+
+        // Now test inline limit editing on AccountsTabScreen at narrow 320dp width
+        composeTestRule.onNodeWithTag("accounts_tab_list")
+            .performScrollToNode(hasTestTag("set_account_limit_hdfc_regalia_credit_card"))
+        composeTestRule.onNodeWithTag("set_account_limit_hdfc_regalia_credit_card").performClick()
+        composeTestRule.waitForIdle()
+
+        composeTestRule.onNodeWithTag("accounts_tab_list")
+            .performScrollToNode(hasTestTag("inline_account_limit_input_hdfc_regalia_credit_card"))
+        composeTestRule.onNodeWithTag("inline_account_limit_input_hdfc_regalia_credit_card").performTextReplacement("75000")
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("accounts_tab_list").performTouchInput { swipeUp() }
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("inline_billing_cycle_calendar_hdfc_regalia_credit_card_day_20")
+            .assertIsDisplayed()
+            .performClick()
+        composeTestRule.waitForIdle()
+        assertTrue(
+            "Clicking day 20 should update inline cycle preview to Day 20",
+            composeTestRule.onAllNodesWithText("Day 20", substring = true).fetchSemanticsNodes().isNotEmpty()
+        )
+        composeTestRule.onNodeWithTag("accounts_tab_list").performTouchInput { swipeUp() }
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("inline_save_account_limit_hdfc_regalia_credit_card")
+            .assertIsDisplayed()
+            .performClick()
+        composeTestRule.waitForIdle()
+
+        assertEquals(75000.0, updatedInlineLimit, 0.01)
+        assertEquals(20, updatedInlineCycleDay)
+        composeTestRule.onNodeWithTag("accounts_tab_list")
+            .performScrollToNode(hasTestTag("account_limit_status_hdfc_regalia_credit_card"))
+        composeTestRule.onNodeWithTag("account_limit_status_hdfc_regalia_credit_card").assertIsDisplayed()
+    }
+
+    @Test
+    fun `test transaction card clicks do not filter while merchants and categories tabs filter and icons are at least 48dp`() {
+        var selectedCategory by mutableStateOf("All")
+        var selectedMerchant by mutableStateOf("All")
+        var editedTxId by mutableStateOf<String?>(null)
+
+        val tx1 = ExpenseTransaction(
+            id = "tx1",
+            userId = "u1",
+            userName = "User",
+            title = "Amazon",
+            amount = 1200.0,
+            type = "EXPENSE",
+            category = "Groceries",
+            accountName = "HDFC Card",
+            transactionDateMillis = System.currentTimeMillis()
+        )
+
+        composeTestRule.setContent {
+            OneFamilyTheme {
+                AllTransactionsScreen(
+                    uiState = OneFamilyDashboardUiState(
+                        isLoading = false,
+                        activeExpenses = listOf(tx1),
+                        allScopedExpenses = listOf(tx1),
+                        filteredExpenses = listOf(tx1),
+                        selectedCategoryFilter = selectedCategory,
+                        selectedMerchantFilter = selectedMerchant,
+                        availableCategories = listOf("Groceries", "Food & Dining"),
+                        totalMonthlySpent = 1200.0,
+                        categoryProgressList = listOf(
+                            CategorySpendProgress(
+                                category = "Groceries",
+                                spent = 1200.0,
+                                limit = 5000.0,
+                                alertThresholdPercent = 80,
+                                budgetDoc = null,
+                                memberBreakdown = emptyMap()
+                            )
+                        )
+                    ),
+                    onBackClick = {},
+                    onScopeSelected = {},
+                    onSelectPeriod = {},
+                    onSelectDateRangePreset = {},
+                    onSelectCustomDateRange = { _, _ -> },
+                    onSearchQueryChange = {},
+                    onSelectCategory = { selectedCategory = it },
+                    onSelectType = {},
+                    onSelectPaymentMode = {},
+                    onSelectSortOrder = {},
+                    onSelectMerchant = { selectedMerchant = it },
+                    onClearFilters = {
+                        selectedCategory = "All"
+                        selectedMerchant = "All"
+                    },
+                    onToggleTransactionPrivacy = {},
+                    onToggleExcludeTransaction = {},
+                    onDeleteTransaction = {},
+                    onEditTransaction = { editedTxId = it.id },
+                    onAddTransactionClick = {},
+                    onExportCsvClick = {}
+                )
+            }
+        }
+        composeTestRule.waitForIdle()
+
+        // 1. Verify Exclude & Link buttons have accessible >= 48dp touch bounds
+        composeTestRule.onNodeWithTag("all_transactions_screen_list")
+            .performScrollToNode(hasTestTag("expense_card_tx1"))
+        val excludeBounds = composeTestRule.onNodeWithTag("exclude_tx_button_tx1", useUnmergedTree = true)
+            .getUnclippedBoundsInRoot()
+        val linkBounds = composeTestRule.onNodeWithTag("link_duplicate_button_tx1", useUnmergedTree = true)
+            .getUnclippedBoundsInRoot()
+        assertTrue("Exclude button width must be >= 48dp", excludeBounds.width >= 47.dp)
+        assertTrue("Exclude button height must be >= 48dp", excludeBounds.height >= 47.dp)
+        assertTrue("Link button width must be >= 48dp", linkBounds.width >= 47.dp)
+        assertTrue("Link button height must be >= 48dp", linkBounds.height >= 47.dp)
+
+        // 2. Clicking merchant name, category chip, or category pill on transaction card must NOT filter!
+        composeTestRule.onNodeWithTag("tx_merchant_chip_tx1", useUnmergedTree = true).performClick()
+        composeTestRule.waitForIdle()
+        assertEquals("Clicking merchant name inside transaction card must NOT apply merchant filter", "All", selectedMerchant)
+        assertEquals("tx1", editedTxId)
+
+        editedTxId = null
+        composeTestRule.onNodeWithTag("tx_category_chip_tx1", useUnmergedTree = true).performClick()
+        composeTestRule.waitForIdle()
+        assertEquals("Clicking category chip inside transaction card must NOT apply category filter", "All", selectedCategory)
+        assertEquals("tx1", editedTxId)
+
+        editedTxId = null
+        composeTestRule.onNodeWithTag("category_pill_tx1", useUnmergedTree = true).performClick()
+        composeTestRule.waitForIdle()
+        assertEquals("Tapping category badge inside transaction card opens edit instead of filtering", "All", selectedCategory)
+        assertEquals("tx1", editedTxId)
+
+        // 3. Clicking in Merchants sub-tab DOES filter by merchant
+        composeTestRule.onNodeWithTag("all_transactions_screen_list")
+            .performScrollToNode(hasTestTag("tx_subtab_merchants"))
+        composeTestRule.onNodeWithTag("tx_subtab_merchants").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("all_transactions_screen_list")
+            .performScrollToNode(hasTestTag("tx_merchant_card_amazon"))
+        composeTestRule.onNodeWithTag("tx_merchant_card_amazon").performClick()
+        composeTestRule.waitForIdle()
+        assertEquals("Amazon", selectedMerchant)
+
+        // 4. Clicking in Categories sub-tab DOES filter by category
+        composeTestRule.onNodeWithTag("all_transactions_screen_list")
+            .performScrollToNode(hasTestTag("tx_subtab_categories"))
+        composeTestRule.onNodeWithTag("tx_subtab_categories").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("all_transactions_screen_list")
+            .performScrollToNode(hasTestTag("tx_category_card_groceries"))
+        composeTestRule.onNodeWithTag("tx_category_card_groceries").performClick()
+        composeTestRule.waitForIdle()
+        assertEquals("Groceries", selectedCategory)
+    }
+
+    @Test
+    @Config(sdk = [36], qualifiers = "w320dp-h720dp")
+    fun `test EditTransactionDialog with Household keeps submit buttons visible and unobstructed on 320dp phone`() {
+        var savedTitle = ""
+        var savedAmount = 0.0
+        var savedShared = false
+
+        val sampleTx = ExpenseTransaction(
+            id = "tx_edit_hh_1",
+            userId = "u_hh",
+            userName = "Alex",
+            title = "Weekly Groceries",
+            amount = 1499.0,
+            type = "EXPENSE",
+            category = "Groceries",
+            accountName = "HDFC Bank",
+            paymentMode = "UPI",
+            visibility = "PERSONAL",
+            transactionDateMillis = System.currentTimeMillis()
+        )
+
+        composeTestRule.setContent {
+            OneFamilyTheme {
+                androidx.compose.foundation.layout.Box(
+                    modifier = androidx.compose.ui.Modifier.requiredWidth(320.dp)
+                ) {
+                    com.example.ui.screens.EditTransactionDialog(
+                        transaction = sampleTx,
+                        hasHousehold = true,
+                        accounts = listOf(
+                            FinancialAccount(
+                                id = "acc_hdfc",
+                                userId = "u_hh",
+                                name = "HDFC Bank",
+                                bankName = "HDFC",
+                                accountType = "BANK"
+                            )
+                        ),
+                        availableCategories = listOf("Groceries", "Food & Dining"),
+                        currencySymbol = "₹",
+                        onDismiss = {},
+                        onDelete = {},
+                        onLinkDuplicate = {},
+                        onSave = { title, amount, _, _, _, _, _, _, _, isShared ->
+                            savedTitle = title
+                            savedAmount = amount
+                            savedShared = isShared
+                        }
+                    )
+                }
+            }
+        }
+        composeTestRule.waitForIdle()
+
+        // Both Personal/Household toggle pill and top Save button must be visible and non-overlapping
+        composeTestRule.onNodeWithTag("transaction_shared_switch").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("save_edited_transaction_button").assertIsDisplayed()
+        val switchBounds = composeTestRule.onNodeWithTag("transaction_shared_switch").getUnclippedBoundsInRoot()
+        val topSaveBounds = composeTestRule.onNodeWithTag("save_edited_transaction_button").getUnclippedBoundsInRoot()
+
+        assertTrue("Top Save button must have accessible width", topSaveBounds.width >= 47.dp)
+        assertTrue("Top Save button must have accessible height", topSaveBounds.height >= 47.dp)
+        assertTrue(
+            "Top Save button must fit completely inside 320dp dialog (${topSaveBounds.right})",
+            topSaveBounds.right <= 320.dp
+        )
+        assertTrue(
+            "Personal/Household pill (${switchBounds.top}) must be placed cleanly below Save button (${topSaveBounds.bottom})",
+            switchBounds.top >= topSaveBounds.bottom
+        )
+
+        // Toggle PERSONAL -> HOUSEHOLD, update amount, and submit via top Save icon button
+        composeTestRule.onNodeWithTag("transaction_shared_switch").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithText("HOUSEHOLD").assertIsDisplayed()
+
+        composeTestRule.onNodeWithTag("edit_tx_amount_input").performScrollTo().performTextReplacement("1999")
+        composeTestRule.onNodeWithTag("save_edited_transaction_button").performScrollTo().performClick()
+        composeTestRule.waitForIdle()
+
+        assertEquals(1999.0, savedAmount, 0.01)
+        assertTrue("Transaction should save as Household when toggled to HOUSEHOLD", savedShared)
+
+        // Verify bottom "Save Changes" button is also reachable and submits edits cleanly
+        composeTestRule.onNodeWithTag("edit_tx_title_input").performScrollTo().performTextReplacement("FreshMart Updated")
+        composeTestRule.onNodeWithTag("save_edited_transaction_button_bottom").performScrollTo().performClick()
+        composeTestRule.waitForIdle()
+
+        assertEquals("FreshMart Updated", savedTitle)
     }
 }

@@ -538,7 +538,7 @@ private fun InteractiveReceiptSheet(
                     emoji = customCategoryEmoji
                 )
             }
-            val effectiveExcluded = type == "EXPENSE" && isExcludedFromExpense
+            val effectiveExcluded = isExcludedFromExpense
             onSaveExcluded(effectiveExcluded)
             val resolvedAccount = accountName.trim().ifBlank {
                 selectableAccounts.firstOrNull()?.name ?: "Unassigned Account"
@@ -585,87 +585,44 @@ private fun InteractiveReceiptSheet(
                     ) {
                         ModalSheetDragHandle()
 
-                        // Top Action Row: Receipt Stamp + Squircle Category Emblem + Circular Actions (incl. Save Icon)
+                        // Row 1: Primary Header (Category Emblem + Title + Close/Save always unobstructed on all phone sizes)
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            if (hasHousehold) {
-                                val stampColor = if (isShared) HouseholdBadgeIndigo else PersonalBadgeTeal
-                                Surface(
-                                    shape = RoundedCornerShape(50),
-                                    color = stampColor.copy(alpha = 0.14f),
-                                    modifier = Modifier
-                                        .clip(RoundedCornerShape(50))
-                                        .border(1.5.dp, stampColor, RoundedCornerShape(50))
-                                        .clickable {
-                                            performHaptic()
-                                            isShared = !isShared
-                                        }
-                                        .testTag("transaction_shared_switch")
-                                ) {
-                                    Row(
-                                        modifier = Modifier.padding(
-                                            horizontal = 12.dp,
-                                            vertical = 6.dp
-                                        ),
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        Icon(
-                                            imageVector = if (isShared) Icons.Default.Groups else Icons.Default.Lock,
-                                            contentDescription = null,
-                                            tint = stampColor,
-                                            modifier = Modifier.size(16.dp)
-                                        )
-                                        Spacer(modifier = Modifier.width(6.dp))
-                                        Text(
-                                            text = if (isShared) "HOUSEHOLD" else "PERSONAL",
-                                            style = MaterialTheme.typography.labelSmall,
-                                            fontWeight = FontWeight.Bold,
-                                            color = stampColor
-                                        )
-                                    }
-                                }
-                            } else {
-                                Spacer(modifier = Modifier.width(44.dp))
+                            Row(
+                                modifier = Modifier.weight(1f),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                val activeCatEmoji = customEmojis[category.trim().lowercase()]
+                                SquircleIconBadge(
+                                    icon = categoryIcon(category),
+                                    tint = catAccent,
+                                    containerColor = catAccent.copy(alpha = 0.16f),
+                                    size = 42.dp,
+                                    iconSize = 20.dp,
+                                    emoji = activeCatEmoji,
+                                    contentDescription = category
+                                )
+                                Text(
+                                    text = if (showDeleteButton) "Edit Transaction" else "New Transaction",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.weight(1f)
+                                )
                             }
 
-                            val activeCatEmoji = customEmojis[category.trim().lowercase()]
-                            SquircleIconBadge(
-                                icon = categoryIcon(category),
-                                tint = catAccent,
-                                containerColor = catAccent.copy(alpha = 0.16f),
-                                size = 46.dp,
-                                iconSize = 22.dp,
-                                emoji = activeCatEmoji,
-                                contentDescription = category
-                            )
+                            Spacer(modifier = Modifier.width(8.dp))
 
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
                             ) {
-                                if (onLinkDuplicate != null) {
-                                    CircularTonalIconButton(
-                                        icon = Icons.Default.Link,
-                                        contentDescription = "Link Duplicate SMS / Transaction",
-                                        onClick = onLinkDuplicate,
-                                        containerColor = MaterialTheme.colorScheme.secondaryContainer,
-                                        contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
-                                        modifier = Modifier.testTag("edit_dialog_link_duplicate_button")
-                                    )
-                                }
-                                if (showDeleteButton && onDelete != null) {
-                                    CircularTonalIconButton(
-                                        icon = Icons.Default.DeleteOutline,
-                                        contentDescription = "Delete Receipt",
-                                        onClick = onDelete,
-                                        containerColor = MaterialTheme.colorScheme.errorContainer,
-                                        contentColor = MaterialTheme.colorScheme.onErrorContainer,
-                                        modifier = Modifier.testTag("edit_dialog_delete_button")
-                                    )
-                                }
                                 CircularTonalIconButton(
                                     icon = Icons.Default.Close,
                                     contentDescription = "Close",
@@ -687,6 +644,84 @@ private fun InteractiveReceiptSheet(
                                         contentDescription = "Save Receipt",
                                         modifier = Modifier.size(20.dp)
                                     )
+                                }
+                            }
+                        }
+
+                        // Row 2: Personal/Household Scope Pill & Secondary Tools (Link / Delete) never overlay Save
+                        if (hasHousehold || onLinkDuplicate != null || (showDeleteButton && onDelete != null)) {
+                            Spacer(modifier = Modifier.height(8.dp))
+                            FlowRow(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                if (hasHousehold) {
+                                    val stampColor = if (isShared) HouseholdBadgeIndigo else PersonalBadgeTeal
+                                    Surface(
+                                        shape = RoundedCornerShape(50),
+                                        color = stampColor.copy(alpha = 0.14f),
+                                        modifier = Modifier
+                                            .heightIn(min = 40.dp)
+                                            .clip(RoundedCornerShape(50))
+                                            .border(1.5.dp, stampColor, RoundedCornerShape(50))
+                                            .clickable {
+                                                performHaptic()
+                                                isShared = !isShared
+                                            }
+                                            .testTag("transaction_shared_switch")
+                                    ) {
+                                        Row(
+                                            modifier = Modifier.padding(
+                                                horizontal = 12.dp,
+                                                vertical = 8.dp
+                                            ),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Icon(
+                                                imageVector = if (isShared) Icons.Default.Groups else Icons.Default.Lock,
+                                                contentDescription = null,
+                                                tint = stampColor,
+                                                modifier = Modifier.size(16.dp)
+                                            )
+                                            Spacer(modifier = Modifier.width(6.dp))
+                                            Text(
+                                                text = if (isShared) "HOUSEHOLD" else "PERSONAL",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                fontWeight = FontWeight.Bold,
+                                                color = stampColor,
+                                                maxLines = 1
+                                            )
+                                        }
+                                    }
+                                }
+
+                                if (onLinkDuplicate != null || (showDeleteButton && onDelete != null)) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        if (onLinkDuplicate != null) {
+                                            CircularTonalIconButton(
+                                                icon = Icons.Default.Link,
+                                                contentDescription = "Link Duplicate SMS / Transaction",
+                                                onClick = onLinkDuplicate,
+                                                containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                                                contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+                                                modifier = Modifier.testTag("edit_dialog_link_duplicate_button")
+                                            )
+                                        }
+                                        if (showDeleteButton && onDelete != null) {
+                                            CircularTonalIconButton(
+                                                icon = Icons.Default.DeleteOutline,
+                                                contentDescription = "Delete Receipt",
+                                                onClick = onDelete,
+                                                containerColor = MaterialTheme.colorScheme.errorContainer,
+                                                contentColor = MaterialTheme.colorScheme.onErrorContainer,
+                                                modifier = Modifier.testTag("edit_dialog_delete_button")
+                                            )
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -1252,78 +1287,85 @@ private fun InteractiveReceiptSheet(
                             }
                         }
 
-                        // Exclude from Expenses Toggle Card (when transaction is an Expense)
-                        AnimatedVisibility(visible = type == "EXPENSE") {
-                            Surface(
-                                shape = RoundedCornerShape(18.dp),
-                                color = if (isExcludedFromExpense) {
-                                    MaterialTheme.colorScheme.secondaryContainer
-                                } else {
-                                    MaterialTheme.colorScheme.surfaceContainerHigh
-                                },
+                        // Exclude from Expenses / Income Toggle Card (available for both Expenses and Income)
+                        val isIncomeType = type.equals("INCOME", ignoreCase = true)
+                        Surface(
+                            shape = RoundedCornerShape(18.dp),
+                            color = if (isExcludedFromExpense) {
+                                MaterialTheme.colorScheme.secondaryContainer
+                            } else {
+                                MaterialTheme.colorScheme.surfaceContainerHigh
+                            },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(top = 8.dp)
+                                .clip(RoundedCornerShape(18.dp))
+                                .clickable {
+                                    performHaptic()
+                                    isExcludedFromExpense = !isExcludedFromExpense
+                                }
+                                .testTag("transaction_exclude_expense_row")
+                        ) {
+                            Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .padding(top = 8.dp)
-                                    .clip(RoundedCornerShape(18.dp))
-                                    .clickable {
-                                        performHaptic()
-                                        isExcludedFromExpense = !isExcludedFromExpense
-                                    }
-                                    .testTag("transaction_exclude_expense_row")
+                                    .padding(horizontal = 14.dp, vertical = 10.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
                             ) {
                                 Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(horizontal = 14.dp, vertical = 10.dp),
                                     verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.SpaceBetween
+                                    modifier = Modifier.weight(1f)
                                 ) {
-                                    Row(
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        modifier = Modifier.weight(1f)
-                                    ) {
-                                        Icon(
-                                            imageVector = Icons.Default.MoneyOff,
-                                            contentDescription = null,
-                                            tint = if (isExcludedFromExpense) {
+                                    Icon(
+                                        imageVector = Icons.Default.MoneyOff,
+                                        contentDescription = null,
+                                        tint = if (isExcludedFromExpense) {
+                                            MaterialTheme.colorScheme.onSecondaryContainer
+                                        } else {
+                                            MaterialTheme.colorScheme.onSurfaceVariant
+                                        },
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(10.dp))
+                                    Column {
+                                        Text(
+                                            text = if (isIncomeType) {
+                                                "Exclude from Income"
+                                            } else {
+                                                "Exclude from Expenses"
+                                            },
+                                            style = MaterialTheme.typography.titleSmall,
+                                            fontWeight = FontWeight.Bold,
+                                            color = if (isExcludedFromExpense) {
                                                 MaterialTheme.colorScheme.onSecondaryContainer
                                             } else {
-                                                MaterialTheme.colorScheme.onSurfaceVariant
-                                            },
-                                            modifier = Modifier.size(20.dp)
+                                                MaterialTheme.colorScheme.onSurface
+                                            }
                                         )
-                                        Spacer(modifier = Modifier.width(10.dp))
-                                        Column {
-                                            Text(
-                                                text = "Exclude from Expenses",
-                                                style = MaterialTheme.typography.titleSmall,
-                                                fontWeight = FontWeight.Bold,
-                                                color = if (isExcludedFromExpense) {
-                                                    MaterialTheme.colorScheme.onSecondaryContainer
-                                                } else {
-                                                    MaterialTheme.colorScheme.onSurface
-                                                }
-                                            )
-                                            Text(
-                                                text = "Ignore in monthly spend, budgets & trends",
-                                                style = MaterialTheme.typography.labelSmall,
-                                                color = if (isExcludedFromExpense) {
-                                                    MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.8f)
-                                                } else {
-                                                    MaterialTheme.colorScheme.onSurfaceVariant
-                                                }
-                                            )
-                                        }
+                                        Text(
+                                            text = if (isIncomeType) {
+                                                "Ignore in monthly income & trends"
+                                            } else {
+                                                "Ignore in monthly spend, budgets & trends"
+                                            },
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = if (isExcludedFromExpense) {
+                                                MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.8f)
+                                            } else {
+                                                MaterialTheme.colorScheme.onSurfaceVariant
+                                            }
+                                        )
                                     }
-                                    Switch(
-                                        checked = isExcludedFromExpense,
-                                        onCheckedChange = {
-                                            performHaptic()
-                                            isExcludedFromExpense = it
-                                        },
-                                        modifier = Modifier.testTag("transaction_exclude_expense_switch")
-                                    )
                                 }
+                                Switch(
+                                    checked = isExcludedFromExpense,
+                                    onCheckedChange = {
+                                        performHaptic()
+                                        isExcludedFromExpense = it
+                                    },
+                                    modifier = Modifier.testTag("transaction_exclude_expense_switch")
+                                )
                             }
                         }
 
@@ -1370,6 +1412,34 @@ private fun InteractiveReceiptSheet(
                                     modifier = Modifier.fillMaxWidth()
                                 )
                             }
+                        }
+
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        Button(
+                            onClick = submitReceipt,
+                            shape = RoundedCornerShape(50),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = if (type == "INCOME") BudgetSafeGreen else MaterialTheme.colorScheme.primary
+                            ),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(min = 50.dp)
+                                .testTag("${saveTestTag}_bottom")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Check,
+                                contentDescription = null,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = if (showDeleteButton) "Save Changes" else "Save Transaction",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.Bold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
                         }
                     }
                 }
@@ -2683,7 +2753,7 @@ fun AddCustomCategoryDialog(
                                 color = if (isChosen) accent.copy(alpha = 0.22f) else MaterialTheme.colorScheme.surfaceContainerHighest,
                                 border = if (isChosen) BorderStroke(1.5.dp, accent) else null,
                                 modifier = Modifier
-                                    .size(40.dp)
+                                    .size(48.dp)
                                     .clip(CircleShape)
                                     .clickable {
                                         performHaptic()
@@ -2694,7 +2764,7 @@ fun AddCustomCategoryDialog(
                                 Box(contentAlignment = Alignment.Center) {
                                     Text(
                                         text = presetEmoji,
-                                        fontSize = 18.sp
+                                        fontSize = 20.sp
                                     )
                                 }
                             }
@@ -3272,7 +3342,15 @@ fun AddAccountDialog(
                                 }
                             )
                         },
-                        placeholder = { Text("Leave blank for no spend limit") },
+                        placeholder = {
+                            Text(
+                                if (accountType == "CREDIT_CARD") {
+                                    "Blank = uses Credit Limit (0 = no limit)"
+                                } else {
+                                    "Leave blank for no spend limit"
+                                }
+                            )
+                        },
                         textStyle = MaterialTheme.typography.bodyLarge.copy(
                             fontFamily = ReceiptMonoFontFamily,
                             fontWeight = FontWeight.SemiBold
@@ -3395,7 +3473,8 @@ fun AddAccountDialog(
                                     val credVal = if (accountType == "CREDIT_CARD") creditLimitText.trim().toDoubleOrNull() ?: 0.0 else 0.0
                                     val lnkId = if (accountType == "DEBIT_CARD") selectedLinkedBank?.id.orEmpty() else ""
                                     val lnkName = if (accountType == "DEBIT_CARD") selectedLinkedBank?.name.orEmpty() else ""
-                                    val spendLimVal = spendLimitText.trim().toDoubleOrNull() ?: 0.0
+                                    val spendLimVal = spendLimitText.trim().toDoubleOrNull()
+                                        ?: if (accountType == "CREDIT_CARD" && credVal > 0.0) credVal else 0.0
                                     val cycleDayVal = if (accountType == "CREDIT_CARD") {
                                         (billingCycleDayText.trim().toIntOrNull() ?: 1).coerceIn(1, 31)
                                     } else {

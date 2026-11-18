@@ -1816,26 +1816,35 @@ class OneFamilyRepository(
         val docRef = db.collection("users").document(uid).collection("accounts").document(docKey)
         try {
             val existingSnap = withTimeoutOrNull(3_000L) { docRef.get().await() }
-            val resolvedLinkedId = (linkedBankAccountId ?: existingSnap?.getString("linkedBankAccountId") ?: "")
+            val virtSlug = "virtual_${name.trim().ifBlank { bankName }.lowercase().replace(Regex("[^a-z0-9]+"), "_").trim('_')}"
+            val virtSnap = if (explicitId == null && existingSnap?.exists() != true && virtSlug != docKey) {
+                withTimeoutOrNull(2_000L) {
+                    db.collection("users").document(uid).collection("accounts").document(virtSlug).get().await()
+                }?.takeIf { it.exists() }
+            } else {
+                null
+            }
+            val sourceSnap = if (existingSnap?.exists() == true) existingSnap else virtSnap
+            val resolvedLinkedId = (linkedBankAccountId ?: sourceSnap?.getString("linkedBankAccountId") ?: "")
                 .trim()
                 .take(128)
-            val resolvedLinkedName = (linkedBankAccountName ?: existingSnap?.getString("linkedBankAccountName") ?: "")
+            val resolvedLinkedName = (linkedBankAccountName ?: sourceSnap?.getString("linkedBankAccountName") ?: "")
                 .trim()
                 .take(100)
-            val resolvedSpendLimit = (monthlySpendLimit ?: existingSnap?.getDouble("monthlySpendLimit") ?: 0.0)
+            val resolvedSpendLimit = (monthlySpendLimit ?: sourceSnap?.getDouble("monthlySpendLimit") ?: 0.0)
                 .coerceAtLeast(0.0)
-            val resolvedCycleDay = (billingCycleDay?.toLong() ?: existingSnap?.getLong("billingCycleDay") ?: 1L)
+            val resolvedCycleDay = (billingCycleDay?.toLong() ?: sourceSnap?.getLong("billingCycleDay") ?: 1L)
                 .coerceIn(1L, 31L)
             val resolvedPeriod = com.example.data.model.AccountLimitPeriod.fromRaw(
-                spendLimitPeriod ?: existingSnap?.getString("spendLimitPeriod")
+                spendLimitPeriod ?: sourceSnap?.getString("spendLimitPeriod")
             ).name
-            val resolvedStartMillis = (spendLimitStartMillis ?: existingSnap?.getLong("spendLimitStartMillis") ?: 0L)
+            val resolvedStartMillis = (spendLimitStartMillis ?: sourceSnap?.getLong("spendLimitStartMillis") ?: 0L)
                 .coerceAtLeast(0L)
-            val resolvedEndMillis = (spendLimitEndMillis ?: existingSnap?.getLong("spendLimitEndMillis") ?: 0L)
+            val resolvedEndMillis = (spendLimitEndMillis ?: sourceSnap?.getLong("spendLimitEndMillis") ?: 0L)
                 .coerceAtLeast(0L)
-            val resolvedAlertPct = (alertThresholdPercent?.toLong() ?: existingSnap?.getLong("alertThresholdPercent") ?: 80L)
+            val resolvedAlertPct = (alertThresholdPercent?.toLong() ?: sourceSnap?.getLong("alertThresholdPercent") ?: 80L)
                 .coerceIn(1L, 100L)
-            val resolvedHidden = isHidden ?: existingSnap?.getBoolean("isHidden") ?: false
+            val resolvedHidden = isHidden ?: sourceSnap?.getBoolean("isHidden") ?: false
 
             val payload = hashMapOf<String, Any>(
                 "userId" to uid,
@@ -1855,11 +1864,16 @@ class OneFamilyRepository(
                 "alertThresholdPercent" to resolvedAlertPct,
                 "isHidden" to resolvedHidden,
                 "isSharedVisible" to isSharedVisible,
-                "createdAt" to (existingSnap?.getTimestamp("createdAt") ?: FieldValue.serverTimestamp()),
+                "createdAt" to (sourceSnap?.getTimestamp("createdAt") ?: FieldValue.serverTimestamp()),
                 "updatedAt" to FieldValue.serverTimestamp()
             )
             val setTask = docRef.set(payload)
             withTimeoutOrNull(4_000L) { setTask.await() }
+            if (virtSnap != null && virtSlug != docKey) {
+                withTimeoutOrNull(2_000L) {
+                    db.collection("users").document(uid).collection("accounts").document(virtSlug).delete().await()
+                }
+            }
             docRef.id
         } catch (e: CancellationException) {
             throw e
@@ -1924,19 +1938,20 @@ class OneFamilyRepository(
 
         val docRef = db.collection("users").document(uid).collection("accounts").document(docId)
         try {
-            val existingSnap = docRef.get().await()
-            if (existingSnap.exists()) {
-                docRef.update(
-                    mapOf(
-                        "monthlySpendLimit" to sanitizedLimit,
-                        "billingCycleDay" to sanitizedCycleDay.toLong(),
-                        "spendLimitPeriod" to normalizedPeriod,
-                        "spendLimitStartMillis" to cleanStart,
-                        "spendLimitEndMillis" to cleanEnd,
-                        "alertThresholdPercent" to sanitizedAlert,
-                        "updatedAt" to FieldValue.serverTimestamp()
-                    )
-                ).await()
+            val existingSnap = withTimeoutOrNull(3_000L) { docRef.get().await() }
+            if (existingSnap?.exists() == true) {
+                val mergePayload = mapOf(
+                    "monthlySpendLimit" to sanitizedLimit,
+                    "billingCycleDay" to sanitizedCycleDay.toLong(),
+                    "spendLimitPeriod" to normalizedPeriod,
+                    "spendLimitStartMillis" to cleanStart,
+                    "spendLimitEndMillis" to cleanEnd,
+                    "alertThresholdPercent" to sanitizedAlert,
+                    "updatedAt" to FieldValue.serverTimestamp()
+                )
+                withTimeoutOrNull(4_000L) {
+                    docRef.set(mergePayload, com.google.firebase.firestore.SetOptions.merge()).await()
+                }
             } else {
                 upsertAccount(
                     name = account.name,

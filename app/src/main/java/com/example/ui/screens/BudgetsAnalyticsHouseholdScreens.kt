@@ -13,6 +13,7 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
@@ -22,6 +23,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -100,6 +102,7 @@ import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -230,8 +233,9 @@ private fun buildCategorySubTabItems(uiState: OneFamilyDashboardUiState): List<C
 private fun buildIncomeCategorySubTabItems(uiState: OneFamilyDashboardUiState): List<CategorySubTabItem> {
     return remember(uiState.activeExpenses, uiState.incomeCategoryProgressList) {
         val incomeTxs = uiState.activeExpenses.filter {
-            it.type.equals("INCOME", ignoreCase = true) ||
-                ExpenseCategories.isIncomeCategory(it.category)
+            (it.type.equals("INCOME", ignoreCase = true) ||
+                ExpenseCategories.isIncomeCategory(it.category)) &&
+                !it.isExcludedFromExpense
         }
         val countByCategory = incomeTxs.groupBy {
             ExpenseCategories.normalizeCategory(it.category).lowercase()
@@ -325,7 +329,7 @@ private fun computeFilteredMonthlyBarsForDisplay(
                 val matchesType = when {
                     uiState.selectedTypeFilter == "All" -> true
                     uiState.selectedTypeFilter.equals("EXCLUDED", ignoreCase = true) -> tx.isExcludedFromExpense
-                    uiState.selectedTypeFilter.equals("INCOME", ignoreCase = true) -> isInc
+                    uiState.selectedTypeFilter.equals("INCOME", ignoreCase = true) -> isInc && !tx.isExcludedFromExpense
                     uiState.selectedTypeFilter.equals("EXPENSE", ignoreCase = true) -> !isInc && !tx.isExcludedFromExpense
                     else -> tx.type.equals(uiState.selectedTypeFilter, ignoreCase = true)
                 }
@@ -355,9 +359,17 @@ private fun computeFilteredMonthlyBarsForDisplay(
                         !it.isExcludedFromExpense
                 }.sumOf { it.amount }
             }
-            val incSum = monthTxs.filter {
-                it.type.equals("INCOME", ignoreCase = true) || ExpenseCategories.isIncomeCategory(it.category)
-            }.sumOf { it.amount }
+            val incSum = if (uiState.selectedTypeFilter.equals("EXCLUDED", ignoreCase = true)) {
+                monthTxs.filter {
+                    (it.type.equals("INCOME", ignoreCase = true) || ExpenseCategories.isIncomeCategory(it.category)) &&
+                        it.isExcludedFromExpense
+                }.sumOf { it.amount }
+            } else {
+                monthTxs.filter {
+                    (it.type.equals("INCOME", ignoreCase = true) || ExpenseCategories.isIncomeCategory(it.category)) &&
+                        !it.isExcludedFromExpense
+                }.sumOf { it.amount }
+            }
             bar.copy(expenseTotal = expSum, incomeTotal = incSum)
         }
     } else {
@@ -400,6 +412,7 @@ private fun ActiveDrilldownFilterPillsRow(
                 shape = RoundedCornerShape(50),
                 color = catAccent.copy(alpha = 0.16f),
                 modifier = Modifier
+                    .heightIn(min = 42.dp)
                     .clip(RoundedCornerShape(50))
                     .clickable {
                         performHaptic()
@@ -408,13 +421,13 @@ private fun ActiveDrilldownFilterPillsRow(
                     .testTag(categoryPillTag)
             ) {
                 Row(
-                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 7.dp),
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 9.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     CategoryBadgeGlyph(
                         category = selectedCategory,
                         tint = catAccent,
-                        iconSize = 16.dp,
+                        iconSize = 18.dp,
                         customEmoji = customEmojis[selectedCategory.trim().lowercase()]
                     )
                     Spacer(modifier = Modifier.width(6.dp))
@@ -422,14 +435,16 @@ private fun ActiveDrilldownFilterPillsRow(
                         text = selectedCategory,
                         style = MaterialTheme.typography.labelLarge,
                         fontWeight = FontWeight.Bold,
-                        color = catAccent
+                        color = catAccent,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
                     Spacer(modifier = Modifier.width(6.dp))
                     Icon(
                         imageVector = Icons.Default.Close,
                         contentDescription = "Clear Category Filter",
                         tint = catAccent,
-                        modifier = Modifier.size(16.dp)
+                        modifier = Modifier.size(18.dp)
                     )
                 }
             }
@@ -441,6 +456,7 @@ private fun ActiveDrilldownFilterPillsRow(
                 shape = RoundedCornerShape(50),
                 color = Color(0xFF8AB4F8).copy(alpha = 0.22f),
                 modifier = Modifier
+                    .heightIn(min = 42.dp)
                     .clip(RoundedCornerShape(50))
                     .clickable {
                         performHaptic()
@@ -449,21 +465,22 @@ private fun ActiveDrilldownFilterPillsRow(
                     .testTag(tagPillTag)
             ) {
                 Row(
-                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 7.dp),
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 9.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
                         text = "#$cleanTag",
                         style = MaterialTheme.typography.labelLarge,
                         fontWeight = FontWeight.Bold,
-                        color = Color(0xFF8AB4F8)
+                        color = Color(0xFF8AB4F8),
+                        maxLines = 1
                     )
                     Spacer(modifier = Modifier.width(6.dp))
                     Icon(
                         imageVector = Icons.Default.Close,
                         contentDescription = "Clear Tag Filter",
                         tint = Color(0xFF8AB4F8),
-                        modifier = Modifier.size(16.dp)
+                        modifier = Modifier.size(18.dp)
                     )
                 }
             }
@@ -474,6 +491,7 @@ private fun ActiveDrilldownFilterPillsRow(
                 shape = RoundedCornerShape(50),
                 color = BudgetSafeGreen.copy(alpha = 0.18f),
                 modifier = Modifier
+                    .heightIn(min = 42.dp)
                     .clip(RoundedCornerShape(50))
                     .clickable {
                         performHaptic()
@@ -482,7 +500,7 @@ private fun ActiveDrilldownFilterPillsRow(
                     .testTag(merchantPillTag)
             ) {
                 Row(
-                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 7.dp),
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 9.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
@@ -498,7 +516,7 @@ private fun ActiveDrilldownFilterPillsRow(
                         imageVector = Icons.Default.Close,
                         contentDescription = "Clear Merchant Filter",
                         tint = BudgetSafeGreen,
-                        modifier = Modifier.size(16.dp)
+                        modifier = Modifier.size(18.dp)
                     )
                 }
             }
@@ -828,17 +846,22 @@ fun HomeTabScreen(
                                 Text(
                                     text = "Scroll freely • Tap a month to inspect receipts",
                                     style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis
                                 )
                             }
+                            Spacer(modifier = Modifier.width(8.dp))
                             FilledTonalButton(
                                 onClick = {
                                     performHaptic()
                                     onOpenAllTransactionsPage()
                                 },
                                 shape = RoundedCornerShape(50),
-                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
-                                modifier = Modifier.testTag("view_all_transactions_footer_button")
+                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
+                                modifier = Modifier
+                                    .heightIn(min = 42.dp)
+                                    .testTag("view_all_transactions_footer_button")
                             ) {
                                 Icon(
                                     imageVector = Icons.AutoMirrored.Filled.ReceiptLong,
@@ -849,7 +872,8 @@ fun HomeTabScreen(
                                 Text(
                                     text = "Transactions (${uiState.filteredExpenses.size})",
                                     style = MaterialTheme.typography.labelMedium,
-                                    fontWeight = FontWeight.Bold
+                                    fontWeight = FontWeight.Bold,
+                                    maxLines = 1
                                 )
                             }
                         }
@@ -893,6 +917,7 @@ fun HomeTabScreen(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Row(
+                            modifier = Modifier.weight(1f),
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
@@ -903,11 +928,13 @@ fun HomeTabScreen(
                                 size = 36.dp,
                                 iconSize = 18.dp
                             )
-                            Column {
+                            Column(modifier = Modifier.weight(1f)) {
                                 Text(
                                     text = "Bill Reminders",
                                     style = MaterialTheme.typography.titleMedium,
-                                    fontWeight = FontWeight.Bold
+                                    fontWeight = FontWeight.Bold,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
                                 )
                                 Text(
                                     text = if (totalRemindersCount > 0) {
@@ -916,18 +943,23 @@ fun HomeTabScreen(
                                         "Upcoming bills & credit card cycles"
                                     },
                                     style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis
                                 )
                             }
                         }
+                        Spacer(modifier = Modifier.width(8.dp))
                         FilledTonalButton(
                             onClick = {
                                 performHaptic()
                                 showAddBillReminderDialog = true
                             },
                             shape = RoundedCornerShape(50),
-                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
-                            modifier = Modifier.testTag("home_add_bill_reminder_button")
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
+                            modifier = Modifier
+                                .heightIn(min = 42.dp)
+                                .testTag("home_add_bill_reminder_button")
                         ) {
                             Icon(
                                 imageVector = Icons.Default.Add,
@@ -938,7 +970,8 @@ fun HomeTabScreen(
                             Text(
                                 text = "Add Bill",
                                 style = MaterialTheme.typography.labelMedium,
-                                fontWeight = FontWeight.Bold
+                                fontWeight = FontWeight.Bold,
+                                maxLines = 1
                             )
                         }
                     }
@@ -1114,14 +1147,15 @@ fun HomeTabScreen(
                                                 LocalAccountSessionManager.deleteBillReminder(context, reminder.id)
                                             },
                                             modifier = Modifier
-                                                .size(36.dp)
+                                                .minimumInteractiveComponentSize()
+                                                .size(48.dp)
                                                 .testTag("home_delete_bill_reminder_$safeRemId")
                                         ) {
                                             Icon(
                                                 imageVector = Icons.Default.DeleteOutline,
                                                 contentDescription = "Delete Bill Reminder",
                                                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                                modifier = Modifier.size(18.dp)
+                                                modifier = Modifier.size(20.dp)
                                             )
                                         }
                                     }
@@ -1221,10 +1255,11 @@ fun HomeTabScreen(
                         .padding(dimens.cardPadding),
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    Row(
+                    @OptIn(ExperimentalLayoutApi::class)
+                    FlowRow(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
@@ -1250,11 +1285,13 @@ fun HomeTabScreen(
                                         "No spend or budget limits set yet"
                                     },
                                     style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis
                                 )
                             }
                         }
-                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                             TextButton(
                                 onClick = {
                                     performHaptic()
@@ -1324,21 +1361,24 @@ fun HomeTabScreen(
                                         .padding(horizontal = 14.dp, vertical = 12.dp),
                                     verticalArrangement = Arrangement.spacedBy(6.dp)
                                 ) {
-                                    Row(
+                                    @OptIn(ExperimentalLayoutApi::class)
+                                    FlowRow(
                                         modifier = Modifier.fillMaxWidth(),
                                         horizontalArrangement = Arrangement.SpaceBetween,
-                                        verticalAlignment = Alignment.CenterVertically
+                                        verticalArrangement = Arrangement.spacedBy(4.dp)
                                     ) {
                                         Text(
                                             text = "Overall Monthly Budget",
                                             style = MaterialTheme.typography.titleSmall,
-                                            fontWeight = FontWeight.Bold
+                                            fontWeight = FontWeight.Bold,
+                                            maxLines = 1
                                         )
                                         Text(
                                             text = "${formatCurrency(uiState.totalMonthlySpent, currency)} / ${formatCurrency(uiState.activeMonthlyBudget, currency)} ($pct%)",
                                             style = MaterialTheme.typography.labelMedium.copy(fontFamily = ReceiptMonoFontFamily),
                                             fontWeight = FontWeight.Bold,
-                                            color = barColor
+                                            color = barColor,
+                                            maxLines = 1
                                         )
                                     }
                                     LinearProgressIndicator(
@@ -1384,12 +1424,13 @@ fun HomeTabScreen(
                                         .padding(horizontal = 14.dp, vertical = 12.dp),
                                     verticalArrangement = Arrangement.spacedBy(6.dp)
                                 ) {
-                                    Row(
+                                    @OptIn(ExperimentalLayoutApi::class)
+                                    FlowRow(
                                         modifier = Modifier.fillMaxWidth(),
                                         horizontalArrangement = Arrangement.SpaceBetween,
-                                        verticalAlignment = Alignment.CenterVertically
+                                        verticalArrangement = Arrangement.spacedBy(4.dp)
                                     ) {
-                                        Column(modifier = Modifier.weight(1f)) {
+                                        Column {
                                             Text(
                                                 text = acc.name,
                                                 style = MaterialTheme.typography.titleSmall,
@@ -1405,12 +1446,12 @@ fun HomeTabScreen(
                                                 )
                                             }
                                         }
-                                        Spacer(modifier = Modifier.width(8.dp))
                                         Text(
                                             text = "${formatCurrency(summary.spent, currency)} / ${formatCurrency(summary.limit, currency)} ($pct%)",
                                             style = MaterialTheme.typography.labelMedium.copy(fontFamily = ReceiptMonoFontFamily),
                                             fontWeight = FontWeight.Bold,
-                                            color = barColor
+                                            color = barColor,
+                                            maxLines = 1
                                         )
                                     }
                                     LinearProgressIndicator(
@@ -1455,15 +1496,13 @@ fun HomeTabScreen(
                                         .padding(horizontal = 14.dp, vertical = 12.dp),
                                     verticalArrangement = Arrangement.spacedBy(6.dp)
                                 ) {
-                                    Row(
+                                    @OptIn(ExperimentalLayoutApi::class)
+                                    FlowRow(
                                         modifier = Modifier.fillMaxWidth(),
                                         horizontalArrangement = Arrangement.SpaceBetween,
-                                        verticalAlignment = Alignment.CenterVertically
+                                        verticalArrangement = Arrangement.spacedBy(4.dp)
                                     ) {
-                                        Row(
-                                            verticalAlignment = Alignment.CenterVertically,
-                                            modifier = Modifier.weight(1f)
-                                        ) {
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
                                             CategoryBadgeGlyph(
                                                 category = catItem.category,
                                                 tint = catColor,
@@ -1479,12 +1518,12 @@ fun HomeTabScreen(
                                                 overflow = TextOverflow.Ellipsis
                                             )
                                         }
-                                        Spacer(modifier = Modifier.width(8.dp))
                                         Text(
                                             text = "${formatCurrency(catItem.spent, currency)} / ${formatCurrency(catItem.limit, currency)} ($pct%)",
                                             style = MaterialTheme.typography.labelMedium.copy(fontFamily = ReceiptMonoFontFamily),
                                             fontWeight = FontWeight.Bold,
-                                            color = barColor
+                                            color = barColor,
+                                            maxLines = 1
                                         )
                                     }
                                     LinearProgressIndicator(
@@ -1685,12 +1724,13 @@ fun AllTransactionsScreen(
         // 0. Clean Top Navigation Bar (Back + Bar Chart Toggle + Search/Filter/Export/Add; no duplicate page title or month/year)
         item {
             Column(modifier = Modifier.fillMaxWidth()) {
-                Row(
+                @OptIn(ExperimentalLayoutApi::class)
+                FlowRow(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(horizontal = dimens.horizontalPadding, vertical = 4.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
@@ -1709,6 +1749,7 @@ fun AllTransactionsScreen(
                             shape = RoundedCornerShape(50),
                             color = MaterialTheme.colorScheme.surfaceContainerHigh,
                             modifier = Modifier
+                                .heightIn(min = 42.dp)
                                 .clip(RoundedCornerShape(50))
                                 .clickable {
                                     performHaptic()
@@ -1717,7 +1758,7 @@ fun AllTransactionsScreen(
                                 .testTag("all_transactions_period_dropdown_button")
                         ) {
                             Row(
-                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.spacedBy(4.dp)
                             ) {
@@ -1725,7 +1766,8 @@ fun AllTransactionsScreen(
                                     text = "${uiState.filteredExpenses.size} items",
                                     style = MaterialTheme.typography.labelMedium,
                                     fontWeight = FontWeight.SemiBold,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1
                                 )
                                 Icon(
                                     imageVector = if (monthStripVisible) {
@@ -1735,13 +1777,13 @@ fun AllTransactionsScreen(
                                     },
                                     contentDescription = "Toggle Monthly Spend Bars",
                                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    modifier = Modifier.size(16.dp)
+                                    modifier = Modifier.size(18.dp)
                                 )
                             }
                         }
                     }
 
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         CircularTonalIconButton(
                             icon = Icons.Default.Search,
                             contentDescription = "Search Transactions",
@@ -2150,16 +2192,6 @@ fun AllTransactionsScreen(
                                     onQuickChangeCategory = { onQuickChangeCategory(expense) },
                                     availableCategories = uiState.availableCategories,
                                     onTagClick = { clickedTag -> onSelectTag(clickedTag) },
-                                    onCategoryClick = { clickedCat ->
-                                        val nextCat = if (uiState.selectedCategoryFilter.equals(clickedCat, ignoreCase = true)) {
-                                            "All"
-                                        } else {
-                                            clickedCat
-                                        }
-                                        onSelectCategory(nextCat)
-                                    },
-                                    onMerchantClick = { clickedMerchant -> onSelectMerchant(clickedMerchant) },
-                                    onTypeClick = { clickedType -> onSelectType(clickedType) },
                                     shape = groupedCardShape(index = idx, count = uiState.filteredExpenses.size),
                                     containerColor = MaterialTheme.colorScheme.surfaceContainerLow
                                 )
@@ -2247,16 +2279,6 @@ fun AllTransactionsScreen(
                                     onQuickChangeCategory = { onQuickChangeCategory(expense) },
                                     availableCategories = uiState.availableCategories,
                                     onTagClick = { clickedTag -> onSelectTag(clickedTag) },
-                                    onCategoryClick = { clickedCat -> onSelectCategory(clickedCat) },
-                                    onMerchantClick = { clickedMerchant ->
-                                        val nextMerchant = if (uiState.selectedMerchantFilter.equals(clickedMerchant, ignoreCase = true)) {
-                                            "All"
-                                        } else {
-                                            clickedMerchant
-                                        }
-                                        onSelectMerchant(nextMerchant)
-                                    },
-                                    onTypeClick = { clickedType -> onSelectType(clickedType) },
                                     shape = groupedCardShape(index = idx, count = uiState.filteredExpenses.size),
                                     containerColor = MaterialTheme.colorScheme.surfaceContainerLow
                                 )
@@ -2428,9 +2450,6 @@ fun AllTransactionsScreen(
                                 onQuickChangeCategory = { onQuickChangeCategory(expense) },
                                 availableCategories = uiState.availableCategories,
                                 onTagClick = { clickedTag -> onSelectTag(clickedTag) },
-                                onCategoryClick = { clickedCat -> onSelectCategory(clickedCat) },
-                                onMerchantClick = { clickedMerchant -> onSelectMerchant(clickedMerchant) },
-                                onTypeClick = { clickedType -> onSelectType(clickedType) },
                                 shape = groupedCardShape(index = idx, count = uiState.filteredExpenses.size),
                                 containerColor = MaterialTheme.colorScheme.surfaceContainerLow
                             )
@@ -3566,6 +3585,7 @@ fun HouseholdTabScreen(
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
                         Row(
+                            modifier = Modifier.weight(1f),
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(12.dp)
                         ) {
@@ -3578,9 +3598,12 @@ fun HouseholdTabScreen(
                             Text(
                                 text = "Preferred Currency",
                                 style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.Bold
+                                fontWeight = FontWeight.Bold,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis
                             )
                         }
+                        Spacer(modifier = Modifier.width(8.dp))
 
                         Surface(
                             shape = RoundedCornerShape(50),
@@ -3695,6 +3718,7 @@ fun HouseholdTabScreen(
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
                         Row(
+                            modifier = Modifier.weight(1f),
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(12.dp)
                         ) {
@@ -3704,7 +3728,7 @@ fun HouseholdTabScreen(
                                 containerColor = MaterialTheme.colorScheme.primaryContainer,
                                 contentDescription = "Notifications"
                             )
-                            Column {
+                            Column(modifier = Modifier.weight(1f)) {
                                 Text(
                                     text = "Notifications",
                                     style = MaterialTheme.typography.titleMedium,
@@ -3713,7 +3737,9 @@ fun HouseholdTabScreen(
                                 Text(
                                     text = "Alerts, custom summary timings & push sync",
                                     style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis
                                 )
                             }
                         }
@@ -3803,103 +3829,126 @@ fun HouseholdTabScreen(
                                         .padding(start = 6.dp, end = 4.dp, bottom = 4.dp)
                                         .testTag("notif_category_timing_panel_$subTag")
                                 ) {
-                                    Column(
+                                    BoxWithConstraints(
                                         modifier = Modifier
                                             .fillMaxWidth()
-                                            .padding(horizontal = 12.dp, vertical = 10.dp),
-                                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                                            .padding(horizontal = 12.dp, vertical = 10.dp)
                                     ) {
-                                        Row(
-                                            modifier = Modifier.fillMaxWidth(),
-                                            horizontalArrangement = Arrangement.spacedBy(6.dp),
-                                            verticalAlignment = Alignment.CenterVertically
-                                        ) {
-                                            Icon(
-                                                imageVector = Icons.Default.Schedule,
-                                                contentDescription = "Scheduled notification time",
-                                                tint = MaterialTheme.colorScheme.primary,
-                                                modifier = Modifier.size(16.dp)
-                                            )
-                                            Text(
-                                                text = "Scheduled Time:",
-                                                style = MaterialTheme.typography.labelMedium,
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                                            )
-                                            Surface(
-                                                shape = RoundedCornerShape(50),
-                                                color = MaterialTheme.colorScheme.primaryContainer
-                                            ) {
-                                                Text(
-                                                    text = fcmPushSettings.formatSummaryTime(subCategory),
-                                                    style = MaterialTheme.typography.labelSmall.copy(
-                                                        fontFamily = ReceiptMonoFontFamily
-                                                    ),
-                                                    fontWeight = FontWeight.Bold,
-                                                    color = MaterialTheme.colorScheme.onPrimaryContainer,
-                                                    modifier = Modifier
-                                                        .padding(horizontal = 8.dp, vertical = 3.dp)
-                                                        .testTag("notif_category_time_value_$subTag")
+                                        val isCompactWidth = maxWidth < 300.dp
+                                        val commitTimeSave = {
+                                            performHaptic()
+                                            val hr = (customHourInput.toIntOrNull() ?: curHour).coerceIn(0, 23)
+                                            val min = (customMinuteInput.toIntOrNull() ?: curMinute).coerceIn(0, 59)
+                                            LocalAccountSessionManager.updateFcmPushSettings(
+                                                context = context,
+                                                newSettings = fcmPushSettings.withSummaryTime(
+                                                    subCategory = subCategory,
+                                                    hour = hr,
+                                                    minute = min
                                                 )
-                                            }
+                                            )
                                         }
-
-                                        Row(
+                                        Column(
                                             modifier = Modifier.fillMaxWidth(),
-                                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                            verticalAlignment = Alignment.CenterVertically
+                                            verticalArrangement = Arrangement.spacedBy(8.dp)
                                         ) {
-                                            OutlinedTextField(
-                                                value = customHourInput,
-                                                onValueChange = { raw: String ->
-                                                    val digits = raw.filter { it.isDigit() }.take(2)
-                                                    val num = digits.toIntOrNull()
-                                                    if (digits.isEmpty() || (num != null && num in 0..23)) {
-                                                        customHourInput = digits
-                                                    }
-                                                },
-                                                label = { Text("Hour (0–23)") },
-                                                singleLine = true,
-                                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                                                shape = RoundedCornerShape(12.dp),
-                                                modifier = Modifier
-                                                    .weight(1f)
-                                                    .testTag("notif_category_hour_input_$subTag")
-                                            )
-                                            OutlinedTextField(
-                                                value = customMinuteInput,
-                                                onValueChange = { raw: String ->
-                                                    val digits = raw.filter { it.isDigit() }.take(2)
-                                                    val num = digits.toIntOrNull()
-                                                    if (digits.isEmpty() || (num != null && num in 0..59)) {
-                                                        customMinuteInput = digits
-                                                    }
-                                                },
-                                                label = { Text("Min (0–59)") },
-                                                singleLine = true,
-                                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                                                shape = RoundedCornerShape(12.dp),
-                                                modifier = Modifier
-                                                    .weight(1f)
-                                                    .testTag("notif_category_minute_input_$subTag")
-                                            )
-                                            Button(
-                                                onClick = {
-                                                    performHaptic()
-                                                    val hr = (customHourInput.toIntOrNull() ?: curHour).coerceIn(0, 23)
-                                                    val min = (customMinuteInput.toIntOrNull() ?: curMinute).coerceIn(0, 59)
-                                                    LocalAccountSessionManager.updateFcmPushSettings(
-                                                        context = context,
-                                                        newSettings = fcmPushSettings.withSummaryTime(
-                                                            subCategory = subCategory,
-                                                            hour = hr,
-                                                            minute = min
-                                                        )
-                                                    )
-                                                },
-                                                shape = RoundedCornerShape(12.dp),
-                                                modifier = Modifier.testTag("notif_category_save_time_button_$subTag")
+                                            @OptIn(ExperimentalLayoutApi::class)
+                                            FlowRow(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                                verticalArrangement = Arrangement.spacedBy(4.dp)
                                             ) {
-                                                Text("Save")
+                                                Icon(
+                                                    imageVector = Icons.Default.Schedule,
+                                                    contentDescription = "Scheduled notification time",
+                                                    tint = MaterialTheme.colorScheme.primary,
+                                                    modifier = Modifier.size(16.dp)
+                                                )
+                                                Text(
+                                                    text = "Scheduled Time:",
+                                                    style = MaterialTheme.typography.labelMedium,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                )
+                                                Surface(
+                                                    shape = RoundedCornerShape(50),
+                                                    color = MaterialTheme.colorScheme.primaryContainer
+                                                ) {
+                                                    Text(
+                                                        text = fcmPushSettings.formatSummaryTime(subCategory),
+                                                        style = MaterialTheme.typography.labelSmall.copy(
+                                                            fontFamily = ReceiptMonoFontFamily
+                                                        ),
+                                                        fontWeight = FontWeight.Bold,
+                                                        color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                                        modifier = Modifier
+                                                            .padding(horizontal = 8.dp, vertical = 3.dp)
+                                                            .testTag("notif_category_time_value_$subTag")
+                                                    )
+                                                }
+                                            }
+
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                OutlinedTextField(
+                                                    value = customHourInput,
+                                                    onValueChange = { raw: String ->
+                                                        val digits = raw.filter { it.isDigit() }.take(2)
+                                                        val num = digits.toIntOrNull()
+                                                        if (digits.isEmpty() || (num != null && num in 0..23)) {
+                                                            customHourInput = digits
+                                                        }
+                                                    },
+                                                    label = { Text("Hour", maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                                                    singleLine = true,
+                                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                                    shape = RoundedCornerShape(12.dp),
+                                                    modifier = Modifier
+                                                        .weight(1f)
+                                                        .testTag("notif_category_hour_input_$subTag")
+                                                )
+                                                OutlinedTextField(
+                                                    value = customMinuteInput,
+                                                    onValueChange = { raw: String ->
+                                                        val digits = raw.filter { it.isDigit() }.take(2)
+                                                        val num = digits.toIntOrNull()
+                                                        if (digits.isEmpty() || (num != null && num in 0..59)) {
+                                                            customMinuteInput = digits
+                                                        }
+                                                    },
+                                                    label = { Text("Min", maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                                                    singleLine = true,
+                                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                                    shape = RoundedCornerShape(12.dp),
+                                                    modifier = Modifier
+                                                        .weight(1f)
+                                                        .testTag("notif_category_minute_input_$subTag")
+                                                )
+                                                if (!isCompactWidth) {
+                                                    Button(
+                                                        onClick = commitTimeSave,
+                                                        shape = RoundedCornerShape(12.dp),
+                                                        modifier = Modifier
+                                                            .heightIn(min = 48.dp)
+                                                            .testTag("notif_category_save_time_button_$subTag")
+                                                    ) {
+                                                        Text("Save", maxLines = 1)
+                                                    }
+                                                }
+                                            }
+                                            if (isCompactWidth) {
+                                                Button(
+                                                    onClick = commitTimeSave,
+                                                    shape = RoundedCornerShape(12.dp),
+                                                    modifier = Modifier
+                                                        .fillMaxWidth()
+                                                        .heightIn(min = 48.dp)
+                                                        .testTag("notif_category_save_time_button_$subTag")
+                                                ) {
+                                                    Text("Save Time", maxLines = 1)
+                                                }
                                             }
                                         }
                                     }

@@ -7,6 +7,8 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -76,6 +78,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.example.data.model.AccountSectionType
@@ -230,7 +233,7 @@ fun AccountDetailScreen(
     val filteredPeriodTransactions = remember(periodTransactions, selectedTypeFilter) {
         when (selectedTypeFilter.uppercase()) {
             "EXPENSE" -> periodTransactions.filter { !isIncomeTx(it) && !it.isExcludedFromExpense }
-            "INCOME" -> periodTransactions.filter { isIncomeTx(it) }
+            "INCOME" -> periodTransactions.filter { isIncomeTx(it) && !it.isExcludedFromExpense }
             "EXCLUDED" -> periodTransactions.filter { it.isExcludedFromExpense }
             else -> periodTransactions
         }
@@ -240,7 +243,7 @@ fun AccountDetailScreen(
         periodTransactions.filter { !isIncomeTx(it) && !it.isExcludedFromExpense }.sumOf { it.amount }
     }
     val periodIncome = remember(periodTransactions) {
-        periodTransactions.filter { isIncomeTx(it) }.sumOf { it.amount }
+        periodTransactions.filter { isIncomeTx(it) && !it.isExcludedFromExpense }.sumOf { it.amount }
     }
     val excludedCount = remember(periodTransactions) {
         periodTransactions.count { it.isExcludedFromExpense }
@@ -301,7 +304,7 @@ fun AccountDetailScreen(
                         referenceMillis = referenceMillis
                     ),
                     spent = txsInPeriod.filter { !isIncomeTx(it) && !it.isExcludedFromExpense }.sumOf { it.amount },
-                    income = txsInPeriod.filter { isIncomeTx(it) }.sumOf { it.amount },
+                    income = txsInPeriod.filter { isIncomeTx(it) && !it.isExcludedFromExpense }.sumOf { it.amount },
                     isSelected = off == selectedCycleOffset,
                     onClick = { selectedCycleOffset = off }
                 )
@@ -317,7 +320,7 @@ fun AccountDetailScreen(
                     key = "month_${ym.year}_${ym.month}",
                     label = ym.formatShortMonth(),
                     spent = txsInPeriod.filter { !isIncomeTx(it) && !it.isExcludedFromExpense }.sumOf { it.amount },
-                    income = txsInPeriod.filter { isIncomeTx(it) }.sumOf { it.amount },
+                    income = txsInPeriod.filter { isIncomeTx(it) && !it.isExcludedFromExpense }.sumOf { it.amount },
                     isSelected = off == selectedMonthOffset,
                     onClick = { selectedMonthOffset = off }
                 )
@@ -587,8 +590,11 @@ fun AccountDetailScreen(
                         )
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
-                            text = "Billing Cycle Date: Day ${account.billingCycleDay} (Tap Calendar to Change)",
-                            fontWeight = FontWeight.SemiBold
+                            text = "Cycle Date: Day ${account.billingCycleDay} • Change",
+                            fontWeight = FontWeight.SemiBold,
+                            textAlign = TextAlign.Center,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis
                         )
                     }
                 }
@@ -619,7 +625,7 @@ fun AccountDetailScreen(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Column {
+                        Column(modifier = Modifier.weight(1f)) {
                             Text(
                                 text = "Account Spend Graph",
                                 style = MaterialTheme.typography.titleMedium,
@@ -632,9 +638,12 @@ fun AccountDetailScreen(
                                     "Last 6 months • tap bar to switch"
                                 },
                                 style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis
                             )
                         }
+                        Spacer(modifier = Modifier.width(8.dp))
                         FilledTonalButton(
                             onClick = {
                                 performHaptic()
@@ -844,20 +853,22 @@ fun AccountDetailScreen(
                         } else {
                             ""
                         }
-                        Row(
+                        @OptIn(ExperimentalLayoutApi::class)
+                        FlowRow(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .testTag("account_detail_limit_status"),
-                            horizontalArrangement = Arrangement.SpaceBetween
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalArrangement = Arrangement.spacedBy(4.dp)
                         ) {
                             Text(
                                 text = "$pct% of ${formatCurrency(summary.limit, currencySymbol)} limit$limitScopeSuffix",
                                 style = MaterialTheme.typography.labelSmall.copy(fontFamily = ReceiptMonoFontFamily),
                                 color = barColor,
                                 fontWeight = FontWeight.SemiBold,
-                                modifier = Modifier.weight(1f)
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis
                             )
-                            Spacer(modifier = Modifier.width(8.dp))
                             Text(
                                 text = if (diff >= 0.0) {
                                     "${formatCurrency(diff, currencySymbol)} left"
@@ -866,7 +877,8 @@ fun AccountDetailScreen(
                                 },
                                 style = MaterialTheme.typography.labelSmall.copy(fontFamily = ReceiptMonoFontFamily),
                                 color = if (diff >= 0.0) MaterialTheme.colorScheme.onSurfaceVariant else barColor,
-                                fontWeight = FontWeight.Medium
+                                fontWeight = FontWeight.Medium,
+                                maxLines = 1
                             )
                         }
                     }

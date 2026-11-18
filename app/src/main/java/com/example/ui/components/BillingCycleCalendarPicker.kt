@@ -39,6 +39,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.example.ui.theme.ReceiptMonoFontFamily
 import com.example.ui.theme.rememberAppHapticPerformer
@@ -101,6 +102,7 @@ fun BillingCycleCalendarGrid(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Row(
+                    modifier = Modifier.weight(1f),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
@@ -110,20 +112,25 @@ fun BillingCycleCalendarGrid(
                         tint = MaterialTheme.colorScheme.primary,
                         modifier = Modifier.size(18.dp)
                     )
-                    Column {
+                    Column(modifier = Modifier.weight(1f)) {
                         Text(
                             text = "Select Billing Cycle Start Date",
                             style = MaterialTheme.typography.labelLarge,
                             fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onSurface
+                            color = MaterialTheme.colorScheme.onSurface,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis
                         )
                         Text(
                             text = "$monthTitle • Days 1–31",
                             style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
                         )
                     }
                 }
+                Spacer(modifier = Modifier.width(8.dp))
                 Surface(
                     shape = RoundedCornerShape(50),
                     color = MaterialTheme.colorScheme.primaryContainer,
@@ -134,6 +141,7 @@ fun BillingCycleCalendarGrid(
                         style = MaterialTheme.typography.labelMedium.copy(fontFamily = ReceiptMonoFontFamily),
                         fontWeight = FontWeight.Bold,
                         color = MaterialTheme.colorScheme.onPrimaryContainer,
+                        maxLines = 1,
                         modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
                     )
                 }
@@ -175,13 +183,18 @@ fun BillingCycleCalendarGrid(
                                 Box(
                                     modifier = Modifier
                                         .weight(1f)
-                                        .height(34.dp)
-                                        .padding(1.dp),
+                                        .height(46.dp)
+                                        .clip(RoundedCornerShape(12.dp))
+                                        .clickable {
+                                            performHaptic()
+                                            onSelectDay(dayNumber)
+                                        }
+                                        .testTag("${tagPrefix}_day_$dayNumber"),
                                     contentAlignment = Alignment.Center
                                 ) {
                                     Box(
                                         modifier = Modifier
-                                            .size(32.dp)
+                                            .size(34.dp)
                                             .clip(CircleShape)
                                             .background(
                                                 when {
@@ -200,12 +213,7 @@ fun BillingCycleCalendarGrid(
                                                 } else {
                                                     Modifier
                                                 }
-                                            )
-                                            .clickable {
-                                                performHaptic()
-                                                onSelectDay(dayNumber)
-                                            }
-                                            .testTag("${tagPrefix}_day_$dayNumber"),
+                                            ),
                                         contentAlignment = Alignment.Center
                                     ) {
                                         Text(
@@ -226,7 +234,7 @@ fun BillingCycleCalendarGrid(
                                 Spacer(
                                     modifier = Modifier
                                         .weight(1f)
-                                        .height(34.dp)
+                                        .height(46.dp)
                                 )
                             }
                         }

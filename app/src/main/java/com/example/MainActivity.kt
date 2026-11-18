@@ -1347,7 +1347,7 @@ private fun ContextualFloatingStatusPill(
                             onDismiss()
                         },
                         modifier = Modifier
-                            .size(36.dp)
+                            .size(48.dp)
                             .testTag("dismiss_banner_button")
                     ) {
                         Icon(
@@ -1358,7 +1358,7 @@ private fun ContextualFloatingStatusPill(
                             } else {
                                 MaterialTheme.colorScheme.onTertiaryContainer
                             },
-                            modifier = Modifier.size(18.dp)
+                            modifier = Modifier.size(20.dp)
                         )
                     }
                 }

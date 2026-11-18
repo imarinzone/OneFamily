@@ -25,6 +25,8 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
@@ -32,6 +34,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -238,7 +241,7 @@ fun CircularTonalIconButton(
         },
         modifier = modifier
             .minimumInteractiveComponentSize()
-            .size(44.dp),
+            .size(48.dp),
         shape = CircleShape,
         color = containerColor,
         contentColor = contentColor
@@ -247,7 +250,7 @@ fun CircularTonalIconButton(
             Icon(
                 imageVector = icon,
                 contentDescription = contentDescription,
-                modifier = Modifier.size(20.dp)
+                modifier = Modifier.size(22.dp)
             )
         }
     }
@@ -1031,18 +1034,19 @@ fun MonthPeriodSelectorBar(
                     Row(
                         modifier = Modifier
                             .weight(1f)
+                            .heightIn(min = 48.dp)
                             .clip(RoundedCornerShape(18.dp))
                             .clickable {
                                 performHaptic()
                                 onStepMonth(-1)
                             }
-                            .padding(horizontal = 6.dp, vertical = 6.dp)
+                            .padding(horizontal = 4.dp, vertical = 6.dp)
                             .testTag("prev_month_button"),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Box(
                             modifier = Modifier
-                                .size(30.dp)
+                                .size(34.dp)
                                 .clip(CircleShape)
                                 .background(MaterialTheme.colorScheme.surfaceContainerHigh),
                             contentAlignment = Alignment.Center
@@ -1051,7 +1055,7 @@ fun MonthPeriodSelectorBar(
                                 imageVector = Icons.AutoMirrored.Filled.KeyboardArrowLeft,
                                 contentDescription = "Previous Month",
                                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.size(18.dp)
+                                modifier = Modifier.size(20.dp)
                             )
                         }
                         Spacer(modifier = Modifier.width(6.dp))
@@ -1085,14 +1089,16 @@ fun MonthPeriodSelectorBar(
                                     text = p.year.toString(),
                                     style = MaterialTheme.typography.labelSmall.copy(fontFamily = ReceiptMonoFontFamily),
                                     color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.72f),
-                                    maxLines = 1
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
                                 )
                                 Text(
                                     text = p.formatShortMonth(),
                                     style = MaterialTheme.typography.labelLarge,
                                     fontWeight = FontWeight.SemiBold,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    maxLines = 1
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
                                 )
                             }
                         }
@@ -1103,6 +1109,7 @@ fun MonthPeriodSelectorBar(
                         shape = RoundedCornerShape(20.dp),
                         color = MaterialTheme.colorScheme.primaryContainer,
                         modifier = Modifier
+                            .heightIn(min = 48.dp)
                             .clip(RoundedCornerShape(20.dp))
                             .clickable {
                                 performHaptic()
@@ -1132,7 +1139,7 @@ fun MonthPeriodSelectorBar(
                             },
                             modifier = Modifier
                                 .clipToBounds()
-                                .padding(horizontal = 18.dp, vertical = 6.dp)
+                                .padding(horizontal = 14.dp, vertical = 6.dp)
                                 .offset { IntOffset((animatedDragOffset * 0.35f).roundToInt(), 0) },
                             label = "center_month_text_only_anim"
                         ) { (_, yearTxt, monthTxt) ->
@@ -1144,14 +1151,16 @@ fun MonthPeriodSelectorBar(
                                     style = MaterialTheme.typography.labelSmall.copy(fontFamily = ReceiptMonoFontFamily),
                                     fontWeight = FontWeight.Bold,
                                     color = MaterialTheme.colorScheme.primary,
-                                    maxLines = 1
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
                                 )
                                 Text(
                                     text = monthTxt,
                                     style = MaterialTheme.typography.titleMedium,
                                     fontWeight = FontWeight.Bold,
                                     color = MaterialTheme.colorScheme.onPrimaryContainer,
-                                    maxLines = 1
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
                                 )
                             }
                         }
@@ -1161,12 +1170,13 @@ fun MonthPeriodSelectorBar(
                     Row(
                         modifier = Modifier
                             .weight(1f)
+                            .heightIn(min = 48.dp)
                             .clip(RoundedCornerShape(18.dp))
                             .clickable {
                                 performHaptic()
                                 onStepMonth(1)
                             }
-                            .padding(horizontal = 6.dp, vertical = 6.dp)
+                            .padding(horizontal = 4.dp, vertical = 6.dp)
                             .testTag("next_month_button"),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.End
@@ -1201,21 +1211,23 @@ fun MonthPeriodSelectorBar(
                                     text = p.year.toString(),
                                     style = MaterialTheme.typography.labelSmall.copy(fontFamily = ReceiptMonoFontFamily),
                                     color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.72f),
-                                    maxLines = 1
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
                                 )
                                 Text(
                                     text = p.formatShortMonth(),
                                     style = MaterialTheme.typography.labelLarge,
                                     fontWeight = FontWeight.SemiBold,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    maxLines = 1
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
                                 )
                             }
                         }
                         Spacer(modifier = Modifier.width(6.dp))
                         Box(
                             modifier = Modifier
-                                .size(30.dp)
+                                .size(34.dp)
                                 .clip(CircleShape)
                                 .background(MaterialTheme.colorScheme.surfaceContainerHigh),
                             contentAlignment = Alignment.Center
@@ -1224,7 +1236,7 @@ fun MonthPeriodSelectorBar(
                                 imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
                                 contentDescription = "Next Month",
                                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.size(18.dp)
+                                modifier = Modifier.size(20.dp)
                             )
                         }
                     }
@@ -1415,14 +1427,15 @@ fun MonthlyBudgetPulseCard(
                         onEditBudgetClick()
                     },
                     modifier = Modifier
-                        .size(36.dp)
+                        .minimumInteractiveComponentSize()
+                        .size(48.dp)
                         .testTag("edit_monthly_budget_button")
                 ) {
                     Icon(
                         imageVector = Icons.Default.Edit,
                         contentDescription = "Manage Budgets",
                         tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(18.dp)
+                        modifier = Modifier.size(22.dp)
                     )
                 }
             }
@@ -1447,10 +1460,13 @@ fun MonthlyBudgetPulseCard(
                         Text(
                             text = "of ${formatCurrency(monthlyBudget, currencySymbol)} envelope",
                             style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
                         )
                     }
                 }
+                Spacer(modifier = Modifier.width(8.dp))
 
                 if (hasAssignedBudget) {
                     Box(
@@ -1614,12 +1630,13 @@ fun MonthlyBarGraph(
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
         if (hasOverallBudget) {
-            Row(
+            @OptIn(ExperimentalLayoutApi::class)
+            FlowRow(
                 modifier = Modifier
                     .fillMaxWidth()
                     .testTag("overall_budget_trend_header"),
                 horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
+                verticalArrangement = Arrangement.spacedBy(6.dp)
             ) {
                 Surface(
                     shape = RoundedCornerShape(50),
@@ -1630,6 +1647,7 @@ fun MonthlyBarGraph(
                         style = MaterialTheme.typography.labelSmall.copy(fontFamily = ReceiptMonoFontFamily),
                         fontWeight = FontWeight.SemiBold,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
                         modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
                     )
                 }
@@ -1650,6 +1668,7 @@ fun MonthlyBarGraph(
                         style = MaterialTheme.typography.labelSmall.copy(fontFamily = ReceiptMonoFontFamily),
                         fontWeight = FontWeight.Bold,
                         color = badgeColor,
+                        maxLines = 1,
                         modifier = Modifier.padding(horizontal = 11.dp, vertical = 4.dp)
                     )
                 }
@@ -1657,12 +1676,13 @@ fun MonthlyBarGraph(
         }
 
         if (hasIncome) {
-            Row(
+            @OptIn(ExperimentalLayoutApi::class)
+            FlowRow(
                 modifier = Modifier
                     .fillMaxWidth()
                     .testTag("monthly_income_trend_legend"),
                 horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
+                verticalArrangement = Arrangement.spacedBy(6.dp)
             ) {
                 Surface(
                     shape = RoundedCornerShape(50),
@@ -1673,6 +1693,7 @@ fun MonthlyBarGraph(
                         style = MaterialTheme.typography.labelSmall.copy(fontFamily = ReceiptMonoFontFamily),
                         fontWeight = FontWeight.Bold,
                         color = PersonalBadgeTeal,
+                        maxLines = 1,
                         modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
                     )
                 }
@@ -1689,7 +1710,8 @@ fun MonthlyBarGraph(
                         text = netLabel,
                         style = MaterialTheme.typography.labelSmall.copy(fontFamily = ReceiptMonoFontFamily),
                         fontWeight = FontWeight.SemiBold,
-                        color = netColor
+                        color = netColor,
+                        maxLines = 1
                     )
                 }
             }
@@ -2269,267 +2291,249 @@ fun ExpenseTransactionItemCard(
             colors = CardDefaults.cardColors(containerColor = effectiveContainerColor),
             elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
         ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 10.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                SquircleIconBadge(
-                    icon = categoryIcon(expense.category),
-                    tint = catColor,
-                    containerColor = catColor.copy(alpha = 0.16f),
-                    size = dimens.rowIconBoxSize,
-                    iconSize = dimens.rowIconSize,
-                    emoji = customEmoji,
-                    contentDescription = "${expense.category} (Tap to filter category, long press and slide to change category)",
+            Column(modifier = Modifier.fillMaxWidth()) {
+                Row(
                     modifier = Modifier
-                        .categoryWheelLongPressGesture(
-                            transaction = expense,
-                            availableCategories = availableCategories,
-                            onTap = {
-                                if (onCategoryClick != null) {
-                                    onCategoryClick(expense.category)
-                                } else {
-                                    onEditTransaction()
-                                }
-                            },
-                            onFallbackQuickChange = onQuickChangeCategory
-                        )
-                        .testTag("category_pill_${expense.id}")
-                )
-
-                Spacer(modifier = Modifier.width(14.dp))
-
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = expense.title,
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.SemiBold,
-                        color = MaterialTheme.colorScheme.onSurface,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = if (onMerchantClick != null) {
-                            Modifier
-                                .clip(RoundedCornerShape(6.dp))
-                                .clickable {
-                                    performHaptic()
-                                    onMerchantClick(expense.title)
-                                }
-                                .testTag("tx_merchant_chip_${expense.id}")
-                        } else {
-                            Modifier.testTag("tx_merchant_chip_${expense.id}")
-                        }
+                        .fillMaxWidth()
+                        .padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    SquircleIconBadge(
+                        icon = categoryIcon(expense.category),
+                        tint = catColor,
+                        containerColor = catColor.copy(alpha = 0.16f),
+                        size = dimens.rowIconBoxSize,
+                        iconSize = dimens.rowIconSize,
+                        emoji = customEmoji,
+                        contentDescription = "${expense.category} (Tap to edit, long press and slide to change category)",
+                        modifier = Modifier
+                            .categoryWheelLongPressGesture(
+                                transaction = expense,
+                                availableCategories = availableCategories,
+                                onTap = { onEditTransaction() },
+                                onFallbackQuickChange = onQuickChangeCategory
+                            )
+                            .testTag("category_pill_${expense.id}")
                     )
 
-                    Spacer(modifier = Modifier.height(2.dp))
+                    Spacer(modifier = Modifier.width(12.dp))
 
-                    // Clickable #Tag pills + Category pill + Account label (Axio style)
-                    Row(
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.horizontalScroll(rememberScrollState())
-                    ) {
-                        displayTags.forEach { rawTag ->
-                            val cleanTag = rawTag.trim().removePrefix("#")
-                            val safeTagId = cleanTag.lowercase().replace(Regex("[^a-z0-9]+"), "_")
-                            Surface(
-                                shape = RoundedCornerShape(50),
-                                color = Color(0xFF8AB4F8).copy(alpha = 0.24f),
-                                border = BorderStroke(0.8.dp, Color(0xFF8AB4F8).copy(alpha = 0.45f)),
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(50))
-                                    .clickable {
-                                        performHaptic()
-                                        onTagClick(cleanTag)
-                                    }
-                                    .testTag("tx_tag_pill_${expense.id}_$safeTagId")
-                            ) {
-                                Text(
-                                    text = "#$cleanTag",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    fontWeight = FontWeight.Bold,
-                                    color = Color(0xFF8AB4F8),
-                                    modifier = Modifier.padding(horizontal = 9.dp, vertical = 2.5.dp)
-                                )
-                            }
-                        }
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = expense.title,
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.testTag("tx_merchant_chip_${expense.id}")
+                        )
 
-                        Surface(
-                            shape = RoundedCornerShape(50),
-                            color = catColor.copy(alpha = 0.14f),
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(50))
-                                .clickable {
-                                    performHaptic()
-                                    if (onCategoryClick != null) {
-                                        onCategoryClick(expense.category)
-                                    } else {
-                                        onEditTransaction()
-                                    }
-                                }
-                                .testTag("tx_category_chip_${expense.id}")
-                        ) {
-                            Text(
-                                text = expense.category,
-                                style = MaterialTheme.typography.labelSmall,
-                                fontWeight = FontWeight.SemiBold,
-                                color = catColor,
-                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.5.dp)
-                            )
-                        }
-
-                        if (expense.accountName.isNotBlank()) {
-                            Text(
-                                text = "• ${expense.accountName}",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                        }
-                    }
-
-                    if (expense.isExcludedFromExpense || expense.linkedSmsSignatures.isNotEmpty()) {
                         Spacer(modifier = Modifier.height(3.dp))
+
+                        // Clickable #Tag pills + Non-filtering Category & Account metadata
                         Row(
                             horizontalArrangement = Arrangement.spacedBy(6.dp),
-                            verticalAlignment = Alignment.CenterVertically
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.horizontalScroll(rememberScrollState())
                         ) {
-                            if (expense.isExcludedFromExpense) {
+                            displayTags.forEach { rawTag ->
+                                val cleanTag = rawTag.trim().removePrefix("#")
+                                val safeTagId = cleanTag.lowercase().replace(Regex("[^a-z0-9]+"), "_")
                                 Surface(
                                     shape = RoundedCornerShape(50),
-                                    color = MaterialTheme.colorScheme.secondaryContainer,
-                                    modifier = Modifier.testTag("excluded_tx_badge_${expense.id}")
+                                    color = Color(0xFF8AB4F8).copy(alpha = 0.24f),
+                                    border = BorderStroke(0.8.dp, Color(0xFF8AB4F8).copy(alpha = 0.45f)),
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(50))
+                                        .clickable {
+                                            performHaptic()
+                                            onTagClick(cleanTag)
+                                        }
+                                        .testTag("tx_tag_pill_${expense.id}_$safeTagId")
                                 ) {
-                                    Row(
-                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        Icon(
-                                            imageVector = Icons.Default.MoneyOff,
-                                            contentDescription = null,
-                                            tint = MaterialTheme.colorScheme.onSecondaryContainer,
-                                            modifier = Modifier.size(12.dp)
-                                        )
-                                        Spacer(modifier = Modifier.width(4.dp))
-                                        Text(
-                                            text = "Excluded",
-                                            style = MaterialTheme.typography.labelSmall,
-                                            fontWeight = FontWeight.Bold,
-                                            color = MaterialTheme.colorScheme.onSecondaryContainer
-                                        )
-                                    }
+                                    Text(
+                                        text = "#$cleanTag",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.Bold,
+                                        color = Color(0xFF8AB4F8),
+                                        modifier = Modifier.padding(horizontal = 9.dp, vertical = 3.dp)
+                                    )
                                 }
                             }
-                            if (expense.linkedSmsSignatures.isNotEmpty()) {
-                                Surface(
-                                    shape = RoundedCornerShape(50),
-                                    color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.8f),
-                                    modifier = Modifier.testTag("linked_sms_badge_${expense.id}")
-                                ) {
-                                    Row(
-                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        Icon(
-                                            imageVector = Icons.Default.Link,
-                                            contentDescription = null,
-                                            tint = MaterialTheme.colorScheme.primary,
-                                            modifier = Modifier.size(12.dp)
-                                        )
-                                        Spacer(modifier = Modifier.width(4.dp))
-                                        Text(
-                                            text = "Linked (${expense.linkedSmsSignatures.size + 1} SMS)",
-                                            style = MaterialTheme.typography.labelSmall,
-                                            fontWeight = FontWeight.Bold,
-                                            color = MaterialTheme.colorScheme.primary
-                                        )
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
 
-                Spacer(modifier = Modifier.width(8.dp))
-
-                Column(
-                    horizontalAlignment = Alignment.End,
-                    verticalArrangement = Arrangement.spacedBy(2.dp)
-                ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(5.dp)
-                    ) {
-                        Text(
-                            text = "${if (isIncome) "+" else "-"}${formatCurrency(expense.amount, currencySymbol)}",
-                            style = MaterialTheme.typography.titleMedium.copy(fontFamily = ReceiptMonoFontFamily),
-                            fontWeight = FontWeight.Bold,
-                            color = when {
-                                expense.isExcludedFromExpense -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.65f)
-                                isIncome -> BudgetSafeGreen
-                                else -> MaterialTheme.colorScheme.onSurface
-                            }
-                        )
-                        Surface(
-                            shape = CircleShape,
-                            color = MaterialTheme.colorScheme.surfaceContainerHighest,
-                            modifier = Modifier
-                                .size(22.dp)
-                                .clip(CircleShape)
-                                .clickable {
-                                    performHaptic()
-                                    onTypeClick?.invoke(if (isIncome) "INCOME" else "EXPENSE")
-                                }
-                                .testTag("tx_direction_badge_${expense.id}")
-                        ) {
-                            Box(contentAlignment = Alignment.Center) {
+                            Surface(
+                                shape = RoundedCornerShape(50),
+                                color = catColor.copy(alpha = 0.14f),
+                                modifier = Modifier.testTag("tx_category_chip_${expense.id}")
+                            ) {
                                 Text(
-                                    text = if (isIncome) "↙" else "↗",
+                                    text = expense.category,
                                     style = MaterialTheme.typography.labelSmall,
-                                    fontWeight = FontWeight.Bold,
-                                    color = if (isIncome) BudgetSafeGreen else MaterialTheme.colorScheme.onSurfaceVariant
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = catColor,
+                                    maxLines = 1,
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.5.dp)
+                                )
+                            }
+
+                            if (expense.accountName.isNotBlank()) {
+                                Text(
+                                    text = "• ${expense.accountName}",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
                                 )
                             }
                         }
                     }
 
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(2.dp)
+                    Spacer(modifier = Modifier.width(10.dp))
+
+                    Column(
+                        horizontalAlignment = Alignment.End,
+                        verticalArrangement = Arrangement.spacedBy(2.dp)
                     ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(5.dp)
+                        ) {
+                            Text(
+                                text = "${if (isIncome) "+" else "-"}${formatCurrency(expense.amount, currencySymbol)}",
+                                style = MaterialTheme.typography.titleMedium.copy(fontFamily = ReceiptMonoFontFamily),
+                                fontWeight = FontWeight.Bold,
+                                color = when {
+                                    expense.isExcludedFromExpense -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.65f)
+                                    isIncome -> BudgetSafeGreen
+                                    else -> MaterialTheme.colorScheme.onSurface
+                                },
+                                maxLines = 1
+                            )
+                            Surface(
+                                shape = CircleShape,
+                                color = MaterialTheme.colorScheme.surfaceContainerHighest,
+                                modifier = Modifier
+                                    .size(24.dp)
+                                    .testTag("tx_direction_badge_${expense.id}")
+                            ) {
+                                Box(contentAlignment = Alignment.Center) {
+                                    Text(
+                                        text = if (isIncome) "↙" else "↗",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.Bold,
+                                        color = if (isIncome) BudgetSafeGreen else MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+                        }
                         Text(
                             text = formatDayMonthLabel(expense.transactionDateMillis),
                             style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1
                         )
+                    }
+                }
 
-                        if (!isIncome) {
-                            IconButton(
-                                onClick = {
-                                    performHaptic()
-                                    onToggleExcludeTransaction()
-                                },
-                                modifier = Modifier
-                                    .size(28.dp)
-                                    .testTag("exclude_tx_button_${expense.id}")
+                // Bottom Metadata Badges & Full 48dp Action Icons Row (prevents squeezing merchant name & accidental icon taps)
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(start = 16.dp, end = 8.dp, bottom = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .weight(1f)
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        if (expense.isExcludedFromExpense) {
+                            Surface(
+                                shape = RoundedCornerShape(50),
+                                color = MaterialTheme.colorScheme.secondaryContainer,
+                                modifier = Modifier.testTag("excluded_tx_badge_${expense.id}")
                             ) {
-                                Icon(
-                                    imageVector = Icons.Default.MoneyOff,
-                                    contentDescription = if (expense.isExcludedFromExpense) {
-                                        "Include in Expenses"
-                                    } else {
-                                        "Exclude from Expenses"
-                                    },
-                                    tint = if (expense.isExcludedFromExpense) {
-                                        BudgetWarnAmber
-                                    } else {
-                                        MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f)
-                                    },
-                                    modifier = Modifier.size(15.dp)
-                                )
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.MoneyOff,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.onSecondaryContainer,
+                                        modifier = Modifier.size(13.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text(
+                                        text = "Excluded",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.onSecondaryContainer
+                                    )
+                                }
                             }
+                        }
+                        if (expense.linkedSmsSignatures.isNotEmpty()) {
+                            Surface(
+                                shape = RoundedCornerShape(50),
+                                color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.8f),
+                                modifier = Modifier.testTag("linked_sms_badge_${expense.id}")
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Link,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(13.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text(
+                                        text = "Linked (${expense.linkedSmsSignatures.size + 1} SMS)",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        IconButton(
+                            onClick = {
+                                performHaptic()
+                                onToggleExcludeTransaction()
+                            },
+                            modifier = Modifier
+                                .minimumInteractiveComponentSize()
+                                .size(48.dp)
+                                .testTag("exclude_tx_button_${expense.id}")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.MoneyOff,
+                                contentDescription = when {
+                                    isIncome && expense.isExcludedFromExpense -> "Include in Income"
+                                    isIncome -> "Exclude from Income"
+                                    expense.isExcludedFromExpense -> "Include in Expenses"
+                                    else -> "Exclude from Expenses"
+                                },
+                                tint = if (expense.isExcludedFromExpense) {
+                                    BudgetWarnAmber
+                                } else {
+                                    MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                                },
+                                modifier = Modifier.size(20.dp)
+                            )
                         }
 
                         IconButton(
@@ -2538,7 +2542,8 @@ fun ExpenseTransactionItemCard(
                                 onLinkDuplicate()
                             },
                             modifier = Modifier
-                                .size(28.dp)
+                                .minimumInteractiveComponentSize()
+                                .size(48.dp)
                                 .testTag("link_duplicate_button_${expense.id}")
                         ) {
                             Icon(
@@ -2547,9 +2552,9 @@ fun ExpenseTransactionItemCard(
                                 tint = if (expense.linkedSmsSignatures.isNotEmpty()) {
                                     MaterialTheme.colorScheme.primary
                                 } else {
-                                    MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.65f)
+                                    MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.72f)
                                 },
-                                modifier = Modifier.size(15.dp)
+                                modifier = Modifier.size(20.dp)
                             )
                         }
                     }
@@ -3191,31 +3196,38 @@ fun CustomPrimaryColorPickerDialog(
                 modifier = Modifier.fillMaxWidth(),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                // Curated 16-swatch spectrum grid (2 rows of 8)
-                CUSTOM_COLOR_SPECTRUM_SWATCHES.chunked(8).forEach { rowSwatches ->
+                // Curated 16-swatch spectrum grid (4 rows of 4 for >= 48dp accessible touch targets)
+                CUSTOM_COLOR_SPECTRUM_SWATCHES.chunked(4).forEach { rowSwatches ->
                     Row(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween
+                        horizontalArrangement = Arrangement.SpaceEvenly
                     ) {
                         rowSwatches.forEach { swatchArgb ->
                             val isMatch = (currentArgb and 0xFFFFFFL) == (swatchArgb and 0xFFFFFFL)
                             Box(
                                 modifier = Modifier
-                                    .size(32.dp)
+                                    .size(48.dp)
                                     .clip(CircleShape)
-                                    .background(Color(swatchArgb))
-                                    .border(
-                                        width = if (isMatch) 2.5.dp else 1.dp,
-                                        color = if (isMatch) MaterialTheme.colorScheme.onSurface else Color.Transparent,
-                                        shape = CircleShape
-                                    )
                                     .clickable {
                                         red = ((swatchArgb shr 16) and 0xFF).toFloat()
                                         green = ((swatchArgb shr 8) and 0xFF).toFloat()
                                         blue = (swatchArgb and 0xFF).toFloat()
                                     }
-                                    .testTag("custom_swatch_${String.format(Locale.US, "%06x", swatchArgb and 0xFFFFFFL)}")
-                            )
+                                    .testTag("custom_swatch_${String.format(Locale.US, "%06x", swatchArgb and 0xFFFFFFL)}"),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(34.dp)
+                                        .clip(CircleShape)
+                                        .background(Color(swatchArgb))
+                                        .border(
+                                            width = if (isMatch) 2.5.dp else 1.dp,
+                                            color = if (isMatch) MaterialTheme.colorScheme.onSurface else Color.Transparent,
+                                            shape = CircleShape
+                                        )
+                                )
+                            }
                         }
                     }
                 }
@@ -4256,7 +4268,7 @@ fun CircularSpendBudgetRingGauge(
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.Center,
-                modifier = Modifier.padding(horizontal = 20.dp)
+                modifier = Modifier.padding(horizontal = 16.dp)
             ) {
                 Surface(
                     shape = CircleShape,
@@ -4278,7 +4290,8 @@ fun CircularSpendBudgetRingGauge(
                     style = MaterialTheme.typography.headlineSmall.copy(fontFamily = ReceiptMonoFontFamily),
                     fontWeight = FontWeight.ExtraBold,
                     color = MaterialTheme.colorScheme.onSurface,
-                    maxLines = 1
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
                 )
                 Spacer(modifier = Modifier.height(10.dp))
                 Surface(
@@ -4303,7 +4316,8 @@ fun CircularSpendBudgetRingGauge(
                             text = if (hasBudget) "$budgetPercent%" else "Set budget",
                             style = MaterialTheme.typography.labelMedium.copy(fontFamily = ReceiptMonoFontFamily),
                             fontWeight = FontWeight.Bold,
-                            color = if (isOverBudget) BudgetDangerCoral else blueRingColor
+                            color = if (isOverBudget) BudgetDangerCoral else blueRingColor,
+                            maxLines = 1
                         )
                     }
                 }
@@ -4316,7 +4330,7 @@ fun CircularSpendBudgetRingGauge(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 24.dp),
+                .padding(horizontal = 12.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Column(
@@ -4327,14 +4341,15 @@ fun CircularSpendBudgetRingGauge(
                         performHaptic()
                         onIncomeClick()
                     }
-                    .padding(vertical = 8.dp)
+                    .padding(horizontal = 6.dp, vertical = 8.dp)
                     .testTag("tx_ring_income_button"),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 Text(
                     text = "Income",
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1
                 )
                 Spacer(modifier = Modifier.height(2.dp))
                 Text(
@@ -4345,7 +4360,9 @@ fun CircularSpendBudgetRingGauge(
                         BudgetSafeGreen
                     } else {
                         MaterialTheme.colorScheme.onSurface
-                    }
+                    },
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
                 )
             }
 
@@ -4364,21 +4381,24 @@ fun CircularSpendBudgetRingGauge(
                         performHaptic()
                         onBudgetClick()
                     }
-                    .padding(vertical = 8.dp)
+                    .padding(horizontal = 6.dp, vertical = 8.dp)
                     .testTag("tx_ring_budget_button"),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 Text(
                     text = "Budget",
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1
                 )
                 Spacer(modifier = Modifier.height(2.dp))
                 Text(
                     text = if (hasBudget) formatCurrency(monthlyBudget, currencySymbol) else "Set budget >",
                     style = MaterialTheme.typography.titleMedium.copy(fontFamily = ReceiptMonoFontFamily),
                     fontWeight = FontWeight.Bold,
-                    color = if (hasBudget) MaterialTheme.colorScheme.onSurface else BudgetSafeGreen
+                    color = if (hasBudget) MaterialTheme.colorScheme.onSurface else BudgetSafeGreen,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
                 )
             }
         }
@@ -4429,116 +4449,120 @@ fun TransactionCategoriesSubTabContent(
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         if (categories.isNotEmpty()) {
-            // 1. Multi-Segment Donut Chart on Left + Clickable Percentage Legend on Right
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(vertical = 6.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(16.dp)
-            ) {
-                Box(
+            // 1. Multi-Segment Donut Chart on Left + Clickable Percentage Legend on Right (responsive width)
+            BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
+                val donutSize = if (maxWidth < 340.dp) 128.dp else 160.dp
+                val donutGap = if (maxWidth < 340.dp) 12.dp else 16.dp
+                Row(
                     modifier = Modifier
-                        .size(168.dp)
-                        .testTag("tx_categories_donut_chart"),
-                    contentAlignment = Alignment.Center
+                        .fillMaxWidth()
+                        .padding(vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(donutGap)
                 ) {
-                    Canvas(
+                    Box(
                         modifier = Modifier
-                            .fillMaxSize()
-                            .padding(10.dp)
-                            .pointerInput(categories) {
-                                detectTapGestures { tapOffset ->
-                                    val cx = size.width / 2f
-                                    val cy = size.height / 2f
-                                    val dx = tapOffset.x - cx
-                                    val dy = tapOffset.y - cy
-                                    val dist = hypot(dx, dy)
-                                    val outerR = minOf(size.width, size.height).toFloat() / 2f
-                                    val innerR = outerR * 0.48f
-                                    if (dist in innerR..outerR) {
-                                        var deg = Math.toDegrees(atan2(dy.toDouble(), dx.toDouble())).toFloat() + 90f
-                                        if (deg < 0f) deg += 360f
-                                        var running = 0f
-                                        for (item in categories) {
-                                            val sweep = ((item.spent / totalCategorySpend) * 360.0).toFloat()
-                                            if (deg >= running && deg <= running + sweep) {
-                                                performHaptic()
-                                                onCategoryClick(item.category)
-                                                break
+                            .size(donutSize)
+                            .testTag("tx_categories_donut_chart"),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Canvas(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(8.dp)
+                                .pointerInput(categories) {
+                                    detectTapGestures { tapOffset ->
+                                        val cx = size.width / 2f
+                                        val cy = size.height / 2f
+                                        val dx = tapOffset.x - cx
+                                        val dy = tapOffset.y - cy
+                                        val dist = hypot(dx, dy)
+                                        val outerR = minOf(size.width, size.height).toFloat() / 2f
+                                        val innerR = outerR * 0.48f
+                                        if (dist in innerR..outerR) {
+                                            var deg = Math.toDegrees(atan2(dy.toDouble(), dx.toDouble())).toFloat() + 90f
+                                            if (deg < 0f) deg += 360f
+                                            var running = 0f
+                                            for (item in categories) {
+                                                val sweep = ((item.spent / totalCategorySpend) * 360.0).toFloat()
+                                                if (deg >= running && deg <= running + sweep) {
+                                                    performHaptic()
+                                                    onCategoryClick(item.category)
+                                                    break
+                                                }
+                                                running += sweep
                                             }
-                                            running += sweep
                                         }
                                     }
                                 }
-                            }
-                    ) {
-                        val strokePx = 28.dp.toPx()
-                        val arcSize = Size(size.width - strokePx, size.height - strokePx)
-                        val topLeft = Offset(strokePx / 2f, strokePx / 2f)
-                        var startAngle = -90f
-                        categories.forEach { item ->
-                            val sweep = ((item.spent / totalCategorySpend) * 360.0).toFloat().coerceAtLeast(2f)
-                            val color = categoryAccentColor(item.category)
-                            val isSelected = selectedCategory != "All" &&
-                                selectedCategory.equals(item.category, ignoreCase = true)
-                            drawArc(
-                                color = if (selectedCategory == "All" || isSelected) color else color.copy(alpha = 0.35f),
-                                startAngle = startAngle,
-                                sweepAngle = sweep,
-                                useCenter = false,
-                                topLeft = topLeft,
-                                size = arcSize,
-                                style = Stroke(
-                                    width = if (isSelected) strokePx * 1.12f else strokePx,
-                                    cap = StrokeCap.Butt
+                        ) {
+                            val strokePx = if (donutSize < 140.dp) 22.dp.toPx() else 26.dp.toPx()
+                            val arcSize = Size(size.width - strokePx, size.height - strokePx)
+                            val topLeft = Offset(strokePx / 2f, strokePx / 2f)
+                            var startAngle = -90f
+                            categories.forEach { item ->
+                                val sweep = ((item.spent / totalCategorySpend) * 360.0).toFloat().coerceAtLeast(2f)
+                                val color = categoryAccentColor(item.category)
+                                val isSelected = selectedCategory != "All" &&
+                                    selectedCategory.equals(item.category, ignoreCase = true)
+                                drawArc(
+                                    color = if (selectedCategory == "All" || isSelected) color else color.copy(alpha = 0.35f),
+                                    startAngle = startAngle,
+                                    sweepAngle = sweep,
+                                    useCenter = false,
+                                    topLeft = topLeft,
+                                    size = arcSize,
+                                    style = Stroke(
+                                        width = if (isSelected) strokePx * 1.12f else strokePx,
+                                        cap = StrokeCap.Butt
+                                    )
                                 )
-                            )
-                            startAngle += sweep
+                                startAngle += sweep
+                            }
                         }
                     }
-                }
 
-                Column(
-                    modifier = Modifier.weight(1f),
-                    verticalArrangement = Arrangement.spacedBy(5.dp)
-                ) {
-                    categories.take(9).forEach { item ->
-                        val pct = (item.spent / totalCategorySpend) * 100.0
-                        val pctText = String.format(Locale.US, "%.1f%%", pct)
-                        val catColor = categoryAccentColor(item.category)
-                        val safeCatId = item.category.lowercase().replace(Regex("[^a-z0-9]+"), "_")
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(8.dp))
-                                .clickable {
-                                    performHaptic()
-                                    onCategoryClick(item.category)
-                                }
-                                .padding(horizontal = 4.dp, vertical = 2.dp)
-                                .testTag("tx_category_legend_$safeCatId"),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Box(
+                    Column(
+                        modifier = Modifier.weight(1f),
+                        verticalArrangement = Arrangement.spacedBy(5.dp)
+                    ) {
+                        categories.take(9).forEach { item ->
+                            val pct = (item.spent / totalCategorySpend) * 100.0
+                            val pctText = String.format(Locale.US, "%.1f%%", pct)
+                            val catColor = categoryAccentColor(item.category)
+                            val safeCatId = item.category.lowercase().replace(Regex("[^a-z0-9]+"), "_")
+                            Row(
                                 modifier = Modifier
-                                    .size(10.dp)
-                                    .clip(CircleShape)
-                                    .background(catColor)
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text(
-                                text = "${item.category} $pctText",
-                                style = MaterialTheme.typography.bodySmall,
-                                fontWeight = if (selectedCategory.equals(item.category, ignoreCase = true)) {
-                                    FontWeight.Bold
-                                } else {
-                                    FontWeight.Medium
-                                },
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .clickable {
+                                        performHaptic()
+                                        onCategoryClick(item.category)
+                                    }
+                                    .padding(horizontal = 4.dp, vertical = 3.dp)
+                                    .testTag("tx_category_legend_$safeCatId"),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(10.dp)
+                                        .clip(CircleShape)
+                                        .background(catColor)
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    text = "${item.category} $pctText",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    fontWeight = if (selectedCategory.equals(item.category, ignoreCase = true)) {
+                                        FontWeight.Bold
+                                    } else {
+                                        FontWeight.Medium
+                                    },
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
                         }
                     }
                 }
@@ -4745,18 +4769,20 @@ fun TransactionCategoriesSubTabContent(
                             text = formatCurrency(item.spent, currencySymbol),
                             style = MaterialTheme.typography.titleMedium.copy(fontFamily = ReceiptMonoFontFamily),
                             fontWeight = FontWeight.Bold,
-                            color = if (isOverLimit) BudgetDangerCoral else MaterialTheme.colorScheme.onSurface
+                            color = if (isOverLimit) BudgetDangerCoral else MaterialTheme.colorScheme.onSurface,
+                            maxLines = 1
                         )
                         Spacer(modifier = Modifier.height(2.dp))
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
                             modifier = Modifier
-                                .clip(RoundedCornerShape(8.dp))
+                                .minimumInteractiveComponentSize()
+                                .clip(RoundedCornerShape(10.dp))
                                 .clickable {
                                     performHaptic()
                                     onSetCategoryBudgetClick(item.category, item.budgetLimit)
                                 }
-                                .padding(horizontal = 4.dp, vertical = 2.dp)
+                                .padding(horizontal = 8.dp, vertical = 6.dp)
                                 .testTag("tx_category_set_budget_$safeCatId")
                         ) {
                             Text(
@@ -4781,7 +4807,7 @@ fun TransactionCategoriesSubTabContent(
                                 } else {
                                     BudgetSafeGreen
                                 },
-                                modifier = Modifier.size(16.dp)
+                                modifier = Modifier.size(18.dp)
                             )
                         }
                     }
@@ -4811,10 +4837,11 @@ fun TransactionCategoriesSubTabContent(
                         .padding(16.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    Row(
+                    @OptIn(ExperimentalLayoutApi::class)
+                    FlowRow(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
                         Text(
                             text = "Income vs Spend",
@@ -4838,6 +4865,7 @@ fun TransactionCategoriesSubTabContent(
                                 style = MaterialTheme.typography.labelMedium.copy(fontFamily = ReceiptMonoFontFamily),
                                 fontWeight = FontWeight.Bold,
                                 color = if (netFlow >= 0.0) BudgetSafeGreen else BudgetDangerCoral,
+                                maxLines = 1,
                                 modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
                             )
                         }
@@ -4857,13 +4885,17 @@ fun TransactionCategoriesSubTabContent(
                                     text = "Income & Cashback",
                                     style = MaterialTheme.typography.labelSmall,
                                     color = BudgetSafeGreen,
-                                    fontWeight = FontWeight.Bold
+                                    fontWeight = FontWeight.Bold,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
                                 )
                                 Text(
                                     text = "+${formatCurrency(resolvedIncomeTotal, currencySymbol)}",
                                     style = MaterialTheme.typography.titleMedium.copy(fontFamily = ReceiptMonoFontFamily),
                                     fontWeight = FontWeight.Bold,
                                     color = BudgetSafeGreen,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
                                     modifier = Modifier.testTag("analytics_division_income_total")
                                 )
                             }
@@ -4878,13 +4910,17 @@ fun TransactionCategoriesSubTabContent(
                                     text = "Total Spend",
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.onPrimaryContainer,
-                                    fontWeight = FontWeight.Bold
+                                    fontWeight = FontWeight.Bold,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
                                 )
                                 Text(
                                     text = "-${formatCurrency(totalSpent, currencySymbol)}",
                                     style = MaterialTheme.typography.titleMedium.copy(fontFamily = ReceiptMonoFontFamily),
                                     fontWeight = FontWeight.Bold,
                                     color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
                                     modifier = Modifier.testTag("analytics_division_spend_total")
                                 )
                             }

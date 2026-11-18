@@ -1119,7 +1119,7 @@ class OneFamilyViewModel(
             val sec = AccountSectionType.fromAccount(acc)
             val txs = txMap[acc.id].orEmpty().sortedByDescending { it.transactionDateMillis }
             val spent = txs.filter { !isIncomeTransaction(it) && !it.isExcludedFromExpense }.sumOf { it.amount }
-            val income = txs.filter { isIncomeTransaction(it) }.sumOf { it.amount }
+            val income = txs.filter { isIncomeTransaction(it) && !it.isExcludedFromExpense }.sumOf { it.amount }
             val limitPeriod = AccountLimitPeriod.fromRaw(acc.spendLimitPeriod)
             val limitPeriodLabel = AccountLimitPeriodUtils.formatLimitPeriodLabel(acc)
             val limitBounds = AccountLimitPeriodUtils.computeBoundsMillis(acc, nowMillis)
@@ -1237,7 +1237,7 @@ class OneFamilyViewModel(
             referenceMillis = nowMillis
         )
 
-        val periodIncomeOnly = periodTransactions.filter { isIncomeTransaction(it) }
+        val periodIncomeOnly = periodTransactions.filter { isIncomeTransaction(it) && !it.isExcludedFromExpense }
         val periodExpensesOnly = periodTransactions.filter { !isIncomeTransaction(it) && !it.isExcludedFromExpense }
         val periodExcludedOnly = periodTransactions.filter { it.isExcludedFromExpense }
 
@@ -1363,7 +1363,7 @@ class OneFamilyViewModel(
                 YearMonthPeriod.fromMillis(it.transactionDateMillis) == ym
             }
             val expSum = monthTxs.filter { !isIncomeTransaction(it) && !it.isExcludedFromExpense }.sumOf { it.amount }
-            val incSum = monthTxs.filter { isIncomeTransaction(it) }.sumOf { it.amount }
+            val incSum = monthTxs.filter { isIncomeTransaction(it) && !it.isExcludedFromExpense }.sumOf { it.amount }
             MonthlySpendBar(
                 period = ym,
                 label = ym.formatShortMonth(),
@@ -1401,7 +1401,7 @@ class OneFamilyViewModel(
             val matchesType = when {
                 filter.type == "All" -> true
                 filter.type.equals("EXCLUDED", ignoreCase = true) -> tx.isExcludedFromExpense
-                filter.type.equals("INCOME", ignoreCase = true) -> isIncomeTransaction(tx)
+                filter.type.equals("INCOME", ignoreCase = true) -> isIncomeTransaction(tx) && !tx.isExcludedFromExpense
                 filter.type.equals("EXPENSE", ignoreCase = true) -> !isIncomeTransaction(tx) && !tx.isExcludedFromExpense
                 else -> tx.type.equals(filter.type, ignoreCase = true)
             }
@@ -1445,7 +1445,11 @@ class OneFamilyViewModel(
                 } else {
                     matchingMonthTxs.filter { !isIncomeTransaction(it) && !it.isExcludedFromExpense }.sumOf { it.amount }
                 }
-                val incSum = matchingMonthTxs.filter { isIncomeTransaction(it) }.sumOf { it.amount }
+                val incSum = if (filter.type.equals("EXCLUDED", ignoreCase = true)) {
+                    matchingMonthTxs.filter { isIncomeTransaction(it) && it.isExcludedFromExpense }.sumOf { it.amount }
+                } else {
+                    matchingMonthTxs.filter { isIncomeTransaction(it) && !it.isExcludedFromExpense }.sumOf { it.amount }
+                }
                 MonthlySpendBar(
                     period = ym,
                     label = ym.formatShortMonth(),
@@ -1689,9 +1693,6 @@ class OneFamilyViewModel(
                 alertThresholdPercent = alertThresholdPercent,
                 isShared = isShared
             )
-        } else {
-            val prefix = emoji.trim().takeIf { it.isNotBlank() }?.let { "$it " }.orEmpty()
-            _statusBanner.value = "Added custom category '$prefix$cleaned'."
         }
     }
 
@@ -1710,7 +1711,7 @@ class OneFamilyViewModel(
     }
 
     fun notifyCsvExportResult(exportedCount: Int, periodLabel: String) {
-        _statusBanner.value = "Exported $exportedCount transactions ($periodLabel) to CSV."
+        // In-app status notifications are reserved exclusively for deleted-transaction undo prompts
     }
 
     fun notifyCsvExportError(message: String) {
@@ -2099,8 +2100,6 @@ class OneFamilyViewModel(
                             }
                         }
 
-                        _statusBanner.value = "Synced $totalImported new SMS receipts."
-
                         if (notifyNewest && context != null) {
                             val isShared = household != null
                             val unnotified = discovered
@@ -2132,16 +2131,6 @@ class OneFamilyViewModel(
                                 TransactionNotificationHelper.markSignatureNotified(currentUserId, cand)
                             }
                         }
-                    } else if (!silentIfEmpty) {
-                        _statusBanner.value = "All bank SMS receipts are up to date."
-                    }
-                } else if (!silentIfEmpty) {
-                    val totalExistingSms = (state.personalExpenses + state.sharedExpenses)
-                        .count { LocalAccountDataStore.getSmsMessageForTransaction(it) != null }
-                    _statusBanner.value = if (totalExistingSms > 0) {
-                        "All $totalExistingSms SMS receipts are synced."
-                    } else {
-                        "No new bank/UPI SMS found."
                     }
                 }
 
@@ -2286,7 +2275,6 @@ class OneFamilyViewModel(
 
             result.onSuccess { savedExpenseId ->
                 _smsCandidates.value = _smsCandidates.value.filterNot { it.id == candidate.id }
-                _statusBanner.value = "Added '$merchantTitle'."
                 if (triggerNotification && context != null) {
                     TransactionNotificationHelper.showNewTransactionNotification(
                         context = context,
@@ -2318,11 +2306,8 @@ class OneFamilyViewModel(
                 userName = userName,
                 household = state.household,
                 shareByDefault = forceShared ?: true
-            ).onSuccess { count ->
+            ).onSuccess {
                 _smsCandidates.value = emptyList()
-                if (count > 0) {
-                    _statusBanner.value = "Synced $count SMS receipts."
-                }
             }
         }
     }
@@ -2376,10 +2361,7 @@ class OneFamilyViewModel(
                 isExcludedFromExpense = isExcludedFromExpense,
                 transactionDateMillis = transactionDateMillis
             )
-            result.onSuccess {
-                // Manual in-app entries do NOT fire system notifications (notifications are strictly for SMS transactions)
-                _statusBanner.value = "Added ${title.ifBlank { normalizedCategory }}."
-            }.onFailure { err ->
+            result.onFailure { err ->
                 _errorMessage.value = err.localizedMessage ?: "Failed to add transaction."
             }
         }
@@ -2396,18 +2378,6 @@ class OneFamilyViewModel(
         if (primaryTx.id == duplicateTx.id) return
         viewModelScope.launch {
             repository.linkDuplicateTransaction(primaryTx, duplicateTx)
-                .onSuccess { merged ->
-                    _lastUndoableAction.value = UndoableSwipeAction.LinkedDuplicateTransaction(
-                        originalPrimary = primaryTx,
-                        deletedDuplicate = duplicateTx
-                    )
-                    val linkedSmsCount = LocalAccountDataStore.getLinkedSmsMessagesForTransaction(merged).size
-                    _statusBanner.value = if (linkedSmsCount > 0) {
-                        "Linked '${duplicateTx.title}' into '${merged.title}' ($linkedSmsCount SMS)."
-                    } else {
-                        "Linked '${duplicateTx.title}' into '${merged.title}'."
-                    }
-                }
                 .onFailure { err ->
                     _errorMessage.value = err.localizedMessage ?: "Could not link duplicate transaction."
                 }
@@ -2486,7 +2456,6 @@ class OneFamilyViewModel(
             currencySymbol = currency,
             forceNotify = true
         )
-        _statusBanner.value = "FCM Push Alert sent for $catName budget."
     }
 
     /**
@@ -2499,7 +2468,6 @@ class OneFamilyViewModel(
             severity = "INFO",
             message = "Verified SMS Auto-Sync batcher & Responsive Typography scale bounds — 0 fatal issues."
         )
-        _statusBanner.value = "Crashlytics stability check passed (0 crashes)."
     }
 
     fun updateTransaction(
@@ -2545,7 +2513,6 @@ class OneFamilyViewModel(
             ).onSuccess {
                 val effectiveTitle = title.trim().ifBlank { original.title }.ifBlank { normalizedCategory }
                 val oldNormalized = ExpenseCategories.normalizeCategory(original.category)
-                _statusBanner.value = "Updated '$effectiveTitle'."
                 if (!oldNormalized.equals(normalizedCategory, ignoreCase = true)) {
                     maybePromptOlderMerchantCategoryUpdate(
                         updatedExpense = original.copy(
@@ -2566,13 +2533,6 @@ class OneFamilyViewModel(
         viewModelScope.launch {
             val targetExcluded = !expense.isExcludedFromExpense
             repository.setExpenseExcluded(expense, targetExcluded)
-                .onSuccess {
-                    _statusBanner.value = if (targetExcluded) {
-                        "'${expense.title}' excluded from expenses."
-                    } else {
-                        "'${expense.title}' included in expenses."
-                    }
-                }
                 .onFailure { err ->
                     _errorMessage.value = err.localizedMessage ?: "Could not update exclusion status."
                 }
@@ -2593,7 +2553,6 @@ class OneFamilyViewModel(
                 householdId = expense.householdId,
                 newCategory = normalizedNew
             ).onSuccess {
-                _statusBanner.value = "Category updated to $normalizedNew."
                 if (!oldNormalized.equals(normalizedNew, ignoreCase = true)) {
                     maybePromptOlderMerchantCategoryUpdate(
                         updatedExpense = expense,
@@ -2640,9 +2599,6 @@ class OneFamilyViewModel(
         if (chosen.isEmpty()) return
         viewModelScope.launch {
             repository.batchUpdateExpenseCategories(chosen, prompt.newCategory)
-                .onSuccess { updatedCount ->
-                    _statusBanner.value = "Updated $updatedCount older '${prompt.merchantTitle}' receipts to ${prompt.newCategory}."
-                }
                 .onFailure { err ->
                     _errorMessage.value = err.localizedMessage ?: "Could not update older merchant receipts."
                 }
@@ -2660,11 +2616,6 @@ class OneFamilyViewModel(
                 return@launch
             }
             repository.toggleExpensePrivacy(expense, household)
-                .onSuccess {
-                    _lastUndoableAction.value = UndoableSwipeAction.ToggledPrivacy(expense)
-                    val newScope = if (expense.visibility == "PERSONAL") "Household" else "Personal"
-                    _statusBanner.value = "Moved '${expense.title}' to $newScope."
-                }
                 .onFailure { err ->
                     _errorMessage.value = err.localizedMessage ?: "Could not change privacy scope."
                 }
@@ -2683,20 +2634,18 @@ class OneFamilyViewModel(
     }
 
     /**
-     * Reverts the most recent swipe or quick-action on a transaction (Swipe-Left Delete,
-     * Swipe-Right Link Duplicate, or Privacy Toggle).
+     * Reverts the most recent deleted transaction and clears the undo banner without emitting
+     * an extra confirmation banner.
      */
     fun undoLastSwipeAction() {
         val action = _lastUndoableAction.value ?: return
         _lastUndoableAction.value = null
+        _statusBanner.value = null
         viewModelScope.launch {
             when (action) {
                 is UndoableSwipeAction.DeletedTransaction -> {
                     val tx = action.deletedExpense
                     repository.restoreExpense(tx)
-                        .onSuccess {
-                            _statusBanner.value = "Restored '${tx.title}'."
-                        }
                         .onFailure { err ->
                             _errorMessage.value = err.localizedMessage ?: "Failed to restore transaction."
                         }
@@ -2706,9 +2655,7 @@ class OneFamilyViewModel(
                     val duplicate = action.deletedDuplicate
                     val r1 = repository.restoreExpense(primary)
                     val r2 = repository.restoreExpense(duplicate)
-                    if (r1.isSuccess && r2.isSuccess) {
-                        _statusBanner.value = "Undid link for '${duplicate.title}'."
-                    } else {
+                    if (!r1.isSuccess || !r2.isSuccess) {
                         _errorMessage.value = "Could not undo duplicate link."
                     }
                 }
@@ -2725,9 +2672,6 @@ class OneFamilyViewModel(
                         )
                         repository.deleteExpense(flippedStub)
                         repository.restoreExpense(original)
-                            .onSuccess {
-                                _statusBanner.value = "Restored '${original.title}' privacy scope."
-                            }
                             .onFailure { err ->
                                 _errorMessage.value = err.localizedMessage ?: "Could not undo privacy change."
                             }
@@ -2762,9 +2706,6 @@ class OneFamilyViewModel(
                     ?.budgetDoc
                 if (existingDoc != null) {
                     repository.deleteCategoryBudget(existingDoc, isShared)
-                        .onSuccess {
-                            _statusBanner.value = "Cleared $cleanCategory budget limit."
-                        }
                         .onFailure { err ->
                             _errorMessage.value = err.localizedMessage ?: "Failed to clear budget."
                         }
@@ -2777,9 +2718,7 @@ class OneFamilyViewModel(
                 alertThresholdPercent = alertThresholdPercent.coerceIn(10, 100),
                 isShared = isShared,
                 household = household
-            ).onSuccess {
-                _statusBanner.value = "Updated $cleanCategory budget."
-            }.onFailure { err ->
+            ).onFailure { err ->
                 _errorMessage.value = err.localizedMessage ?: "Failed to save budget."
             }
         }
@@ -2802,7 +2741,6 @@ class OneFamilyViewModel(
                 }
                 repository.updateHouseholdSettings(household.id, household.name, targetLimit, cleanCurrency)
             }
-            _statusBanner.value = "Budget updated."
         }
     }
 
@@ -2814,9 +2752,6 @@ class OneFamilyViewModel(
         }
         viewModelScope.launch {
             repository.updatePreferredCurrency(cleanSymbol, uiState.value.household)
-                .onSuccess {
-                    _statusBanner.value = "Family currency updated to $cleanSymbol."
-                }
                 .onFailure { err ->
                     _errorMessage.value = err.localizedMessage ?: "Failed to update currency."
                 }
@@ -2832,9 +2767,6 @@ class OneFamilyViewModel(
         viewModelScope.launch {
             com.example.data.local.LocalAccountSessionManager.updateDisplayName(context, cleanName)
             repository.updateUserDisplayName(cleanName, uiState.value.household)
-                .onSuccess {
-                    _statusBanner.value = "Name updated to $cleanName."
-                }
                 .onFailure { err ->
                     _errorMessage.value = err.localizedMessage ?: "Failed to update name."
                 }
@@ -2881,9 +2813,7 @@ class OneFamilyViewModel(
                 spendLimitPeriod = spendLimitPeriod,
                 spendLimitStartMillis = spendLimitStartMillis,
                 spendLimitEndMillis = spendLimitEndMillis
-            ).onSuccess {
-                _statusBanner.value = "Saved $name."
-            }.onFailure { err ->
+            ).onFailure { err ->
                 _errorMessage.value = err.localizedMessage ?: "Failed to save account."
             }
         }
@@ -2907,13 +2837,7 @@ class OneFamilyViewModel(
                 spendLimitPeriod = spendLimitPeriod,
                 spendLimitStartMillis = spendLimitStartMillis,
                 spendLimitEndMillis = spendLimitEndMillis
-            ).onSuccess {
-                _statusBanner.value = if (monthlySpendLimit <= 0.0) {
-                    "Cleared spend limit for ${account.name}."
-                } else {
-                    "Updated ${account.name} spend limit (Cycle Day ${billingCycleDay.coerceIn(1, 31)})."
-                }
-            }.onFailure { err ->
+            ).onFailure { err ->
                 _errorMessage.value = err.localizedMessage ?: "Failed to update account spend limit."
             }
         }
@@ -2926,22 +2850,10 @@ class OneFamilyViewModel(
     ) {
         if (summary.isVirtual) {
             LocalAccountSessionManager.setVirtualAccountHidden(context, summary.account.id, hidden)
-            _statusBanner.value = if (hidden) {
-                "Hid '${summary.account.name}' from main accounts."
-            } else {
-                "Unhid '${summary.account.name}'."
-            }
             return
         }
         viewModelScope.launch {
             repository.setAccountHidden(summary.account, hidden)
-                .onSuccess {
-                    _statusBanner.value = if (hidden) {
-                        "Hid '${summary.account.name}' from main accounts."
-                    } else {
-                        "Unhid '${summary.account.name}'."
-                    }
-                }
                 .onFailure { err ->
                     _errorMessage.value = err.localizedMessage ?: "Could not update account visibility."
                 }
@@ -2955,7 +2867,6 @@ class OneFamilyViewModel(
         if (summary.isVirtual) {
             LocalAccountSessionManager.setVirtualAccountHidden(context, summary.account.id, false)
             LocalAccountSessionManager.setVirtualAccountUntracked(context, summary.account.id, true)
-            _statusBanner.value = "Untracked '${summary.account.name}'."
             return
         }
         viewModelScope.launch {
@@ -2963,9 +2874,6 @@ class OneFamilyViewModel(
             LocalAccountSessionManager.setVirtualAccountHidden(context, virtSlug, false)
             LocalAccountSessionManager.setVirtualAccountUntracked(context, virtSlug, true)
             repository.deleteAccount(summary.account.id)
-                .onSuccess {
-                    _statusBanner.value = "Deleted '${summary.account.name}'."
-                }
                 .onFailure { err ->
                     _errorMessage.value = err.localizedMessage ?: "Failed to delete account."
                 }
@@ -3011,9 +2919,8 @@ class OneFamilyViewModel(
                 currencySymbol = currency,
                 userDisplayName = currentUserName,
                 userEmail = currentUserEmail
-            ).onSuccess { created ->
+            ).onSuccess {
                 _selectedScope.value = BudgetScope.HOUSEHOLD_SHARED
-                _statusBanner.value = "Created '${created.name}' • Code: ${created.joinCode}"
             }.onFailure { err ->
                 _errorMessage.value = err.localizedMessage ?: "Failed to create household."
             }
@@ -3028,7 +2935,6 @@ class OneFamilyViewModel(
                 userEmail = currentUserEmail
             ).onSuccess {
                 _selectedScope.value = BudgetScope.HOUSEHOLD_SHARED
-                _statusBanner.value = "Joined household!"
             }.onFailure { err ->
                 _errorMessage.value = err.localizedMessage ?: "Could not join household with code $joinCode."
             }
@@ -3043,7 +2949,6 @@ class OneFamilyViewModel(
                 userEmail = currentUserEmail
             ).onSuccess {
                 _selectedScope.value = BudgetScope.HOUSEHOLD_SHARED
-                _statusBanner.value = "Joined '${household.name}'!"
             }.onFailure { err ->
                 _errorMessage.value = err.localizedMessage ?: "Failed to accept invitation."
             }
@@ -3054,9 +2959,6 @@ class OneFamilyViewModel(
         val household = uiState.value.household ?: return
         viewModelScope.launch {
             repository.inviteMemberByEmail(household, email)
-                .onSuccess {
-                    _statusBanner.value = "Invited $email."
-                }
                 .onFailure { err ->
                     _errorMessage.value = err.localizedMessage ?: "Failed to send invite."
                 }

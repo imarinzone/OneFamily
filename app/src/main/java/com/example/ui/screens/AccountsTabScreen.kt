@@ -11,12 +11,15 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -65,6 +68,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -175,7 +179,7 @@ fun AccountsTabScreen(
                     ExpenseCategories.isIncomeCategory(tx.category)
                 val matchesType = when {
                     uiState.selectedTypeFilter == "All" -> true
-                    uiState.selectedTypeFilter.equals("INCOME", ignoreCase = true) -> isIncome
+                    uiState.selectedTypeFilter.equals("INCOME", ignoreCase = true) -> isIncome && !tx.isExcludedFromExpense
                     uiState.selectedTypeFilter.equals("EXPENSE", ignoreCase = true) -> !isIncome && !tx.isExcludedFromExpense
                     uiState.selectedTypeFilter.equals("EXCLUDED", ignoreCase = true) -> tx.isExcludedFromExpense
                     else -> true
@@ -501,7 +505,8 @@ fun AccountsTabScreen(
                                         style = MaterialTheme.typography.titleMedium.copy(fontFamily = ReceiptMonoFontFamily),
                                         fontWeight = FontWeight.Bold,
                                         color = MaterialTheme.colorScheme.onPrimaryContainer,
-                                        maxLines = 1
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
                                     )
                                 }
                             }
@@ -524,7 +529,8 @@ fun AccountsTabScreen(
                                         style = MaterialTheme.typography.titleMedium.copy(fontFamily = ReceiptMonoFontFamily),
                                         fontWeight = FontWeight.Bold,
                                         color = MaterialTheme.colorScheme.onTertiaryContainer,
-                                        maxLines = 1
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
                                     )
                                 }
                             }
@@ -797,7 +803,10 @@ fun AccountsTabScreen(
                                     performHaptic()
                                     onToggleAccountHidden(summary, !summary.isHidden)
                                 },
-                                modifier = Modifier.testTag("all_accounts_toggle_hide_$safeTag")
+                                modifier = Modifier
+                                    .minimumInteractiveComponentSize()
+                                    .size(48.dp)
+                                    .testTag("all_accounts_toggle_hide_$safeTag")
                             ) {
                                 Icon(
                                     imageVector = if (summary.isHidden) Icons.Default.Visibility else Icons.Default.VisibilityOff,
@@ -810,7 +819,10 @@ fun AccountsTabScreen(
                                     performHaptic()
                                     pendingDeleteAccount = summary
                                 },
-                                modifier = Modifier.testTag("all_accounts_delete_$safeTag")
+                                modifier = Modifier
+                                    .minimumInteractiveComponentSize()
+                                    .size(48.dp)
+                                    .testTag("all_accounts_delete_$safeTag")
                             ) {
                                 Icon(
                                     imageVector = Icons.Default.DeleteOutline,
@@ -876,7 +888,7 @@ fun AccountsTabScreen(
     }
 }
 
-@OptIn(ExperimentalFoundationApi::class)
+@OptIn(ExperimentalFoundationApi::class, ExperimentalLayoutApi::class)
 @Composable
 private fun AccountCardWithTransactions(
     summary: AccountSpendSummary,
@@ -940,7 +952,7 @@ private fun AccountCardWithTransactions(
                     .testTag("account_card_$safeTag")
             )
             Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp)) {
-            // Top Account Identity & Inline Set Limit CTA
+            // Top Account Identity & Options Menu (spacious so name/meta/spend never get crushed)
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically
@@ -959,7 +971,7 @@ private fun AccountCardWithTransactions(
                         text = account.name,
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Bold,
-                        maxLines = 1,
+                        maxLines = 2,
                         overflow = TextOverflow.Ellipsis
                     )
                     val metaParts = buildList {
@@ -969,7 +981,7 @@ private fun AccountCardWithTransactions(
                         if (account.lastFourDigits.isNotBlank()) add("••${account.lastFourDigits}")
                         if (account.balance > 0.0) add("Bal ${formatCurrency(account.balance, currency)}")
                         if (summary.section == AccountSectionType.CREDIT_CARD && account.creditLimit > 0.0) {
-                            add("Limit ${formatCurrency(account.creditLimit, currency)}")
+                            add("Credit Cap ${formatCurrency(account.creditLimit, currency)}")
                         }
                     }
                     if (metaParts.isNotEmpty()) {
@@ -977,7 +989,7 @@ private fun AccountCardWithTransactions(
                             text = metaParts.joinToString(" • "),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            maxLines = 1,
+                            maxLines = 2,
                             overflow = TextOverflow.Ellipsis
                         )
                     }
@@ -990,29 +1002,12 @@ private fun AccountCardWithTransactions(
                         },
                         style = MaterialTheme.typography.labelMedium.copy(fontFamily = ReceiptMonoFontFamily),
                         color = if (summary.isOverLimit) barColor else MaterialTheme.colorScheme.onSurface,
-                        fontWeight = FontWeight.SemiBold
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
                     )
                 }
-                Spacer(modifier = Modifier.width(6.dp))
-                FilledTonalButton(
-                    onClick = onToggleLimitEditor,
-                    shape = RoundedCornerShape(50),
-                    modifier = Modifier.testTag("set_account_limit_$safeTag")
-                ) {
-                    Icon(
-                        imageVector = if (summary.limit > 0.0) Icons.Default.Edit else Icons.Default.Add,
-                        contentDescription = null,
-                        modifier = Modifier.size(16.dp)
-                    )
-                    Spacer(modifier = Modifier.width(5.dp))
-                    Text(
-                        text = if (summary.limit > 0.0) formatCurrency(summary.limit, currency) else "Set Limit",
-                        style = MaterialTheme.typography.labelMedium.copy(
-                            fontFamily = if (summary.limit > 0.0) ReceiptMonoFontFamily else MaterialTheme.typography.labelMedium.fontFamily
-                        ),
-                        fontWeight = FontWeight.Bold
-                    )
-                }
+                Spacer(modifier = Modifier.width(4.dp))
                 var menuExpanded by remember { mutableStateOf(false) }
                 Box {
                     IconButton(
@@ -1020,7 +1015,10 @@ private fun AccountCardWithTransactions(
                             performHaptic()
                             menuExpanded = true
                         },
-                        modifier = Modifier.testTag("account_menu_button_$safeTag")
+                        modifier = Modifier
+                            .minimumInteractiveComponentSize()
+                            .size(48.dp)
+                            .testTag("account_menu_button_$safeTag")
                     ) {
                         Icon(
                             imageVector = Icons.Default.MoreVert,
@@ -1081,36 +1079,76 @@ private fun AccountCardWithTransactions(
                 }
             }
 
-            // Linked Bank Pill for Debit Cards
-            if (summary.section == AccountSectionType.DEBIT_CARD && summary.linkedBankDisplayName.isNotBlank()) {
-                Spacer(modifier = Modifier.height(8.dp))
-                Surface(
+            Spacer(modifier = Modifier.height(8.dp))
+
+            // Dedicated Action Strip: Set/Edit Limit + Linked Bank Pill (fits all phone widths cleanly)
+            FlowRow(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                FilledTonalButton(
+                    onClick = onToggleLimitEditor,
                     shape = RoundedCornerShape(50),
-                    color = MaterialTheme.colorScheme.secondaryContainer,
-                    modifier = Modifier.testTag("debit_linked_bank_$safeTag")
+                    contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp),
+                    modifier = Modifier
+                        .heightIn(min = 42.dp)
+                        .testTag("set_account_limit_$safeTag")
                 ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
-                        verticalAlignment = Alignment.CenterVertically
+                    Icon(
+                        imageVector = if (summary.limit > 0.0) Icons.Default.Edit else Icons.Default.Add,
+                        contentDescription = null,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = if (summary.limit > 0.0) {
+                            "Limit: ${formatCurrency(summary.limit, currency)}"
+                        } else if (summary.section == AccountSectionType.CREDIT_CARD) {
+                            "Set Cycle Limit"
+                        } else {
+                            "Set Limit"
+                        },
+                        style = MaterialTheme.typography.labelMedium.copy(
+                            fontFamily = if (summary.limit > 0.0) ReceiptMonoFontFamily else MaterialTheme.typography.labelMedium.fontFamily
+                        ),
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+
+                if (summary.section == AccountSectionType.DEBIT_CARD && summary.linkedBankDisplayName.isNotBlank()) {
+                    Surface(
+                        shape = RoundedCornerShape(50),
+                        color = MaterialTheme.colorScheme.secondaryContainer,
+                        modifier = Modifier.testTag("debit_linked_bank_$safeTag")
                     ) {
-                        Icon(
-                            imageVector = Icons.Default.Link,
-                            contentDescription = "Linked Bank Account",
-                            tint = MaterialTheme.colorScheme.onSecondaryContainer,
-                            modifier = Modifier.size(14.dp)
-                        )
-                        Spacer(modifier = Modifier.width(5.dp))
-                        Text(
-                            text = "Linked to ${summary.linkedBankDisplayName}",
-                            style = MaterialTheme.typography.labelSmall,
-                            fontWeight = FontWeight.SemiBold,
-                            color = MaterialTheme.colorScheme.onSecondaryContainer
-                        )
+                        Row(
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Link,
+                                contentDescription = "Linked Bank Account",
+                                tint = MaterialTheme.colorScheme.onSecondaryContainer,
+                                modifier = Modifier.size(14.dp)
+                            )
+                            Spacer(modifier = Modifier.width(5.dp))
+                            Text(
+                                text = "Linked to ${summary.linkedBankDisplayName}",
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.SemiBold,
+                                color = MaterialTheme.colorScheme.onSecondaryContainer,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
                     }
                 }
             }
 
-            // Inline Spend Limit Numeric & Period Editor (no modal opened)
+            // Inline Spend Limit Numeric & Period Editor (full-width input + spacious Save/Clear row)
             AnimatedVisibility(visible = isEditingLimit) {
                 val isCreditCard = summary.section == AccountSectionType.CREDIT_CARD
                 val parsedCycleDay = inlineBillingCycleDayInput.trim().toIntOrNull()?.coerceIn(1, 31)
@@ -1144,76 +1182,30 @@ private fun AccountCardWithTransactions(
                         .padding(top = 10.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        OutlinedTextField(
-                            value = inlineLimitInput,
-                            onValueChange = onInlineLimitInputChange,
-                            label = {
-                                Text(if (isCreditCard) "Billing Cycle Limit ($currency)" else "Spend Limit ($currency)")
-                            },
-                            placeholder = { Text("0 to clear") },
-                            isError = inlineError != null,
-                            supportingText = inlineError?.let { err -> { Text(err) } } ?: if (isCreditCard) {
-                                { Text("Linked to Day $parsedCycleDay cycle ($cycleRangePreview)") }
-                            } else {
-                                null
-                            },
-                            keyboardOptions = KeyboardOptions(
-                                keyboardType = KeyboardType.Decimal,
-                                imeAction = ImeAction.Done
-                            ),
-                            keyboardActions = KeyboardActions(onDone = { commitInlineLimit() }),
-                            singleLine = true,
-                            shape = RoundedCornerShape(16.dp),
-                            modifier = Modifier
-                                .weight(1f)
-                                .testTag("inline_account_limit_input_$safeTag")
-                        )
-                        Button(
-                            onClick = commitInlineLimit,
-                            enabled = inlineError == null,
-                            shape = CircleShape,
-                            contentPadding = PaddingValues(0.dp),
-                            modifier = Modifier
-                                .size(48.dp)
-                                .testTag("inline_save_account_limit_$safeTag")
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Check,
-                                contentDescription = "Save Spend Limit",
-                                modifier = Modifier.size(20.dp)
-                            )
-                        }
-                        if (summary.limit > 0.0) {
-                            IconButton(
-                                onClick = {
-                                    performHaptic()
-                                    onSaveInlineLimit(0.0)
-                                },
-                                modifier = Modifier.testTag("inline_clear_account_limit_$safeTag")
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Clear,
-                                    contentDescription = "Clear Spend Limit",
-                                    tint = MaterialTheme.colorScheme.error
-                                )
-                            }
+                    OutlinedTextField(
+                        value = inlineLimitInput,
+                        onValueChange = onInlineLimitInputChange,
+                        label = {
+                            Text(if (isCreditCard) "Billing Cycle Limit ($currency)" else "Spend Limit ($currency)")
+                        },
+                        placeholder = { Text("Enter amount (0 to clear)") },
+                        isError = inlineError != null,
+                        supportingText = inlineError?.let { err -> { Text(err) } } ?: if (isCreditCard) {
+                            { Text("Linked to Day $parsedCycleDay cycle ($cycleRangePreview)") }
                         } else {
-                            IconButton(
-                                onClick = onCancelInlineLimit,
-                                modifier = Modifier.testTag("inline_cancel_account_limit_$safeTag")
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Close,
-                                    contentDescription = "Cancel Spend Limit Edit"
-                                )
-                            }
-                        }
-                    }
+                            null
+                        },
+                        keyboardOptions = KeyboardOptions(
+                            keyboardType = KeyboardType.Decimal,
+                            imeAction = ImeAction.Done
+                        ),
+                        keyboardActions = KeyboardActions(onDone = { commitInlineLimit() }),
+                        singleLine = true,
+                        shape = RoundedCornerShape(16.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("inline_account_limit_input_$safeTag")
+                    )
 
                     if (isCreditCard) {
                         Surface(
@@ -1256,6 +1248,67 @@ private fun AccountCardWithTransactions(
                             )
                         }
                     }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Button(
+                            onClick = commitInlineLimit,
+                            enabled = inlineError == null,
+                            shape = RoundedCornerShape(50),
+                            modifier = Modifier
+                                .weight(1f)
+                                .heightIn(min = 48.dp)
+                                .testTag("inline_save_account_limit_$safeTag")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Check,
+                                contentDescription = "Save Spend Limit",
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(if (isCreditCard) "Save Limit & Cycle" else "Save Limit")
+                        }
+                        if (summary.limit > 0.0) {
+                            OutlinedButton(
+                                onClick = {
+                                    performHaptic()
+                                    onSaveInlineLimit(0.0)
+                                },
+                                shape = RoundedCornerShape(50),
+                                modifier = Modifier
+                                    .heightIn(min = 48.dp)
+                                    .testTag("inline_clear_account_limit_$safeTag")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Clear,
+                                    contentDescription = "Clear Spend Limit",
+                                    tint = MaterialTheme.colorScheme.error,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("Clear", color = MaterialTheme.colorScheme.error)
+                            }
+                        } else {
+                            OutlinedButton(
+                                onClick = onCancelInlineLimit,
+                                shape = RoundedCornerShape(50),
+                                modifier = Modifier
+                                    .heightIn(min = 48.dp)
+                                    .testTag("inline_cancel_account_limit_$safeTag")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Close,
+                                    contentDescription = "Cancel Spend Limit Edit",
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("Cancel")
+                            }
+                        }
+                    }
                 }
             }
 
@@ -1272,11 +1325,12 @@ private fun AccountCardWithTransactions(
                         .clip(RoundedCornerShape(50))
                 )
                 Spacer(modifier = Modifier.height(5.dp))
-                Row(
+                FlowRow(
                     modifier = Modifier
                         .fillMaxWidth()
                         .testTag("account_limit_status_$safeTag"),
-                    horizontalArrangement = Arrangement.SpaceBetween
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
                     Text(
                         text = if (summary.section == AccountSectionType.CREDIT_CARD) {
@@ -1286,7 +1340,9 @@ private fun AccountCardWithTransactions(
                         },
                         style = MaterialTheme.typography.labelSmall.copy(fontFamily = ReceiptMonoFontFamily),
                         color = barColor,
-                        fontWeight = FontWeight.SemiBold
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
                     )
                     val diff = summary.limit - summary.limitSpent
                     Text(
@@ -1297,7 +1353,8 @@ private fun AccountCardWithTransactions(
                         },
                         style = MaterialTheme.typography.labelSmall.copy(fontFamily = ReceiptMonoFontFamily),
                         color = if (diff >= 0.0) MaterialTheme.colorScheme.onSurfaceVariant else barColor,
-                        fontWeight = FontWeight.Medium
+                        fontWeight = FontWeight.Medium,
+                        maxLines = 1
                     )
                 }
             }
