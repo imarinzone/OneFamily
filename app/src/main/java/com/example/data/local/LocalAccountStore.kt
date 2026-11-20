@@ -1069,6 +1069,7 @@ object LocalAccountDataStore {
     private const val KEY_BUDGETS = "budgets_json"
     private const val KEY_ACCOUNTS = "accounts_json"
     private const val KEY_SMS_RAW_MAP = "sms_raw_map_json"
+    private const val KEY_PENDING_CLOUD_SYNC = "pending_cloud_sync_keys"
 
     private val profilesFlow = MutableStateFlow<Map<String, UserProfile>>(emptyMap())
     private val householdsFlow = MutableStateFlow<Map<String, Household>>(emptyMap())
@@ -1079,6 +1080,7 @@ object LocalAccountDataStore {
 
     private val storeLock = Any()
     private val accountTimestampMap = mutableMapOf<String, Long>()
+    private val pendingCloudSyncKeys = mutableSetOf<String>()
 
     private var appContext: Context? = null
     private var loaded = false
@@ -1116,6 +1118,8 @@ object LocalAccountDataStore {
             }
             budgetsFlow.value = decodeBudgets(p.getString(KEY_BUDGETS, null))
             accountsFlow.value = decodeAccounts(p.getString(KEY_ACCOUNTS, null))
+            pendingCloudSyncKeys.clear()
+            p.getStringSet(KEY_PENDING_CLOUD_SYNC, emptySet())?.let { pendingCloudSyncKeys.addAll(it) }
             loaded = true
         }
     }
@@ -1625,8 +1629,70 @@ object LocalAccountDataStore {
         }
     }
 
-    fun getExpenseByIdOnce(expenseId: String): ExpenseTransaction? =
-        expensesFlow.value.firstOrNull { it.id == expenseId }
+    fun getExpenseByIdOnce(expenseId: String): ExpenseTransaction? {
+        val target = expenseId.trim()
+        if (target.isBlank()) return null
+        val targetClean = target.removePrefix("sms_")
+        return expensesFlow.value.firstOrNull { tx ->
+            tx.id == target ||
+                tx.id.removePrefix("sms_") == targetClean ||
+                (tx.smsSignature.isNotBlank() && (
+                    tx.smsSignature == target ||
+                        tx.smsSignature.removePrefix("sms_") == targetClean
+                    ))
+        }
+    }
+
+    fun markPendingCloudSync(uid: String, expenseId: String) = synchronized(storeLock) {
+        if (uid.isBlank() || expenseId.isBlank()) return@synchronized
+        val key = "$uid|$expenseId"
+        if (pendingCloudSyncKeys.add(key)) {
+            prefs()?.edit()?.putStringSet(KEY_PENDING_CLOUD_SYNC, pendingCloudSyncKeys.toSet())?.apply()
+        }
+    }
+
+    fun clearPendingCloudSync(uid: String, expenseId: String) = synchronized(storeLock) {
+        if (uid.isBlank() || expenseId.isBlank()) return@synchronized
+        val cleanId = expenseId.removePrefix("sms_")
+        val removed = pendingCloudSyncKeys.removeAll { entry ->
+            entry == "$uid|$expenseId" ||
+                entry == "$uid|sms_$cleanId" ||
+                entry == "$uid|$cleanId"
+        }
+        if (removed) {
+            prefs()?.edit()?.putStringSet(KEY_PENDING_CLOUD_SYNC, pendingCloudSyncKeys.toSet())?.apply()
+        }
+    }
+
+    fun isPendingCloudSync(uid: String, expenseId: String): Boolean = synchronized(storeLock) {
+        if (uid.isBlank() || expenseId.isBlank()) return@synchronized false
+        val cleanId = expenseId.removePrefix("sms_")
+        pendingCloudSyncKeys.any { entry ->
+            entry == "$uid|$expenseId" ||
+                entry == "$uid|sms_$cleanId" ||
+                entry == "$uid|$cleanId"
+        }
+    }
+
+    fun getPendingCloudSyncExpenses(uid: String): List<ExpenseTransaction> = synchronized(storeLock) {
+        if (uid.isBlank()) return@synchronized emptyList()
+        val prefix = "$uid|"
+        val pendingIds = pendingCloudSyncKeys
+            .filter { it.startsWith(prefix) }
+            .map { it.removePrefix(prefix) }
+            .toSet()
+        if (pendingIds.isEmpty()) return@synchronized emptyList()
+        val pendingCleanIds = pendingIds.map { it.removePrefix("sms_") }.toSet()
+        expensesFlow.value
+            .filter { tx ->
+                tx.userId == uid && (
+                    tx.id in pendingIds ||
+                        tx.id.removePrefix("sms_") in pendingCleanIds ||
+                        (tx.smsSignature.isNotBlank() && tx.smsSignature.removePrefix("sms_") in pendingCleanIds)
+                    )
+            }
+            .sortedBy { it.transactionDateMillis }
+    }
 
     fun getExpensesForUserOrHouseholdOnce(userId: String, householdId: String): List<ExpenseTransaction> =
         expensesFlow.value.filter {
@@ -2618,6 +2684,9 @@ object LocalAccountDataStore {
         }
         expensesFlow.value = remainingExpenses
         saveExpenses(remainingExpenses)
+        if (pendingCloudSyncKeys.removeAll { entry -> targetUids.any { entry.startsWith("$it|") } }) {
+            prefs()?.edit()?.putStringSet(KEY_PENDING_CLOUD_SYNC, pendingCloudSyncKeys.toSet())?.apply()
+        }
 
         val remainingBudgets = budgetsFlow.value.filterNot {
             it.userId in targetUids || (it.householdId.isNotBlank() && it.householdId in deletedHouseholdIds)

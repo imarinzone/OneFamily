@@ -800,7 +800,90 @@ class OneFamilyViewModel(
                 displayName = currentUserName,
                 email = currentUserEmail
             )
+            reconcilePendingRealtimeSmsInternal()
         }
+    }
+
+    fun reconcilePendingRealtimeSms() {
+        viewModelScope.launch(Dispatchers.IO) {
+            reconcilePendingRealtimeSmsInternal()
+        }
+    }
+
+    private suspend fun reconcilePendingRealtimeSmsInternal() {
+        if (repository.isLocalModePublic(currentUserId)) return
+        val pendingList = LocalAccountDataStore.getPendingCloudSyncExpenses(currentUserId)
+        if (pendingList.isEmpty()) return
+
+        val activeHousehold = uiState.value.household ?: withTimeoutOrNull(2_500L) {
+            runCatching {
+                repository.getUserProfileOnce()
+                    ?.activeHouseholdId
+                    ?.takeIf { it.isNotBlank() }
+                    ?.let { repository.getHouseholdOnce(it) }
+            }.getOrNull()
+        }
+        val effectiveShared = activeHousehold != null
+
+        for (tx in pendingList) {
+            val saveRes = withTimeoutOrNull(10_000L) {
+                repository.addExpense(
+                    userName = tx.userName.ifBlank { currentUserName.ifBlank { "Me" } },
+                    household = activeHousehold,
+                    title = tx.title,
+                    amount = tx.amount,
+                    type = tx.type,
+                    category = tx.category,
+                    accountName = tx.accountName,
+                    paymentMode = tx.paymentMode,
+                    tags = tx.tags,
+                    notes = tx.notes,
+                    isShared = effectiveShared,
+                    smsSignature = tx.smsSignature,
+                    linkedSmsSignatures = tx.linkedSmsSignatures,
+                    referenceNumber = tx.referenceNumber,
+                    isExcludedFromExpense = tx.isExcludedFromExpense,
+                    transactionDateMillis = tx.transactionDateMillis,
+                    customDocId = tx.id,
+                    skipExistingSignatureScan = true
+                )
+            }
+            if (saveRes?.isSuccess == true) {
+                LocalAccountDataStore.clearPendingCloudSync(currentUserId, tx.id)
+            }
+        }
+    }
+
+    suspend fun resolveTransactionById(
+        expenseId: String,
+        householdId: String = "",
+        visibility: String = ""
+    ): ExpenseTransaction? {
+        val target = expenseId.trim()
+        if (target.isBlank()) return null
+        val targetClean = target.removePrefix("sms_")
+        val state = uiState.value
+        val fromState = (state.sharedExpenses + state.personalExpenses).firstOrNull { tx ->
+            tx.id == target ||
+                tx.id.removePrefix("sms_") == targetClean ||
+                (tx.smsSignature.isNotBlank() && (
+                    tx.smsSignature == target ||
+                        tx.smsSignature.removePrefix("sms_") == targetClean
+                    ))
+        }
+        if (fromState != null) return fromState
+
+        val effectiveHouseholdId = householdId.ifBlank { state.household?.id.orEmpty() }
+        val fromRepo = withContext(Dispatchers.IO) {
+            runCatching {
+                repository.getExpenseOnce(
+                    expenseId = target,
+                    householdId = effectiveHouseholdId,
+                    visibility = visibility
+                )
+            }.getOrNull()
+        }
+        return fromRepo ?: LocalAccountDataStore.getExpenseByIdOnce(target)
     }
 
     private val userProfileFlow = repository.observeUserProfile(currentUserId)
@@ -1813,7 +1896,7 @@ class OneFamilyViewModel(
                                 candidates = batchToSave,
                                 userName = userName,
                                 household = household,
-                                shareByDefault = true,
+                                shareByDefault = household != null,
                                 preloadedExistingSignatures = existingSignatures
                             )
                             importResult.onFailure { err ->
@@ -2020,6 +2103,9 @@ class OneFamilyViewModel(
                     }
                 }
 
+                // Flush any real-time SMS transactions that were cached locally while offline
+                runCatching { reconcilePendingRealtimeSmsInternal() }
+
                 val state = uiState.value
                 val household = state.household ?: withTimeoutOrNull(4_000L) {
                     runCatching {
@@ -2053,7 +2139,11 @@ class OneFamilyViewModel(
                     runCatching {
                         repository.getAllExistingSmsSignatures(household?.id)
                     }.getOrDefault(emptySet())
-                } ?: LocalAccountDataStore.getAllExistingSmsSignatures(currentUserId)
+                } ?: if (repository.isLocalModePublic(currentUserId)) {
+                    LocalAccountDataStore.getAllExistingSmsSignatures(currentUserId)
+                } else {
+                    emptySet()
+                }
 
                 val existingSignatures = stateSignatures + repoSignatures
                 val userName = currentUserName.ifBlank { state.userProfile?.displayName ?: "Me" }
@@ -2886,14 +2976,28 @@ class OneFamilyViewModel(
         if (!fcmSettings.creditCardLimitAlertsEnabled) return
         val currency = state.activeCurrencySymbol
         val globalThreshold = fcmSettings.creditCardAlertThresholdPercent.coerceIn(1, 100)
+        val nowMillis = System.currentTimeMillis()
+        val cal = Calendar.getInstance()
+
+        fun formatDayStamp(millis: Long): String {
+            cal.timeInMillis = millis
+            return String.format(
+                Locale.US,
+                "%04d-%02d-%02d",
+                cal.get(Calendar.YEAR),
+                cal.get(Calendar.MONTH) + 1,
+                cal.get(Calendar.DAY_OF_MONTH)
+            )
+        }
 
         state.accountSummaries
             .filter { it.section == AccountSectionType.CREDIT_CARD && it.limit > 0.0 && !it.isHidden }
             .forEach { summary ->
-                val threshold = summary.alertThresholdPercent.takeIf { it in 1..100 } ?: globalThreshold
                 val effectiveThreshold = globalThreshold
                 val usedPct = ((summary.limitSpent / summary.limit) * 100.0).toInt()
                 if (usedPct >= effectiveThreshold) {
+                    val bounds = AccountLimitPeriodUtils.computeBoundsMillis(summary.account, nowMillis)
+                    val periodWindowKey = "${summary.limitPeriod.name}_${formatDayStamp(bounds.first)}_${formatDayStamp(bounds.second)}"
                     TransactionNotificationHelper.showCreditCardLimitNotification(
                         context = context,
                         accountId = summary.account.id,
@@ -2902,7 +3006,8 @@ class OneFamilyViewModel(
                         limitAmount = summary.limit,
                         periodLabel = summary.limitPeriodLabel,
                         thresholdPercent = effectiveThreshold,
-                        currencySymbol = currency
+                        currencySymbol = currency,
+                        periodWindowKey = periodWindowKey
                     )
                 }
             }
@@ -2995,8 +3100,9 @@ class OneFamilyViewModel(
         deleteAccountJob = viewModelScope.launch(Dispatchers.IO) {
             var completedNormally = false
             try {
-                // 1. Clear notification deduplication cache for this user off the Main Thread
+                // 1. Clear notification deduplication cache & persisted limit alert history for this user off the Main Thread
                 TransactionNotificationHelper.clearNotifiedStateForUser(uid)
+                TransactionNotificationHelper.clearLimitNotificationHistoryForUser(appContext, uid)
 
                 // 2. Permanently delete all Firestore documents & local records while authenticated (bounded so stalled backend never freezes UI)
                 withTimeoutOrNull(8_000L) {

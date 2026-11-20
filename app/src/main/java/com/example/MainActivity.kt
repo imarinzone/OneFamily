@@ -145,18 +145,26 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.launch
 
+data class PendingEditTransactionDeepLink(
+    val expenseId: String,
+    val householdId: String = "",
+    val visibility: String = "",
+    val nonce: Long = System.nanoTime()
+)
+
 class MainActivity : ComponentActivity() {
-    private val pendingNotificationExpenseId = MutableStateFlow<String?>(null)
+    private val pendingNotificationDeepLink = MutableStateFlow<PendingEditTransactionDeepLink?>(null)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         LocalAccountSessionManager.ensureInitialized(this)
+        com.example.data.local.LocalAccountDataStore.ensureInitialized(this)
         TransactionNotificationHelper.ensureChannel(this)
         com.example.data.sms.SpendSummaryAlarmScheduler.scheduleNextSummaryAlarms(this)
         extractNotificationDeepLink(intent)
         enableEdgeToEdge()
         setContent {
-            val deepLinkExpenseId by pendingNotificationExpenseId.collectAsStateWithLifecycle()
+            val deepLink by pendingNotificationDeepLink.collectAsStateWithLifecycle()
             val themeMode by LocalAccountSessionManager.themeMode.collectAsStateWithLifecycle()
             OneFamilyTheme(themeMode = themeMode) {
                 Surface(
@@ -165,8 +173,8 @@ class MainActivity : ComponentActivity() {
                 ) {
                     AppDecoratedBackground(modifier = Modifier.fillMaxSize()) {
                         AppNavigation(
-                            deepLinkExpenseId = deepLinkExpenseId,
-                            onConsumeDeepLinkExpenseId = { pendingNotificationExpenseId.value = null }
+                            deepLink = deepLink,
+                            onConsumeDeepLink = { pendingNotificationDeepLink.value = null }
                         )
                     }
                 }
@@ -181,9 +189,19 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun extractNotificationDeepLink(intent: Intent?) {
-        val expenseId = intent?.getStringExtra(TransactionNotificationHelper.EXTRA_EDIT_EXPENSE_ID)
-        if (!expenseId.isNullOrBlank()) {
-            pendingNotificationExpenseId.value = expenseId
+        if (intent == null) return
+        val fromExtra = intent.getStringExtra(TransactionNotificationHelper.EXTRA_EDIT_EXPENSE_ID)?.trim().orEmpty()
+        val fromUri = intent.data?.takeIf {
+            it.scheme.equals("onefamily", ignoreCase = true) &&
+                it.host.equals("edit-transaction", ignoreCase = true)
+        }?.lastPathSegment?.trim().orEmpty()
+        val expenseId = fromExtra.ifBlank { fromUri }
+        if (expenseId.isNotBlank()) {
+            pendingNotificationDeepLink.value = PendingEditTransactionDeepLink(
+                expenseId = expenseId,
+                householdId = intent.getStringExtra(TransactionNotificationHelper.EXTRA_EDIT_HOUSEHOLD_ID).orEmpty(),
+                visibility = intent.getStringExtra(TransactionNotificationHelper.EXTRA_EDIT_VISIBILITY).orEmpty()
+            )
         }
     }
 }
@@ -199,12 +217,13 @@ internal fun FirebaseAuth.authStateFlow(): Flow<FirebaseUser?> = callbackFlow {
 @Composable
 fun AppNavigation(
     auth: FirebaseAuth = Firebase.auth,
-    deepLinkExpenseId: String? = null,
-    onConsumeDeepLinkExpenseId: () -> Unit = {}
+    deepLink: PendingEditTransactionDeepLink? = null,
+    onConsumeDeepLink: () -> Unit = {}
 ) {
     val context = LocalContext.current
     LaunchedEffect(Unit) {
         LocalAccountSessionManager.ensureInitialized(context)
+        com.example.data.local.LocalAccountDataStore.ensureInitialized(context)
     }
     val flowUser by auth.authStateFlow().collectAsStateWithLifecycle(initialValue = auth.currentUser)
     val localUser by LocalAccountSessionManager.activeUser.collectAsStateWithLifecycle()
@@ -248,8 +267,8 @@ fun AppNavigation(
                 currentUserId = resolvedUid,
                 currentUserName = activeName,
                 currentUserEmail = activeEmail,
-                deepLinkExpenseId = deepLinkExpenseId,
-                onConsumeDeepLinkExpenseId = onConsumeDeepLinkExpenseId,
+                deepLink = deepLink,
+                onConsumeDeepLink = onConsumeDeepLink,
                 onSignOut = {
                     LocalAccountSessionManager.signOut(context)
                     runCatching { auth.signOut() }
@@ -279,8 +298,8 @@ fun OneFamilyMainShell(
     currentUserId: String,
     currentUserName: String,
     currentUserEmail: String,
-    deepLinkExpenseId: String? = null,
-    onConsumeDeepLinkExpenseId: () -> Unit = {},
+    deepLink: PendingEditTransactionDeepLink? = null,
+    onConsumeDeepLink: () -> Unit = {},
     onSignOut: () -> Unit = {}
 ) {
     val dimens = LocalAppDimens.current
@@ -382,13 +401,22 @@ fun OneFamilyMainShell(
         }
     }
 
-    LaunchedEffect(deepLinkExpenseId, uiState.personalExpenses, uiState.sharedExpenses) {
-        if (!deepLinkExpenseId.isNullOrBlank()) {
-            val allTxs = uiState.sharedExpenses + uiState.personalExpenses
-            val match = allTxs.firstOrNull { it.id == deepLinkExpenseId }
+    LaunchedEffect(deepLink, uiState.personalExpenses, uiState.sharedExpenses) {
+        if (deepLink != null && deepLink.expenseId.isNotBlank()) {
+            val match = viewModel.resolveTransactionById(
+                expenseId = deepLink.expenseId,
+                householdId = deepLink.householdId,
+                visibility = deepLink.visibility
+            )
             if (match != null) {
+                showAddTransactionDialog = false
+                quickCategoryTransaction = null
+                linkingDuplicateTransaction = null
+                if (LocalAccountSessionManager.hasCompletedInitialSmsSync(context, currentUserId)) {
+                    showSmsSyncScreen = false
+                }
                 editingTransaction = match
-                onConsumeDeepLinkExpenseId()
+                onConsumeDeepLink()
             }
         }
     }
@@ -444,6 +472,7 @@ fun OneFamilyMainShell(
     DisposableEffect(lifecycleOwner, currentUserId, hasReadSmsPermission, showSmsSyncScreen) {
         val lifecycleObserver = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
+                viewModel.reconcilePendingRealtimeSms()
                 val granted = ContextCompat.checkSelfPermission(
                     context,
                     Manifest.permission.READ_SMS

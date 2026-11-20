@@ -31,6 +31,7 @@ class NotificationCategoryWheelActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         LocalAccountSessionManager.ensureInitialized(applicationContext)
+        com.example.data.local.LocalAccountDataStore.ensureInitialized(applicationContext)
 
         val expenseId = intent.getStringExtra(TransactionNotificationHelper.EXTRA_EDIT_EXPENSE_ID).orEmpty()
         val householdId = intent.getStringExtra(TransactionNotificationHelper.EXTRA_EDIT_HOUSEHOLD_ID).orEmpty()
@@ -118,7 +119,10 @@ class NotificationCategoryWheelActivity : ComponentActivity() {
                                     notificationId = notificationId,
                                     title = merchantTitle,
                                     amountText = extraAmount,
-                                    newCategory = normalizedChosen
+                                    newCategory = normalizedChosen,
+                                    expenseId = expenseId,
+                                    householdId = householdId,
+                                    visibility = visibility
                                 )
 
                                 val resolvedTx = loadedTx ?: ExpenseTransaction(

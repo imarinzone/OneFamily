@@ -5556,4 +5556,203 @@ class ExampleRobolectricTest {
 
         assertEquals("FreshMart Updated", savedTitle)
     }
+
+    @Test
+    fun `test limit warning and limit crossing notifications fire only once across app reopens`() {
+        val app = ApplicationProvider.getApplicationContext<Application>()
+        shadowOf(app).grantPermissions(Manifest.permission.POST_NOTIFICATIONS)
+        LocalAccountSessionManager.ensureInitialized(app)
+        LocalAccountSessionManager.signInWithUsernamePassword(
+            context = app,
+            rawUsername = "alerts_once_user",
+            rawPassword = "pass"
+        )
+        TransactionNotificationHelper.clearAllLimitNotificationHistory(app)
+
+        val nm = app.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        val shadowNm = shadowOf(nm)
+        nm.cancelAll()
+
+        val periodKey = "MONTHLY_2026-11-01_2026-11-30"
+
+        // 1. Credit card warning (85% of 50,000) fires ONCE
+        TransactionNotificationHelper.showCreditCardLimitNotification(
+            context = app,
+            accountId = "cc_once_1",
+            accountName = "HDFC Regalia",
+            spentAmount = 42500.0,
+            limitAmount = 50000.0,
+            periodLabel = "Monthly",
+            thresholdPercent = 80,
+            periodWindowKey = periodKey
+        )
+        assertEquals("Credit card warning must post once", 1, shadowNm.allNotifications.size)
+
+        // Simulate reopening the app multiple times (re-evaluating same warning stage) -> NO new notification
+        nm.cancelAll()
+        TransactionNotificationHelper.showCreditCardLimitNotification(
+            context = app,
+            accountId = "cc_once_1",
+            accountName = "HDFC Regalia",
+            spentAmount = 45000.0,
+            limitAmount = 50000.0,
+            periodLabel = "Monthly",
+            thresholdPercent = 80,
+            periodWindowKey = periodKey
+        )
+        assertEquals("Reopening app must NOT re-post credit card warning", 0, shadowNm.allNotifications.size)
+
+        // 2. Credit card crossing (105% of 50,000) fires ONCE
+        TransactionNotificationHelper.showCreditCardLimitNotification(
+            context = app,
+            accountId = "cc_once_1",
+            accountName = "HDFC Regalia",
+            spentAmount = 52500.0,
+            limitAmount = 50000.0,
+            periodLabel = "Monthly",
+            thresholdPercent = 80,
+            periodWindowKey = periodKey
+        )
+        assertEquals("Credit card limit crossing must post once", 1, shadowNm.allNotifications.size)
+
+        // Reopening app again after limit crossed -> NO new notification
+        nm.cancelAll()
+        TransactionNotificationHelper.showCreditCardLimitNotification(
+            context = app,
+            accountId = "cc_once_1",
+            accountName = "HDFC Regalia",
+            spentAmount = 56000.0,
+            limitAmount = 50000.0,
+            periodLabel = "Monthly",
+            thresholdPercent = 80,
+            periodWindowKey = periodKey
+        )
+        assertEquals("Reopening app must NOT re-post credit card limit crossing", 0, shadowNm.allNotifications.size)
+
+        // 3. Budget threshold warning & crossing ALSO fire only once each across app reopens
+        TransactionNotificationHelper.showBudgetThresholdPushNotification(
+            context = app,
+            categoryOrScopeName = "Dining",
+            spentAmount = 8500.0,
+            limitAmount = 10000.0,
+            thresholdPercent = 80
+        )
+        assertEquals("Budget warning must post once", 1, shadowNm.allNotifications.size)
+
+        nm.cancelAll()
+        TransactionNotificationHelper.showBudgetThresholdPushNotification(
+            context = app,
+            categoryOrScopeName = "Dining",
+            spentAmount = 9000.0,
+            limitAmount = 10000.0,
+            thresholdPercent = 80
+        )
+        assertEquals("Reopening app must NOT re-post budget warning", 0, shadowNm.allNotifications.size)
+
+        TransactionNotificationHelper.showBudgetThresholdPushNotification(
+            context = app,
+            categoryOrScopeName = "Dining",
+            spentAmount = 11200.0,
+            limitAmount = 10000.0,
+            thresholdPercent = 80
+        )
+        assertEquals("Budget limit crossing must post once", 1, shadowNm.allNotifications.size)
+
+        nm.cancelAll()
+        TransactionNotificationHelper.showBudgetThresholdPushNotification(
+            context = app,
+            categoryOrScopeName = "Dining",
+            spentAmount = 12500.0,
+            limitAmount = 10000.0,
+            thresholdPercent = 80
+        )
+        assertEquals("Reopening app must NOT re-post budget limit crossing", 0, shadowNm.allNotifications.size)
+    }
+
+    @Test
+    fun `test real-time SMS saves transaction under Transactions and notification opens Edit Transaction dialog`() {
+        val app = ApplicationProvider.getApplicationContext<Application>()
+        shadowOf(app).grantPermissions(Manifest.permission.POST_NOTIFICATIONS)
+        LocalAccountSessionManager.ensureInitialized(app)
+        LocalAccountDataStore.ensureInitialized(app)
+        val localUser = LocalAccountSessionManager.signInWithUsernamePassword(
+            context = app,
+            rawUsername = "realtime_sms_tester",
+            rawPassword = "pass"
+        ).getOrThrow()
+        LocalAccountSessionManager.setHouseholdFeatureEnabled(app, false)
+        LocalAccountSessionManager.setInitialSmsSyncCompleted(app, localUser.uid, true)
+        TransactionNotificationHelper.clearNotifiedStateForUser(localUser.uid)
+
+        val nm = app.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        val shadowNm = shadowOf(nm)
+        nm.cancelAll()
+
+        val reader = SmsInboxReader(app)
+        val smsBody = "Rs. 749.00 debited from A/c XX4321 on 20-11-2026 at Swiggy Instamart via UPI Ref 9812345678. Avl Bal: Rs. 41,250.00."
+        val candidate = reader.parseRawSms(
+            sender = "VM-HDFCBK",
+            body = smsBody,
+            timestamp = System.currentTimeMillis(),
+            defaultShared = true
+        )
+        assertNotNull("Bank UPI SMS should parse into a valid SmsCandidate", candidate)
+
+        // 1. Process real-time incoming SMS
+        runBlocking {
+            TransactionNotificationHelper.processIncomingSmsCandidateAndNotify(app, candidate!!)
+        }
+
+        val expectedDocId = "sms_${candidate!!.id}"
+
+        // 2. Verify transaction is persisted and immediately queryable under Transactions
+        val savedTx = LocalAccountDataStore.getExpenseByIdOnce(expectedDocId)
+        assertNotNull("Real-time SMS transaction must be stored immediately", savedTx)
+        assertEquals(749.0, savedTx!!.amount, 0.01)
+        assertEquals("PERSONAL", savedTx.visibility)
+        assertEquals(localUser.uid, savedTx.userId)
+
+        // 3. Verify pending cloud sync queue marks, retrieves, and clears cleanly
+        LocalAccountDataStore.markPendingCloudSync(localUser.uid, expectedDocId)
+        assertTrue(LocalAccountDataStore.isPendingCloudSync(localUser.uid, expectedDocId))
+        val pendingList = LocalAccountDataStore.getPendingCloudSyncExpenses(localUser.uid)
+        assertTrue("Pending cloud sync list must include queued real-time SMS", pendingList.any { it.id == expectedDocId })
+        LocalAccountDataStore.clearPendingCloudSync(localUser.uid, expectedDocId)
+        assertFalse(LocalAccountDataStore.isPendingCloudSync(localUser.uid, expectedDocId))
+
+        // 4. Verify notification was posted with an Edit Transaction PendingIntent targeting MainActivity
+        val postedNotification = shadowNm.allNotifications.firstOrNull()
+        assertNotNull("Real-time SMS should post a transaction notification", postedNotification)
+        val contentIntent = postedNotification!!.contentIntent
+        assertNotNull("Transaction notification must have a contentIntent", contentIntent)
+        val shadowPi = shadowOf(contentIntent)
+        val savedIntent = shadowPi.savedIntent
+        assertEquals(TransactionNotificationHelper.ACTION_OPEN_EDIT_TRANSACTION, savedIntent.action)
+        assertEquals(expectedDocId, savedIntent.getStringExtra(TransactionNotificationHelper.EXTRA_EDIT_EXPENSE_ID))
+
+        // 5. Verify opening MainShell with that notification's deep link opens EditTransactionDialog directly
+        var consumed = false
+        composeTestRule.setContent {
+            OneFamilyTheme {
+                OneFamilyMainShell(
+                    currentUserId = localUser.uid,
+                    currentUserName = localUser.displayName,
+                    currentUserEmail = localUser.email,
+                    deepLink = PendingEditTransactionDeepLink(
+                        expenseId = savedIntent.getStringExtra(TransactionNotificationHelper.EXTRA_EDIT_EXPENSE_ID).orEmpty(),
+                        householdId = savedIntent.getStringExtra(TransactionNotificationHelper.EXTRA_EDIT_HOUSEHOLD_ID).orEmpty(),
+                        visibility = savedIntent.getStringExtra(TransactionNotificationHelper.EXTRA_EDIT_VISIBILITY).orEmpty()
+                    ),
+                    onConsumeDeepLink = { consumed = true }
+                )
+            }
+        }
+        composeTestRule.waitForIdle()
+
+        assertTrue("Notification deep link should be consumed", consumed)
+        composeTestRule.onNodeWithTag("edit_tx_title_input").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("edit_tx_amount_input").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("save_edited_transaction_button").assertIsDisplayed()
+    }
 }
+

@@ -48,6 +48,7 @@ class OneFamilyRepository(
     }, allowLocalMode = true) {
         appContext = context.applicationContext
         LocalAccountSessionManager.ensureInitialized(context.applicationContext)
+        LocalAccountDataStore.ensureInitialized(context.applicationContext)
     }
 
     private val db: FirebaseFirestore
@@ -55,6 +56,8 @@ class OneFamilyRepository(
 
     private val currentFirebaseUser
         get() = runCatching { Firebase.auth.currentUser }.getOrNull()
+
+    fun isLocalModePublic(userIdHint: String? = null): Boolean = isLocalMode(userIdHint)
 
     private fun isLocalMode(userIdHint: String? = null): Boolean {
         if (!allowLocalMode) return false
@@ -691,7 +694,8 @@ class OneFamilyRepository(
         referenceNumber: String = "",
         isExcludedFromExpense: Boolean = false,
         transactionDateMillis: Long = System.currentTimeMillis(),
-        customDocId: String? = null
+        customDocId: String? = null,
+        skipExistingSignatureScan: Boolean = false
     ): Result<String> = runCatching {
         if (isLocalMode()) {
             val uid = requireLocalUserId()
@@ -737,7 +741,7 @@ class OneFamilyRepository(
                 else -> ""
             }
 
-            if (smsSignature.isNotBlank()) {
+            if (smsSignature.isNotBlank() && !skipExistingSignatureScan) {
                 val existingSigs = getAllExistingSmsSignatures(household?.id)
                 val cleanSig = smsSignature.removePrefix("sms_")
                 val rawBody = com.example.data.sms.SmsInboxReader.extractRawSmsBodyFromNotes(notes)
@@ -772,14 +776,19 @@ class OneFamilyRepository(
                 .distinct()
                 .take(20)
 
+            val normalizedCategory = com.example.data.model.ExpenseCategories.normalizeCategory(category)
+                .trim()
+                .ifBlank { "Unknown" }
+                .take(60)
+
             val payload = mapOf(
                 "userId" to uid,
                 "userName" to userName.ifBlank { "Me" }.take(100),
                 "householdId" to targetHouseholdId,
-                "title" to title.trim().ifBlank { category }.take(150),
+                "title" to title.trim().ifBlank { normalizedCategory }.take(150),
                 "amount" to amount.coerceAtLeast(0.01),
                 "type" to if (type == "INCOME") "INCOME" else "EXPENSE",
-                "category" to com.example.data.model.ExpenseCategories.normalizeCategory(category),
+                "category" to normalizedCategory,
                 "accountName" to accountName.ifBlank { "Cash" }.take(100),
                 "paymentMode" to if (paymentMode in setOf("UPI", "BANK", "CARD", "WALLET", "CASH")) paymentMode else "UPI",
                 "tags" to cleanTags,
@@ -789,14 +798,21 @@ class OneFamilyRepository(
                 "linkedSmsSignatures" to cleanLinkedSigs,
                 "referenceNumber" to referenceNumber.take(100),
                 "isExcludedFromExpense" to isExcludedFromExpense,
-                "transactionDateMillis" to transactionDateMillis,
+                "transactionDateMillis" to transactionDateMillis.coerceAtLeast(1L),
                 "memberUids" to memberUids,
                 "createdAt" to FieldValue.serverTimestamp(),
                 "updatedAt" to FieldValue.serverTimestamp()
             )
 
             try {
-                docRef.set(payload).await()
+                // Enqueue the write immediately into Firestore SDK offline persistence so active
+                // snapshot listeners reflect the transaction right away, then await server ack.
+                val setTask = docRef.set(payload)
+                if (skipExistingSignatureScan) {
+                    withTimeoutOrNull(10_000L) { setTask.await() }
+                } else {
+                    setTask.await()
+                }
                 docRef.id
             } catch (e: CancellationException) {
                 throw e
@@ -858,8 +874,8 @@ class OneFamilyRepository(
             }
         }
 
-        signatures.addAll(LocalAccountDataStore.getAllExistingSmsSignatures(uid))
-
+        // Only check actual Firestore collections in Firebase mode; never merge LocalAccountDataStore
+        // here because real-time SMS caching writes locally before Firestore sync completes.
         runCatching {
             val pSnap = withTimeoutOrNull(4_000L) {
                 db.collection("users").document(uid).collection("personal_expenses").get().await()
@@ -923,10 +939,10 @@ class OneFamilyRepository(
                 db.collection("users").document(uid).collection("personal_expenses")
             }
 
-            // Use preloaded signatures + local cache when supplied by pipelined SMS sync so
-            // parallel batches do not re-download full Firestore collections on every 25-row chunk.
+            // Use preloaded Firestore signatures when supplied by pipelined SMS sync so parallel
+            // batches do not re-download full collections on every chunk and never skip unsynced local SMS.
             val existingServerSignatures = if (preloadedExistingSignatures != null) {
-                (preloadedExistingSignatures + LocalAccountDataStore.getAllExistingSmsSignatures(uid)).toMutableSet()
+                preloadedExistingSignatures.toMutableSet()
             } else {
                 getAllExistingSmsSignatures(household?.id).toMutableSet()
             }
@@ -1307,17 +1323,62 @@ class OneFamilyRepository(
         if (isLocalMode() || householdId.startsWith("local_")) {
             return LocalAccountDataStore.getExpenseByIdOnce(expenseId)
         }
-        val uid = runCatching { requireUserId() }.getOrNull() ?: return null
-        val docRef = if (visibility == "SHARED" && householdId.isNotBlank()) {
-            db.collection("households").document(householdId)
-                .collection("shared_expenses").document(expenseId)
-        } else {
-            db.collection("users").document(uid)
-                .collection("personal_expenses").document(expenseId)
+        val uid = runCatching { requireUserId() }.getOrNull() ?: return LocalAccountDataStore.getExpenseByIdOnce(expenseId)
+        val cleanId = expenseId.trim().removePrefix("sms_")
+        val candidateIds = listOf(expenseId.trim(), "sms_$cleanId", cleanId)
+            .filter { it.isNotBlank() }
+            .distinct()
+
+        suspend fun fetchFromPersonal(): ExpenseTransaction? {
+            for (candId in candidateIds) {
+                val doc = runCatching {
+                    withTimeoutOrNull(3_000L) {
+                        db.collection("users").document(uid)
+                            .collection("personal_expenses").document(candId)
+                            .get().await()
+                    }
+                }.getOrNull()
+                if (doc != null && doc.exists()) {
+                    return doc.toObject(ExpenseTransaction::class.java, DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
+                }
+            }
+            return null
         }
-        return runCatching {
-            docRef.get().await().toObject(ExpenseTransaction::class.java, DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
-        }.getOrNull()
+
+        suspend fun fetchFromShared(targetHhId: String): ExpenseTransaction? {
+            if (targetHhId.isBlank()) return null
+            for (candId in candidateIds) {
+                val doc = runCatching {
+                    withTimeoutOrNull(3_000L) {
+                        db.collection("households").document(targetHhId)
+                            .collection("shared_expenses").document(candId)
+                            .get().await()
+                    }
+                }.getOrNull()
+                if (doc != null && doc.exists()) {
+                    return doc.toObject(ExpenseTransaction::class.java, DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
+                }
+            }
+            return null
+        }
+
+        val resolvedHouseholdId = householdId.ifBlank {
+            runCatching { getUserProfileOnce()?.activeHouseholdId }.getOrNull().orEmpty()
+        }
+
+        val primary = if (visibility == "SHARED" && resolvedHouseholdId.isNotBlank()) {
+            fetchFromShared(resolvedHouseholdId)
+        } else {
+            fetchFromPersonal()
+        }
+        if (primary != null) return primary
+
+        val secondary = if (visibility == "SHARED") {
+            fetchFromPersonal()
+        } else {
+            fetchFromShared(resolvedHouseholdId)
+        }
+        return secondary ?: LocalAccountDataStore.getExpenseByIdOnce(expenseId)
     }
 
     suspend fun getRecentExpensesOnce(householdId: String): List<ExpenseTransaction> {

@@ -63,6 +63,7 @@ object TransactionNotificationHelper {
     const val CHANNEL_ID_FCM_BUDGET = "onefamily_fcm_budget_push"
     const val CHANNEL_ID_CREDIT_LIMIT = "onefamily_credit_card_limit_alerts"
     const val CHANNEL_ID_SPEND_SUMMARY = "onefamily_spend_summary_alerts"
+    const val ACTION_OPEN_EDIT_TRANSACTION = "com.example.action.OPEN_EDIT_TRANSACTION"
     const val EXTRA_EDIT_EXPENSE_ID = "extra_edit_expense_id"
     const val EXTRA_EDIT_HOUSEHOLD_ID = "extra_edit_household_id"
     const val EXTRA_EDIT_VISIBILITY = "extra_edit_visibility"
@@ -72,14 +73,94 @@ object TransactionNotificationHelper {
     const val extraTitle = "extra_tx_title"
     const val extraAmount = "extra_tx_amount"
 
+    private const val PREFS_LIMIT_ALERTS = "onefamily_limit_alert_history_prefs"
+    private const val KEY_NOTIFIED_LIMIT_ALERTS = "notified_limit_alert_keys"
+
     private val incomingSmsMutex = Mutex()
+    private val limitAlertsLock = Any()
     private val notifiedSignatures: MutableSet<String> =
         Collections.synchronizedSet(mutableSetOf<String>())
     private val notifiedBodyTimestamps = java.util.concurrent.ConcurrentHashMap<String, Long>()
-    private val notifiedBudgetKeys: MutableSet<String> =
-        Collections.synchronizedSet(mutableSetOf<String>())
-    private val notifiedCreditLimitKeys: MutableSet<String> =
-        Collections.synchronizedSet(mutableSetOf<String>())
+
+    private fun limitAlertPrefs(context: Context) =
+        context.applicationContext.getSharedPreferences(PREFS_LIMIT_ALERTS, Context.MODE_PRIVATE)
+
+    private fun resolveActiveAlertUid(context: Context): String {
+        val appContext = context.applicationContext
+        val localUid = LocalAccountSessionManager.getCurrentUser(appContext)?.uid
+        val firebaseUid = runCatching { Firebase.auth.currentUser?.uid }.getOrNull()
+        return (localUid ?: firebaseUid).orEmpty().ifBlank { "default" }
+    }
+
+    private fun currentYearMonthStamp(): String {
+        val cal = Calendar.getInstance()
+        return String.format(
+            Locale.US,
+            "%04d-%02d",
+            cal.get(Calendar.YEAR),
+            cal.get(Calendar.MONTH) + 1
+        )
+    }
+
+    private fun isLimitAlertAlreadySent(context: Context, key: String): Boolean = synchronized(limitAlertsLock) {
+        val existing = limitAlertPrefs(context).getStringSet(KEY_NOTIFIED_LIMIT_ALERTS, emptySet()) ?: emptySet()
+        key in existing
+    }
+
+    private fun markLimitAlertsSent(context: Context, vararg keys: String) = synchronized(limitAlertsLock) {
+        val prefs = limitAlertPrefs(context)
+        val updated = (prefs.getStringSet(KEY_NOTIFIED_LIMIT_ALERTS, emptySet()) ?: emptySet()).toMutableSet()
+        var changed = false
+        for (k in keys) {
+            if (k.isNotBlank() && updated.add(k)) {
+                changed = true
+            }
+        }
+        if (changed) {
+            prefs.edit().putStringSet(KEY_NOTIFIED_LIMIT_ALERTS, updated).commit()
+        }
+    }
+
+    fun clearLimitNotificationHistoryForUser(context: Context, uid: String) = synchronized(limitAlertsLock) {
+        val prefs = limitAlertPrefs(context)
+        if (uid.isBlank()) {
+            prefs.edit().remove(KEY_NOTIFIED_LIMIT_ALERTS).commit()
+            return@synchronized
+        }
+        val existing = prefs.getStringSet(KEY_NOTIFIED_LIMIT_ALERTS, emptySet()) ?: emptySet()
+        val token = "|$uid|"
+        val remaining = existing.filterNot { it.contains(token) }.toSet()
+        if (remaining.size != existing.size) {
+            prefs.edit().putStringSet(KEY_NOTIFIED_LIMIT_ALERTS, remaining).commit()
+        }
+    }
+
+    fun clearAllLimitNotificationHistory(context: Context) = synchronized(limitAlertsLock) {
+        limitAlertPrefs(context).edit().remove(KEY_NOTIFIED_LIMIT_ALERTS).commit()
+    }
+
+    fun createOpenEditTransactionPendingIntent(
+        context: Context,
+        expenseId: String,
+        householdId: String = "",
+        visibility: String = "",
+        requestCode: Int = expenseId.hashCode()
+    ): PendingIntent {
+        val openEditIntent = Intent(context, MainActivity::class.java).apply {
+            action = ACTION_OPEN_EDIT_TRANSACTION
+            data = Uri.parse("onefamily://edit-transaction/${Uri.encode(expenseId)}")
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
+            putExtra(EXTRA_EDIT_EXPENSE_ID, expenseId)
+            putExtra(EXTRA_EDIT_HOUSEHOLD_ID, householdId)
+            putExtra(EXTRA_EDIT_VISIBILITY, visibility)
+        }
+        return PendingIntent.getActivity(
+            context,
+            requestCode,
+            openEditIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+    }
 
     fun clearNotifiedStateForUser(uid: String) {
         if (uid.isBlank()) {
@@ -375,18 +456,13 @@ object TransactionNotificationHelper {
         }
         val targetChannelId = if (isIncome) CHANNEL_ID_SMS_INCOME else CHANNEL_ID
 
-        // Tap notification -> Open MainActivity directly into the Edit Transaction / Category dialog
-        val openEditIntent = Intent(context, MainActivity::class.java).apply {
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
-            putExtra(EXTRA_EDIT_EXPENSE_ID, expenseId)
-            putExtra(EXTRA_EDIT_HOUSEHOLD_ID, householdId)
-            putExtra(EXTRA_EDIT_VISIBILITY, visibility)
-        }
-        val contentPendingIntent = PendingIntent.getActivity(
-            context,
-            notificationId,
-            openEditIntent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        // Tap notification -> Open MainActivity directly into the Edit Transaction dialog
+        val contentPendingIntent = createOpenEditTransactionPendingIntent(
+            context = context,
+            expenseId = expenseId,
+            householdId = householdId,
+            visibility = visibility,
+            requestCode = notificationId
         )
 
         // Category Wheel action (first of max 3 actions so it's always visible on Android notifications)
@@ -475,7 +551,10 @@ object TransactionNotificationHelper {
         notificationId: Int,
         title: String,
         amountText: String,
-        newCategory: String
+        newCategory: String,
+        expenseId: String = "",
+        householdId: String = "",
+        visibility: String = ""
     ) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
             ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
@@ -503,6 +582,17 @@ object TransactionNotificationHelper {
             .setPriority(NotificationCompat.PRIORITY_DEFAULT)
             .setAutoCancel(true)
             .setTimeoutAfter(4000L)
+        if (expenseId.isNotBlank()) {
+            updatedBuilder.setContentIntent(
+                createOpenEditTransactionPendingIntent(
+                    context = context,
+                    expenseId = expenseId,
+                    householdId = householdId,
+                    visibility = visibility,
+                    requestCode = notificationId
+                )
+            )
+        }
         runCatching {
             NotificationManagerCompat.from(context).notify(notificationId, updatedBuilder.build())
         }
@@ -541,18 +631,13 @@ object TransactionNotificationHelper {
             maximumFractionDigits = if (amount % 1.0 == 0.0) 0 else 2
         }.format(amount)
 
-        val openEditIntent = Intent(context, MainActivity::class.java).apply {
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
-            putExtra(EXTRA_EDIT_EXPENSE_ID, expenseId)
-            putExtra(EXTRA_EDIT_HOUSEHOLD_ID, householdId)
-            putExtra(EXTRA_EDIT_VISIBILITY, "SHARED")
-        }
         val notificationId = ("fcm_family_$expenseId").hashCode()
-        val contentPendingIntent = PendingIntent.getActivity(
-            context,
-            notificationId,
-            openEditIntent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        val contentPendingIntent = createOpenEditTransactionPendingIntent(
+            context = context,
+            expenseId = expenseId,
+            householdId = householdId,
+            visibility = "SHARED",
+            requestCode = notificationId
         )
 
         val cleanHousehold = sanitizeSummaryField(householdName, "Family Home")
@@ -598,10 +683,6 @@ object TransactionNotificationHelper {
         val usedPercent = ((spentAmount / limitAmount) * 100.0).toInt()
         if (usedPercent < thresholdPercent && !forceNotify) return
 
-        val bucket = if (usedPercent >= 100) "100" else thresholdPercent.toString()
-        val dedupeKey = "${categoryOrScopeName.lowercase()}_$bucket"
-        if (!forceNotify && !notifiedBudgetKeys.add(dedupeKey)) return
-
         ensureChannel(context)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             val granted = ContextCompat.checkSelfPermission(
@@ -611,12 +692,21 @@ object TransactionNotificationHelper {
             if (!granted) return
         }
 
+        val uid = resolveActiveAlertUid(context)
+        val periodStamp = currentYearMonthStamp()
+        val limitStamp = kotlin.math.round(limitAmount).toLong()
+        val baseKey = "budget|$uid|${categoryOrScopeName.trim().lowercase()}|$periodStamp|$limitStamp"
+        val isCrossed = usedPercent >= 100
+        val stage = if (isCrossed) "CROSSED" else "WARNING"
+        val dedupeKey = "$baseKey|$stage"
+        if (!forceNotify && isLimitAlertAlreadySent(context, dedupeKey)) return
+
         val numFmt = NumberFormat.getNumberInstance(Locale.forLanguageTag("en-IN")).apply {
             maximumFractionDigits = 0
         }
         val spentStr = "$currencySymbol${numFmt.format(spentAmount)}"
         val limitStr = "$currencySymbol${numFmt.format(limitAmount)}"
-        val headline = if (usedPercent >= 100) {
+        val headline = if (isCrossed) {
             "$spentStr / $limitStr • $categoryOrScopeName Exceeded ($usedPercent%)"
         } else {
             "$spentStr / $limitStr • $categoryOrScopeName ($usedPercent%)"
@@ -648,12 +738,19 @@ object TransactionNotificationHelper {
 
         runCatching {
             NotificationManagerCompat.from(context).notify(notificationId, builder.build())
+            if (!forceNotify) {
+                if (isCrossed) {
+                    markLimitAlertsSent(context, dedupeKey, "$baseKey|WARNING")
+                } else {
+                    markLimitAlertsSent(context, dedupeKey)
+                }
+            }
         }
     }
 
     /**
-     * Fires a Credit Card Spend Limit notification when spend in the configured period reaches
-     * the customizable threshold percentage (default 80%).
+     * Fires a Credit Card Spend Limit notification ONCE per limit warning stage and ONCE per
+     * limit crossing stage for the active billing period/limit (persisted across app restarts).
      */
     fun showCreditCardLimitNotification(
         context: Context,
@@ -664,7 +761,8 @@ object TransactionNotificationHelper {
         periodLabel: String,
         thresholdPercent: Int,
         currencySymbol: String = "₹",
-        forceNotify: Boolean = false
+        forceNotify: Boolean = false,
+        periodWindowKey: String = ""
     ) {
         LocalAccountSessionManager.ensureInitialized(context.applicationContext)
         val fcmSettings = LocalAccountSessionManager.fcmPushSettings.value
@@ -675,10 +773,6 @@ object TransactionNotificationHelper {
         val usedPercent = ((spentAmount / limitAmount) * 100.0).toInt()
         if (usedPercent < effectiveThreshold && !forceNotify) return
 
-        val bucket = if (usedPercent >= 100) "100" else effectiveThreshold.toString()
-        val dedupeKey = "${accountId.ifBlank { accountName }.lowercase()}_${periodLabel.lowercase()}_$bucket"
-        if (!forceNotify && !notifiedCreditLimitKeys.add(dedupeKey)) return
-
         ensureChannel(context)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             val granted = ContextCompat.checkSelfPermission(
@@ -688,13 +782,24 @@ object TransactionNotificationHelper {
             if (!granted) return
         }
 
+        val uid = resolveActiveAlertUid(context)
+        val resolvedPeriodKey = periodWindowKey.trim().ifBlank {
+            "${periodLabel.trim().lowercase()}_${currentYearMonthStamp()}"
+        }
+        val limitStamp = kotlin.math.round(limitAmount).toLong()
+        val baseKey = "cc_limit|$uid|${accountId.ifBlank { accountName }.trim().lowercase()}|$resolvedPeriodKey|$limitStamp"
+        val isCrossed = usedPercent >= 100
+        val stage = if (isCrossed) "CROSSED" else "WARNING"
+        val dedupeKey = "$baseKey|$stage"
+        if (!forceNotify && isLimitAlertAlreadySent(context, dedupeKey)) return
+
         val numFmt = NumberFormat.getNumberInstance(Locale.forLanguageTag("en-IN")).apply {
             maximumFractionDigits = 0
         }
         val spentStr = "$currencySymbol${numFmt.format(spentAmount)}"
         val limitStr = "$currencySymbol${numFmt.format(limitAmount)}"
         val cleanName = sanitizeSummaryField(accountName, "Credit Card")
-        val headline = if (usedPercent >= 100) {
+        val headline = if (isCrossed) {
             "$spentStr / $limitStr • $cleanName Limit Exceeded ($usedPercent%)"
         } else {
             "$spentStr / $limitStr • $cleanName ($usedPercent%)"
@@ -726,6 +831,13 @@ object TransactionNotificationHelper {
 
         runCatching {
             NotificationManagerCompat.from(context).notify(notificationId, builder.build())
+            if (!forceNotify) {
+                if (isCrossed) {
+                    markLimitAlertsSent(context, dedupeKey, "$baseKey|WARNING")
+                } else {
+                    markLimitAlertsSent(context, dedupeKey)
+                }
+            }
         }
     }
 
@@ -906,10 +1018,15 @@ object TransactionNotificationHelper {
             return@withLock
         }
         LocalAccountSessionManager.ensureInitialized(appContext)
-        val firebaseUser = runCatching { Firebase.auth.currentUser }.getOrNull()
+        LocalAccountDataStore.ensureInitialized(appContext)
+
         val localUser = LocalAccountSessionManager.getCurrentUser(appContext)
-        val activeUid = firebaseUser?.uid ?: localUser?.uid
+        val firebaseUser = runCatching { Firebase.auth.currentUser }.getOrNull()
+        val activeUid = localUser?.uid ?: firebaseUser?.uid
         if (activeUid.isNullOrBlank()) return@withLock
+        val isFirebaseBacked = firebaseUser != null &&
+            !activeUid.startsWith("local_user_") &&
+            firebaseUser.uid == activeUid
 
         val contentKey = SmsInboxReader.buildSmsContentKey(
             body = candidate.parsed.smsBody,
@@ -930,30 +1047,36 @@ object TransactionNotificationHelper {
             ""
         }
 
-        if (scopedSig in notifiedSignatures ||
-            scopedContentKey in notifiedSignatures ||
-            scopedAdjacentKeys.any { it in notifiedSignatures }
-        ) return@withLock
+        val docId = "sms_${candidate.id}"
+        val alreadyPendingCloudSync = isFirebaseBacked && LocalAccountDataStore.isPendingCloudSync(activeUid, docId)
 
-        if (bodyIdentityKey.isNotEmpty()) {
-            val prevTs = notifiedBodyTimestamps[bodyIdentityKey]
-            if (prevTs != null && kotlin.math.abs(candidate.parsed.timestamp - prevTs) <= SmsInboxReader.SLIDING_DEDUP_WINDOW_MS) {
-                return@withLock
+        if (!alreadyPendingCloudSync) {
+            if (scopedSig in notifiedSignatures ||
+                scopedContentKey in notifiedSignatures ||
+                scopedAdjacentKeys.any { it in notifiedSignatures }
+            ) return@withLock
+
+            if (bodyIdentityKey.isNotEmpty()) {
+                val prevTs = notifiedBodyTimestamps[bodyIdentityKey]
+                if (prevTs != null && kotlin.math.abs(candidate.parsed.timestamp - prevTs) <= SmsInboxReader.SLIDING_DEDUP_WINDOW_MS) {
+                    return@withLock
+                }
             }
         }
 
         try {
-            // 1. Check fast local signatures first (zero network latency)
+            // 1. Check existing signatures before saving/notifying
             val localExistingSignatures = LocalAccountDataStore.getAllExistingSmsSignatures(activeUid)
-            if (candidate.id in localExistingSignatures ||
+            val alreadyInLocalStore = candidate.id in localExistingSignatures ||
                 contentKey in localExistingSignatures ||
                 adjacentKeys.any { it in localExistingSignatures }
-            ) {
+
+            if (!isFirebaseBacked && alreadyInLocalStore) {
                 markSignatureNotified(activeUid, candidate)
                 return@withLock
             }
 
-            // 2. Resolve profile & household from fast local cache first (with bounded timeout fallback)
+            // 2. Resolve profile & household from fast local cache first
             val cachedProfile = LocalAccountDataStore.getUserProfileOnce(activeUid)
             val cachedHousehold = cachedProfile?.activeHouseholdId?.takeIf { it.isNotBlank() }?.let {
                 LocalAccountDataStore.getHouseholdOnce(it)
@@ -964,12 +1087,11 @@ object TransactionNotificationHelper {
             val merchantTitle = parsed.merchant?.takeIf { it.isNotBlank() }
                 ?: "${parsed.bankName} ${parsed.type.name.lowercase().replaceFirstChar { it.uppercase() }}"
             val effectiveShared = cachedHousehold != null
-            val docId = "sms_${candidate.id}"
-            val memberDisplayName = firebaseUser?.displayName
-                ?: localUser?.displayName
-                ?: cachedProfile?.displayName
+            val memberDisplayName = firebaseUser?.displayName?.takeIf { it.isNotBlank() }
+                ?: localUser?.displayName?.takeIf { it.isNotBlank() }
+                ?: cachedProfile?.displayName?.takeIf { it.isNotBlank() }
                 ?: "Member"
-            val currencySymbol = cachedProfile?.currencySymbol ?: "₹"
+            val currencySymbol = cachedProfile?.currencySymbol?.takeIf { it.isNotBlank() } ?: "₹"
             val txTags = listOf("sms-auto", parsed.bankName.lowercase().replace(" ", "-"))
             val txNotes = "[${parsed.sender}] ${parsed.smsBody}".take(500)
 
@@ -981,26 +1103,136 @@ object TransactionNotificationHelper {
                 timestamp = parsed.timestamp,
                 persistImmediately = true
             )
-            val localSavedId = runCatching {
-                LocalAccountDataStore.addExpense(
-                    uid = activeUid,
-                    userName = memberDisplayName,
-                    household = cachedHousehold,
-                    title = merchantTitle,
-                    amount = parsed.amount.toDouble(),
-                    type = if (isIncome) "INCOME" else "EXPENSE",
-                    category = candidate.suggestedCategory,
-                    accountName = candidate.suggestedAccountName,
-                    paymentMode = candidate.suggestedPaymentMode,
-                    tags = txTags,
-                    notes = txNotes,
-                    isShared = effectiveShared,
-                    smsSignature = candidate.id,
-                    referenceNumber = parsed.reference.orEmpty(),
-                    transactionDateMillis = parsed.timestamp,
-                    customDocId = docId
-                )
-            }.getOrDefault(docId)
+            val localSavedId = if (!alreadyInLocalStore) {
+                runCatching {
+                    LocalAccountDataStore.addExpense(
+                        uid = activeUid,
+                        userName = memberDisplayName,
+                        household = cachedHousehold,
+                        title = merchantTitle,
+                        amount = parsed.amount.toDouble(),
+                        type = if (isIncome) "INCOME" else "EXPENSE",
+                        category = candidate.suggestedCategory,
+                        accountName = candidate.suggestedAccountName,
+                        paymentMode = candidate.suggestedPaymentMode,
+                        tags = txTags,
+                        notes = txNotes,
+                        isShared = effectiveShared,
+                        smsSignature = candidate.id,
+                        referenceNumber = parsed.reference.orEmpty(),
+                        transactionDateMillis = parsed.timestamp,
+                        customDocId = docId
+                    )
+                }.getOrDefault(docId)
+            } else {
+                docId
+            }
+
+            // Upsert discovered account locally when balance / limit / account digits are parsed
+            if (parsed.balance != null || parsed.creditLimit != null || parsed.accountNumber != null) {
+                val accType = when {
+                    parsed.isFromCard -> "CREDIT_CARD"
+                    candidate.suggestedPaymentMode == "WALLET" -> "WALLET"
+                    else -> "BANK"
+                }
+                runCatching {
+                    LocalAccountDataStore.upsertAccount(
+                        uid = activeUid,
+                        name = candidate.suggestedAccountName,
+                        bankName = parsed.bankName,
+                        accountType = accType,
+                        lastFourDigits = parsed.accountNumber.orEmpty(),
+                        balance = parsed.balance?.toDouble() ?: 0.0,
+                        creditLimit = parsed.creditLimit?.toDouble() ?: 0.0,
+                        isSharedVisible = effectiveShared,
+                        asOfTimestampMillis = parsed.timestamp
+                    )
+                }
+            }
+
+            // For Firebase-backed sessions, mark pending cloud sync BEFORE attempting Firestore write
+            // so even if Android kills the receiver or the device is offline, ViewModel reconciles it.
+            if (isFirebaseBacked) {
+                LocalAccountDataStore.markPendingCloudSync(activeUid, localSavedId)
+            }
+
+            // 4. Sync to Firestore FIRST (enqueuing immediately into Firestore's offline persistence cache
+            // so active UI listeners show the new transaction right away), then post notification.
+            var resolvedVisibility = if (effectiveShared) "SHARED" else "PERSONAL"
+            var resolvedHouseholdId = if (effectiveShared) cachedHousehold?.id.orEmpty() else ""
+            var resolvedHousehold = cachedHousehold
+
+            if (isFirebaseBacked) {
+                val repo = OneFamilyRepository(appContext)
+                val remoteHousehold = kotlinx.coroutines.withTimeoutOrNull(2_000L) {
+                    runCatching {
+                        val remoteProfile = repo.getUserProfileOnce() ?: cachedProfile
+                        remoteProfile?.activeHouseholdId?.takeIf { it.isNotBlank() }?.let {
+                            repo.getHouseholdOnce(it)
+                        }
+                    }.getOrNull()
+                } ?: cachedHousehold
+                val remoteShared = remoteHousehold != null
+                resolvedHousehold = remoteHousehold
+                resolvedVisibility = if (remoteShared) "SHARED" else "PERSONAL"
+                resolvedHouseholdId = if (remoteShared) remoteHousehold?.id.orEmpty() else ""
+
+                // Enqueue Firestore write immediately with a generous timeout so offline cache updates right away
+                kotlinx.coroutines.withTimeoutOrNull(12_000L) {
+                    val saveResult = repo.addExpense(
+                        userName = memberDisplayName,
+                        household = remoteHousehold,
+                        title = merchantTitle,
+                        amount = parsed.amount.toDouble(),
+                        type = if (isIncome) "INCOME" else "EXPENSE",
+                        category = candidate.suggestedCategory,
+                        accountName = candidate.suggestedAccountName,
+                        paymentMode = candidate.suggestedPaymentMode,
+                        tags = txTags,
+                        notes = txNotes,
+                        isShared = remoteShared,
+                        smsSignature = candidate.id,
+                        referenceNumber = parsed.reference.orEmpty(),
+                        transactionDateMillis = parsed.timestamp,
+                        customDocId = localSavedId,
+                        skipExistingSignatureScan = true
+                    )
+                    saveResult.onSuccess {
+                        LocalAccountDataStore.clearPendingCloudSync(activeUid, localSavedId)
+                        if (parsed.balance != null || parsed.creditLimit != null || parsed.accountNumber != null) {
+                            val accType = when {
+                                parsed.isFromCard -> "CREDIT_CARD"
+                                candidate.suggestedPaymentMode == "WALLET" -> "WALLET"
+                                else -> "BANK"
+                            }
+                            runCatching {
+                                repo.upsertAccount(
+                                    name = candidate.suggestedAccountName,
+                                    bankName = parsed.bankName,
+                                    accountType = accType,
+                                    lastFourDigits = parsed.accountNumber.orEmpty(),
+                                    balance = parsed.balance?.toDouble() ?: 0.0,
+                                    creditLimit = parsed.creditLimit?.toDouble() ?: 0.0,
+                                    isSharedVisible = remoteShared,
+                                    asOfTimestampMillis = parsed.timestamp
+                                )
+                            }
+                        }
+                    }.onFailure { err ->
+                        LocalAccountSessionManager.recordDiagnostic(
+                            context = appContext,
+                            subsystem = "SMS_REALTIME_SYNC",
+                            severity = "NON_FATAL",
+                            message = "Firestore real-time SMS write deferred (${err.javaClass.simpleName}): ${err.localizedMessage.orEmpty()}"
+                        )
+                    }
+                }
+            }
+
+            if (alreadyInLocalStore && !alreadyPendingCloudSync) {
+                markSignatureNotified(activeUid, candidate)
+                return@withLock
+            }
 
             val paymentSummary = buildString {
                 if (candidate.suggestedAccountName.isNotBlank()) append(candidate.suggestedAccountName)
@@ -1010,12 +1242,12 @@ object TransactionNotificationHelper {
                 }
             }
 
-            // 4. Post the real-time notification IMMEDIATELY before any slow Firestore network round-trip
+            // 5. Post the real-time notification pointing directly to the saved transaction ID
             showNewTransactionNotification(
                 context = appContext,
                 expenseId = localSavedId,
-                householdId = cachedHousehold?.id.orEmpty(),
-                visibility = if (effectiveShared) "SHARED" else "PERSONAL",
+                householdId = resolvedHouseholdId,
+                visibility = resolvedVisibility,
                 title = merchantTitle,
                 amount = parsed.amount.toDouble(),
                 currentCategory = candidate.suggestedCategory,
@@ -1026,48 +1258,18 @@ object TransactionNotificationHelper {
 
             markSignatureNotified(activeUid, candidate)
 
-            if (cachedHousehold != null) {
+            if (resolvedHousehold != null) {
                 showFamilyTransactionPushNotification(
                     context = appContext,
                     expenseId = localSavedId,
-                    householdId = cachedHousehold.id,
-                    householdName = cachedHousehold.name,
+                    householdId = resolvedHousehold.id,
+                    householdName = resolvedHousehold.name,
                     memberName = memberDisplayName,
                     title = merchantTitle,
                     amount = parsed.amount.toDouble(),
                     category = candidate.suggestedCategory,
                     currencySymbol = currencySymbol
                 )
-            }
-
-            // 5. Sync to Firestore with bounded timeout if backed by Firebase Auth
-            if (firebaseUser != null) {
-                kotlinx.coroutines.withTimeoutOrNull(6_000L) {
-                    runCatching {
-                        val repo = OneFamilyRepository(appContext)
-                        val remoteProfile = repo.getUserProfileOnce() ?: cachedProfile
-                        val remoteHousehold = remoteProfile?.activeHouseholdId?.takeIf { it.isNotBlank() }?.let {
-                            repo.getHouseholdOnce(it)
-                        } ?: cachedHousehold
-                        repo.addExpense(
-                            userName = memberDisplayName,
-                            household = remoteHousehold,
-                            title = merchantTitle,
-                            amount = parsed.amount.toDouble(),
-                            type = if (isIncome) "INCOME" else "EXPENSE",
-                            category = candidate.suggestedCategory,
-                            accountName = candidate.suggestedAccountName,
-                            paymentMode = candidate.suggestedPaymentMode,
-                            tags = txTags,
-                            notes = txNotes,
-                            isShared = remoteHousehold != null,
-                            smsSignature = candidate.id,
-                            referenceNumber = parsed.reference.orEmpty(),
-                            transactionDateMillis = parsed.timestamp,
-                            customDocId = docId
-                        )
-                    }
-                }
             }
         } catch (e: Exception) {
             LocalAccountSessionManager.recordDiagnostic(
@@ -1096,6 +1298,7 @@ class NotificationCategoryActionReceiver : BroadcastReceiver() {
 
         if (expenseId.isBlank() || newCategory.isBlank()) return
         LocalAccountSessionManager.ensureInitialized(context.applicationContext)
+        LocalAccountDataStore.ensureInitialized(context.applicationContext)
         val hasSession = runCatching { Firebase.auth.currentUser }.getOrNull() != null ||
             LocalAccountSessionManager.getCurrentUser(context) != null
         if (!hasSession) return
@@ -1116,7 +1319,10 @@ class NotificationCategoryActionReceiver : BroadcastReceiver() {
                     notificationId = notificationId,
                     title = title,
                     amountText = amountText,
-                    newCategory = newCategory
+                    newCategory = newCategory,
+                    expenseId = expenseId,
+                    householdId = householdId,
+                    visibility = visibility
                 )
             } finally {
                 pendingResult.finish()
@@ -1134,6 +1340,7 @@ class IncomingSmsBroadcastReceiver : BroadcastReceiver() {
         if (intent.action != Telephony.Sms.Intents.SMS_RECEIVED_ACTION) return
         val appContext = context.applicationContext
         LocalAccountSessionManager.ensureInitialized(appContext)
+        LocalAccountDataStore.ensureInitialized(appContext)
         val firebaseUser = runCatching { Firebase.auth.currentUser }.getOrNull()
         val localUser = LocalAccountSessionManager.getCurrentUser(appContext)
         if (firebaseUser == null && localUser == null) return
@@ -1206,6 +1413,8 @@ class SmsInboxContentObserver(
 
         scope.launch {
             observerMutex.withLock {
+                LocalAccountSessionManager.ensureInitialized(context.applicationContext)
+                LocalAccountDataStore.ensureInitialized(context.applicationContext)
                 runCatching {
                     val projection = arrayOf(
                         Telephony.Sms.ADDRESS,
