@@ -45,6 +45,7 @@ import androidx.compose.material.icons.filled.Apps
 import androidx.compose.material.icons.filled.Block
 import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.BugReport
+import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Close
@@ -89,6 +90,8 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
@@ -184,6 +187,7 @@ import com.example.ui.viewmodel.CategorySpendProgress
 import com.example.ui.viewmodel.DateRangePreset
 import com.example.ui.viewmodel.MonthlySpendBar
 import com.example.ui.viewmodel.OneFamilyDashboardUiState
+import com.example.ui.viewmodel.SmsSyncPeriodOption
 import com.example.ui.viewmodel.YearMonthPeriod
 import kotlin.math.roundToInt
 import kotlinx.coroutines.delay
@@ -615,7 +619,7 @@ fun HomeTabScreen(
     @Suppress("UNUSED_PARAMETER") onClearFilters: () -> Unit = {},
     @Suppress("UNUSED_PARAMETER") onScanSmsClick: () -> Unit = {},
     @Suppress("UNUSED_PARAMETER") onExportCsvClick: () -> Unit = {},
-    @Suppress("UNUSED_PARAMETER") onAddTransactionClick: () -> Unit = {},
+    onAddTransactionClick: () -> Unit = {},
     onAcceptEmailInvite: (Household) -> Unit = {},
     @Suppress("UNUSED_PARAMETER") onEditTransaction: (ExpenseTransaction) -> Unit = {},
     @Suppress("UNUSED_PARAMETER") onQuickChangeCategory: (ExpenseTransaction) -> Unit = {},
@@ -743,9 +747,9 @@ fun HomeTabScreen(
             }
         }
 
-        // 3. Hero Serrated Paper Receipt Budget Pulse Card
+        // 3. Calm Rhythm-Inspired Editorial Hero Card
         item {
-            Box(modifier = Modifier.padding(bottom = 10.dp)) {
+            Box(modifier = Modifier.padding(bottom = 12.dp)) {
                 MonthlyBudgetPulseCard(
                     totalSpent = uiState.totalMonthlySpent,
                     totalIncome = uiState.totalMonthlyIncome,
@@ -756,6 +760,9 @@ fun HomeTabScreen(
                     periodLabel = uiState.periodLabel,
                     household = uiState.household,
                     monthlyTrendBars = uiState.monthlyTrendBars,
+                    transactionsCount = uiState.filteredExpenses.size,
+                    onOpenTransactionsClick = onOpenAllTransactionsPage,
+                    onQuickAddClick = onAddTransactionClick,
                     onEditBudgetClick = onEditMonthlyBudget
                 )
             }
@@ -819,91 +826,291 @@ fun HomeTabScreen(
             }
         }
 
-        // 5. Monthly Trend Card (Moved from Analysis Page onto Home Page)
+        // 5. Clean Monthly Trend Card
         item {
-            Box(
+            Surface(
                 modifier = Modifier
+                    .fillMaxWidth()
                     .padding(horizontal = dimens.horizontalPadding)
                     .padding(bottom = 12.dp)
-                    .testTag("home_monthly_trend_card")
+                    .testTag("home_monthly_trend_card"),
+                shape = RoundedCornerShape(28.dp),
+                color = MaterialTheme.colorScheme.surfaceContainerLow
             ) {
-                ReceiptTicketCard(
-                    containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
-                    contentColor = MaterialTheme.colorScheme.onSurface
-                ) {
-                    Column(modifier = Modifier.padding(dimens.cardPadding)) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    text = "Monthly Trend",
-                                    style = MaterialTheme.typography.titleLarge,
-                                    fontWeight = FontWeight.Bold
-                                )
-                                Text(
-                                    text = "Scroll freely • Tap a month to inspect receipts",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    maxLines = 2,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                            }
-                            Spacer(modifier = Modifier.width(8.dp))
-                            FilledTonalButton(
-                                onClick = {
-                                    performHaptic()
-                                    onOpenAllTransactionsPage()
-                                },
-                                shape = RoundedCornerShape(50),
-                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
-                                modifier = Modifier
-                                    .heightIn(min = 42.dp)
-                                    .testTag("view_all_transactions_footer_button")
-                            ) {
-                                Icon(
-                                    imageVector = Icons.AutoMirrored.Filled.ReceiptLong,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(16.dp)
-                                )
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text(
-                                    text = "Transactions (${uiState.filteredExpenses.size})",
-                                    style = MaterialTheme.typography.labelMedium,
-                                    fontWeight = FontWeight.Bold,
-                                    maxLines = 1
-                                )
-                            }
-                        }
-                        Spacer(modifier = Modifier.height(10.dp))
-                        MonthlyBarGraph(
-                            bars = uiState.monthlyTrendBars,
-                            currencySymbol = currency,
-                            overallBudget = uiState.activeMonthlyBudget,
-                            onSelectMonth = { onSelectPeriod(it) },
-                            onStepMonth = onStepMonth
-                        )
-                    }
+                Column(modifier = Modifier.padding(dimens.cardPadding)) {
+                    Text(
+                        text = "Monthly Trend",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    Spacer(modifier = Modifier.height(10.dp))
+                    MonthlyBarGraph(
+                        bars = uiState.monthlyTrendBars,
+                        currencySymbol = currency,
+                        overallBudget = uiState.activeMonthlyBudget,
+                        onSelectMonth = { onSelectPeriod(it) },
+                        onStepMonth = onStepMonth
+                    )
                 }
             }
         }
 
-        // 6. Bill Reminders Card on Home Page (Credit Card Billing Cycles + Custom & Recurring Bills)
+        // 6. Clean Bill Reminders Section
         item {
             val totalRemindersCount = creditCardReminders.size + savedBillReminders.size + autoDetectedBillExpenses.size
-            Card(
+            Surface(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = dimens.horizontalPadding)
                     .padding(bottom = 12.dp)
                     .testTag("home_bill_reminders_card"),
-                shape = RoundedCornerShape(24.dp),
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.surfaceContainerLow
-                ),
-                elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
+                shape = RoundedCornerShape(28.dp),
+                color = MaterialTheme.colorScheme.surfaceContainerLow
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(dimens.cardPadding),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "Bill Reminders",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f)
+                        )
+                        FilledTonalButton(
+                            onClick = {
+                                performHaptic()
+                                showAddBillReminderDialog = true
+                            },
+                            shape = RoundedCornerShape(50),
+                            contentPadding = PaddingValues(horizontal = 14.dp, vertical = 0.dp),
+                            modifier = Modifier
+                                .heightIn(min = 48.dp)
+                                .testTag("home_add_bill_reminder_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Add,
+                                contentDescription = "Add Bill Reminder",
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = "Add",
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.SemiBold,
+                                maxLines = 1
+                            )
+                        }
+                    }
+
+                    if (totalRemindersCount == 0) {
+                        Text(
+                            text = "No upcoming bills",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(vertical = 4.dp)
+                        )
+                    } else {
+                        val todayDay = remember {
+                            java.util.Calendar.getInstance().get(java.util.Calendar.DAY_OF_MONTH)
+                        }
+                        var renderedBillRows = 0
+
+                        // A. Credit Card Billing Cycle Reminders
+                        creditCardReminders.forEach { summary ->
+                            if (renderedBillRows > 0) {
+                                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f))
+                            }
+                            renderedBillRows++
+                            val acc = summary.account
+                            val cycleDay = acc.billingCycleDay.coerceIn(1, 31)
+                            val cycleRange = remember(cycleDay) {
+                                AccountLimitPeriodUtils.formatBillingCycleRange(cycleDay)
+                            }
+                            val safeAccId = acc.id.ifBlank { acc.name }.lowercase().replace(Regex("[^a-z0-9]+"), "_")
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(14.dp))
+                                    .clickable {
+                                        performHaptic()
+                                        onAccountClick(acc.id)
+                                    }
+                                    .padding(vertical = 8.dp)
+                                    .testTag("home_bill_reminder_item_$safeAccId"),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = acc.name,
+                                        style = MaterialTheme.typography.titleSmall,
+                                        fontWeight = FontWeight.SemiBold,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                    Text(
+                                        text = "Cycle Day $cycleDay · $cycleRange",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    text = formatCurrency(summary.spent, currency),
+                                    style = MaterialTheme.typography.titleSmall.copy(fontFamily = ReceiptMonoFontFamily),
+                                    fontWeight = FontWeight.Bold,
+                                    color = if (summary.isOverLimit) BudgetDangerCoral else MaterialTheme.colorScheme.onSurface
+                                )
+                            }
+                        }
+
+                        // B. User-Added Custom Bill Reminders
+                        savedBillReminders.forEach { reminder ->
+                            if (renderedBillRows > 0) {
+                                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f))
+                            }
+                            renderedBillRows++
+                            val safeRemId = reminder.id.lowercase().replace(Regex("[^a-z0-9]+"), "_")
+                            val daysDiff = if (reminder.dueDayOfMonth >= todayDay) {
+                                reminder.dueDayOfMonth - todayDay
+                            } else {
+                                (30 - todayDay) + reminder.dueDayOfMonth
+                            }
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 4.dp)
+                                    .testTag("home_bill_reminder_item_$safeRemId"),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = reminder.title,
+                                        style = MaterialTheme.typography.titleSmall,
+                                        fontWeight = FontWeight.SemiBold,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                    Text(
+                                        text = if (daysDiff == 0) {
+                                            "Due today · Day ${reminder.dueDayOfMonth}"
+                                        } else {
+                                            "Due Day ${reminder.dueDayOfMonth} · in ${daysDiff}d"
+                                        },
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    if (reminder.amount > 0.0) {
+                                        Text(
+                                            text = formatCurrency(reminder.amount, currency),
+                                            style = MaterialTheme.typography.titleSmall.copy(fontFamily = ReceiptMonoFontFamily),
+                                            fontWeight = FontWeight.Bold,
+                                            color = MaterialTheme.colorScheme.onSurface
+                                        )
+                                    }
+                                    IconButton(
+                                        onClick = {
+                                            performHaptic()
+                                            LocalAccountSessionManager.deleteBillReminder(context, reminder.id)
+                                        },
+                                        modifier = Modifier
+                                            .minimumInteractiveComponentSize()
+                                            .size(48.dp)
+                                            .testTag("home_delete_bill_reminder_$safeRemId")
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.DeleteOutline,
+                                            contentDescription = "Delete Bill Reminder",
+                                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            modifier = Modifier.size(20.dp)
+                                        )
+                                    }
+                                }
+                            }
+                        }
+
+                        // C. Auto-Detected Recurring Bills & Utilities
+                        autoDetectedBillExpenses.forEach { billTx ->
+                            if (renderedBillRows > 0) {
+                                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f))
+                            }
+                            renderedBillRows++
+                            val billDay = remember(billTx.transactionDateMillis) {
+                                java.util.Calendar.getInstance().apply {
+                                    timeInMillis = billTx.transactionDateMillis
+                                }.get(java.util.Calendar.DAY_OF_MONTH)
+                            }
+                            val safeBillId = billTx.id.lowercase().replace(Regex("[^a-z0-9]+"), "_")
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(14.dp))
+                                    .clickable {
+                                        performHaptic()
+                                        onOpenAllTransactionsPage()
+                                    }
+                                    .padding(vertical = 8.dp)
+                                    .testTag("home_bill_reminder_item_$safeBillId"),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = billTx.title,
+                                        style = MaterialTheme.typography.titleSmall,
+                                        fontWeight = FontWeight.SemiBold,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                    Text(
+                                        text = "${billTx.category} · Day $billDay",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    text = formatCurrency(billTx.amount, currency),
+                                    style = MaterialTheme.typography.titleSmall.copy(fontFamily = ReceiptMonoFontFamily),
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // 7. Clean Active Limits Section
+        item {
+            Surface(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = dimens.horizontalPadding)
+                    .padding(bottom = 12.dp)
+                    .testTag("home_active_limits_card"),
+                shape = RoundedCornerShape(28.dp),
+                color = MaterialTheme.colorScheme.surfaceContainerLow
             ) {
                 Column(
                     modifier = Modifier
@@ -916,382 +1123,14 @@ fun HomeTabScreen(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Row(
-                            modifier = Modifier.weight(1f),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            SquircleIconBadge(
-                                icon = Icons.Default.NotificationsActive,
-                                tint = MaterialTheme.colorScheme.primary,
-                                containerColor = MaterialTheme.colorScheme.primaryContainer,
-                                size = 36.dp,
-                                iconSize = 18.dp
-                            )
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    text = "Bill Reminders",
-                                    style = MaterialTheme.typography.titleMedium,
-                                    fontWeight = FontWeight.Bold,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                                Text(
-                                    text = if (totalRemindersCount > 0) {
-                                        "$totalRemindersCount upcoming cycle & bill reminders"
-                                    } else {
-                                        "Upcoming bills & credit card cycles"
-                                    },
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    maxLines = 2,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                            }
-                        }
-                        Spacer(modifier = Modifier.width(8.dp))
-                        FilledTonalButton(
-                            onClick = {
-                                performHaptic()
-                                showAddBillReminderDialog = true
-                            },
-                            shape = RoundedCornerShape(50),
-                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
-                            modifier = Modifier
-                                .heightIn(min = 42.dp)
-                                .testTag("home_add_bill_reminder_button")
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Add,
-                                contentDescription = "Add Bill Reminder",
-                                modifier = Modifier.size(16.dp)
-                            )
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text(
-                                text = "Add Bill",
-                                style = MaterialTheme.typography.labelMedium,
-                                fontWeight = FontWeight.Bold,
-                                maxLines = 1
-                            )
-                        }
-                    }
-
-                    if (totalRemindersCount == 0) {
-                        Surface(
-                            shape = RoundedCornerShape(16.dp),
-                            color = MaterialTheme.colorScheme.surfaceContainer
-                        ) {
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(horizontal = 14.dp, vertical = 12.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.SpaceBetween
-                            ) {
-                                Text(
-                                    text = "No bill reminders yet. Add a recurring bill or set a credit card billing cycle.",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    modifier = Modifier.weight(1f)
-                                )
-                            }
-                        }
-                    } else {
-                        val todayDay = remember {
-                            java.util.Calendar.getInstance().get(java.util.Calendar.DAY_OF_MONTH)
-                        }
-
-                        // A. Credit Card Billing Cycle Reminders
-                        creditCardReminders.forEach { summary ->
-                            val acc = summary.account
-                            val cycleDay = acc.billingCycleDay.coerceIn(1, 31)
-                            val cycleRange = remember(cycleDay) {
-                                AccountLimitPeriodUtils.formatBillingCycleRange(cycleDay)
-                            }
-                            val safeAccId = acc.id.ifBlank { acc.name }.lowercase().replace(Regex("[^a-z0-9]+"), "_")
-                            Surface(
-                                shape = RoundedCornerShape(18.dp),
-                                color = MaterialTheme.colorScheme.surfaceContainer,
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clip(RoundedCornerShape(18.dp))
-                                    .clickable {
-                                        performHaptic()
-                                        onAccountClick(acc.id)
-                                    }
-                                    .testTag("home_bill_reminder_item_$safeAccId")
-                            ) {
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(horizontal = 14.dp, vertical = 12.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.SpaceBetween
-                                ) {
-                                    Row(
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        modifier = Modifier.weight(1f)
-                                    ) {
-                                        SquircleIconBadge(
-                                            icon = Icons.Default.Schedule,
-                                            tint = HouseholdBadgeIndigo,
-                                            containerColor = HouseholdBadgeIndigo.copy(alpha = 0.16f),
-                                            size = 38.dp,
-                                            iconSize = 18.dp
-                                        )
-                                        Spacer(modifier = Modifier.width(12.dp))
-                                        Column(modifier = Modifier.weight(1f)) {
-                                            Text(
-                                                text = acc.name,
-                                                style = MaterialTheme.typography.titleSmall,
-                                                fontWeight = FontWeight.Bold,
-                                                maxLines = 1,
-                                                overflow = TextOverflow.Ellipsis
-                                            )
-                                            Text(
-                                                text = "Billing Cycle Day $cycleDay ($cycleRange)",
-                                                style = MaterialTheme.typography.labelSmall,
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                                maxLines = 1,
-                                                overflow = TextOverflow.Ellipsis
-                                            )
-                                        }
-                                    }
-                                    Spacer(modifier = Modifier.width(8.dp))
-                                    Column(horizontalAlignment = Alignment.End) {
-                                        Text(
-                                            text = formatCurrency(summary.spent, currency),
-                                            style = MaterialTheme.typography.titleSmall.copy(fontFamily = ReceiptMonoFontFamily),
-                                            fontWeight = FontWeight.Bold,
-                                            color = if (summary.isOverLimit) BudgetDangerCoral else MaterialTheme.colorScheme.onSurface
-                                        )
-                                        Text(
-                                            text = if (summary.limit > 0.0) {
-                                                "of ${formatCurrency(summary.limit, currency)}"
-                                            } else {
-                                                "Cycle spend"
-                                            },
-                                            style = MaterialTheme.typography.labelSmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
-                                    }
-                                }
-                            }
-                        }
-
-                        // B. User-Added Custom Bill Reminders
-                        savedBillReminders.forEach { reminder ->
-                            val safeRemId = reminder.id.lowercase().replace(Regex("[^a-z0-9]+"), "_")
-                            val daysDiff = if (reminder.dueDayOfMonth >= todayDay) {
-                                reminder.dueDayOfMonth - todayDay
-                            } else {
-                                (30 - todayDay) + reminder.dueDayOfMonth
-                            }
-                            Surface(
-                                shape = RoundedCornerShape(18.dp),
-                                color = MaterialTheme.colorScheme.surfaceContainer,
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .testTag("home_bill_reminder_item_$safeRemId")
-                            ) {
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(horizontal = 14.dp, vertical = 10.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.SpaceBetween
-                                ) {
-                                    Row(
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        modifier = Modifier.weight(1f)
-                                    ) {
-                                        SquircleIconBadge(
-                                            icon = Icons.Default.Bolt,
-                                            tint = BudgetWarnAmber,
-                                            containerColor = BudgetWarnAmber.copy(alpha = 0.16f),
-                                            size = 38.dp,
-                                            iconSize = 18.dp
-                                        )
-                                        Spacer(modifier = Modifier.width(12.dp))
-                                        Column(modifier = Modifier.weight(1f)) {
-                                            Text(
-                                                text = reminder.title,
-                                                style = MaterialTheme.typography.titleSmall,
-                                                fontWeight = FontWeight.Bold,
-                                                maxLines = 1,
-                                                overflow = TextOverflow.Ellipsis
-                                            )
-                                            Text(
-                                                text = if (daysDiff == 0) {
-                                                    "Due today • Day ${reminder.dueDayOfMonth}"
-                                                } else {
-                                                    "Due Day ${reminder.dueDayOfMonth} • in ${daysDiff}d"
-                                                },
-                                                style = MaterialTheme.typography.labelSmall,
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                                            )
-                                        }
-                                    }
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                        if (reminder.amount > 0.0) {
-                                            Text(
-                                                text = formatCurrency(reminder.amount, currency),
-                                                style = MaterialTheme.typography.titleSmall.copy(fontFamily = ReceiptMonoFontFamily),
-                                                fontWeight = FontWeight.Bold,
-                                                color = MaterialTheme.colorScheme.onSurface
-                                            )
-                                        }
-                                        IconButton(
-                                            onClick = {
-                                                performHaptic()
-                                                LocalAccountSessionManager.deleteBillReminder(context, reminder.id)
-                                            },
-                                            modifier = Modifier
-                                                .minimumInteractiveComponentSize()
-                                                .size(48.dp)
-                                                .testTag("home_delete_bill_reminder_$safeRemId")
-                                        ) {
-                                            Icon(
-                                                imageVector = Icons.Default.DeleteOutline,
-                                                contentDescription = "Delete Bill Reminder",
-                                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                                modifier = Modifier.size(20.dp)
-                                            )
-                                        }
-                                    }
-                                }
-                            }
-                        }
-
-                        // C. Auto-Detected Recurring Bills & Utilities
-                        autoDetectedBillExpenses.forEach { billTx ->
-                            val billDay = remember(billTx.transactionDateMillis) {
-                                java.util.Calendar.getInstance().apply {
-                                    timeInMillis = billTx.transactionDateMillis
-                                }.get(java.util.Calendar.DAY_OF_MONTH)
-                            }
-                            val safeBillId = billTx.id.lowercase().replace(Regex("[^a-z0-9]+"), "_")
-                            Surface(
-                                shape = RoundedCornerShape(18.dp),
-                                color = MaterialTheme.colorScheme.surfaceContainer,
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clip(RoundedCornerShape(18.dp))
-                                    .clickable {
-                                        performHaptic()
-                                        onOpenAllTransactionsPage()
-                                    }
-                                    .testTag("home_bill_reminder_item_$safeBillId")
-                            ) {
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(horizontal = 14.dp, vertical = 12.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.SpaceBetween
-                                ) {
-                                    Row(
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        modifier = Modifier.weight(1f)
-                                    ) {
-                                        val catColor = categoryAccentColor(billTx.category)
-                                        SquircleIconBadge(
-                                            icon = categoryIcon(billTx.category),
-                                            tint = catColor,
-                                            containerColor = catColor.copy(alpha = 0.16f),
-                                            size = 38.dp,
-                                            iconSize = 18.dp
-                                        )
-                                        Spacer(modifier = Modifier.width(12.dp))
-                                        Column(modifier = Modifier.weight(1f)) {
-                                            Text(
-                                                text = billTx.title,
-                                                style = MaterialTheme.typography.titleSmall,
-                                                fontWeight = FontWeight.Bold,
-                                                maxLines = 1,
-                                                overflow = TextOverflow.Ellipsis
-                                            )
-                                            Text(
-                                                text = "${billTx.category} • Cycle Day $billDay",
-                                                style = MaterialTheme.typography.labelSmall,
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                                maxLines = 1,
-                                                overflow = TextOverflow.Ellipsis
-                                            )
-                                        }
-                                    }
-                                    Spacer(modifier = Modifier.width(8.dp))
-                                    Text(
-                                        text = formatCurrency(billTx.amount, currency),
-                                        style = MaterialTheme.typography.titleSmall.copy(fontFamily = ReceiptMonoFontFamily),
-                                        fontWeight = FontWeight.Bold,
-                                        color = MaterialTheme.colorScheme.onSurface
-                                    )
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        // 7. Active Set Limits Card on Home Page (Overall Budget + Credit Card/Account Spend Limits + Category Budgets)
-        item {
-            Card(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = dimens.horizontalPadding)
-                    .padding(bottom = 12.dp)
-                    .testTag("home_active_limits_card"),
-                shape = RoundedCornerShape(24.dp),
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.surfaceContainerLow
-                ),
-                elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
-            ) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(dimens.cardPadding),
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    @OptIn(ExperimentalLayoutApi::class)
-                    FlowRow(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            SquircleIconBadge(
-                                icon = Icons.Default.Shield,
-                                tint = BudgetSafeGreen,
-                                containerColor = BudgetSafeGreen.copy(alpha = 0.16f),
-                                size = 36.dp,
-                                iconSize = 18.dp
-                            )
-                            Column {
-                                Text(
-                                    text = "Active Limits",
-                                    style = MaterialTheme.typography.titleMedium,
-                                    fontWeight = FontWeight.Bold
-                                )
-                                Text(
-                                    text = if (totalActiveLimitsCount > 0) {
-                                        "$totalActiveLimitsCount configured spend & budget limits"
-                                    } else {
-                                        "No spend or budget limits set yet"
-                                    },
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    maxLines = 2,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                            }
-                        }
-                        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text(
+                            text = "Active Limits",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            modifier = Modifier.weight(1f)
+                        )
+                        Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
                             TextButton(
                                 onClick = {
                                     performHaptic()
@@ -1299,7 +1138,7 @@ fun HomeTabScreen(
                                 },
                                 modifier = Modifier.testTag("home_manage_limits_button")
                             ) {
-                                Text("Budgets", fontWeight = FontWeight.Bold)
+                                Text("Budgets", fontWeight = FontWeight.SemiBold)
                             }
                             TextButton(
                                 onClick = {
@@ -1308,34 +1147,24 @@ fun HomeTabScreen(
                                 },
                                 modifier = Modifier.testTag("home_manage_account_limits_button")
                             ) {
-                                Text("Cards", fontWeight = FontWeight.Bold)
+                                Text("Cards", fontWeight = FontWeight.SemiBold)
                             }
                         }
                     }
 
                     if (totalActiveLimitsCount == 0) {
-                        Surface(
-                            shape = RoundedCornerShape(16.dp),
-                            color = MaterialTheme.colorScheme.surfaceContainer
-                        ) {
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(horizontal = 14.dp, vertical = 12.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.SpaceBetween
-                            ) {
-                                Text(
-                                    text = "Set a monthly budget, category envelope, or credit card limit to track it here.",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    modifier = Modifier.weight(1f)
-                                )
-                            }
-                        }
+                        Text(
+                            text = "No limits set yet",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(vertical = 4.dp)
+                        )
                     } else {
+                        var renderedLimitRows = 0
+
                         // A. Overall Monthly Budget Limit
                         if (uiState.activeMonthlyBudget > 0.0) {
+                            renderedLimitRows++
                             val ratio = (uiState.totalMonthlySpent / uiState.activeMonthlyBudget).toFloat().coerceIn(0f, 1f)
                             val pct = ((uiState.totalMonthlySpent / uiState.activeMonthlyBudget) * 100.0).roundToInt()
                             val barColor = when {
@@ -1343,132 +1172,115 @@ fun HomeTabScreen(
                                 pct >= 80 -> BudgetWarnAmber
                                 else -> BudgetSafeGreen
                             }
-                            Surface(
-                                shape = RoundedCornerShape(18.dp),
-                                color = MaterialTheme.colorScheme.surfaceContainer,
+                            Column(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .clip(RoundedCornerShape(18.dp))
+                                    .clip(RoundedCornerShape(14.dp))
                                     .clickable {
                                         performHaptic()
                                         onEditMonthlyBudget()
                                     }
-                                    .testTag("home_limit_item_overall_budget")
+                                    .padding(vertical = 6.dp)
+                                    .testTag("home_limit_item_overall_budget"),
+                                verticalArrangement = Arrangement.spacedBy(6.dp)
                             ) {
-                                Column(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(horizontal = 14.dp, vertical = 12.dp),
-                                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                                @OptIn(ExperimentalLayoutApi::class)
+                                FlowRow(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalArrangement = Arrangement.spacedBy(2.dp)
                                 ) {
-                                    @OptIn(ExperimentalLayoutApi::class)
-                                    FlowRow(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.SpaceBetween,
-                                        verticalArrangement = Arrangement.spacedBy(4.dp)
-                                    ) {
-                                        Text(
-                                            text = "Overall Monthly Budget",
-                                            style = MaterialTheme.typography.titleSmall,
-                                            fontWeight = FontWeight.Bold,
-                                            maxLines = 1
-                                        )
-                                        Text(
-                                            text = "${formatCurrency(uiState.totalMonthlySpent, currency)} / ${formatCurrency(uiState.activeMonthlyBudget, currency)} ($pct%)",
-                                            style = MaterialTheme.typography.labelMedium.copy(fontFamily = ReceiptMonoFontFamily),
-                                            fontWeight = FontWeight.Bold,
-                                            color = barColor,
-                                            maxLines = 1
-                                        )
-                                    }
-                                    LinearProgressIndicator(
-                                        progress = { ratio },
+                                    Text(
+                                        text = "Monthly Budget",
+                                        style = MaterialTheme.typography.titleSmall,
+                                        fontWeight = FontWeight.SemiBold,
+                                        maxLines = 1
+                                    )
+                                    Text(
+                                        text = "${formatCurrency(uiState.totalMonthlySpent, currency)} / ${formatCurrency(uiState.activeMonthlyBudget, currency)}",
+                                        style = MaterialTheme.typography.labelMedium.copy(fontFamily = ReceiptMonoFontFamily),
+                                        fontWeight = FontWeight.Bold,
                                         color = barColor,
-                                        trackColor = MaterialTheme.colorScheme.surfaceContainerHighest,
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .height(7.dp)
-                                            .clip(RoundedCornerShape(50))
+                                        maxLines = 1
                                     )
                                 }
+                                LinearProgressIndicator(
+                                    progress = { ratio },
+                                    color = barColor,
+                                    trackColor = MaterialTheme.colorScheme.surfaceContainerHighest,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(5.dp)
+                                        .clip(RoundedCornerShape(50))
+                                )
                             }
                         }
 
                         // B. Account & Credit Card Spend Limits
                         activeAccountLimits.forEach { summary ->
+                            if (renderedLimitRows > 0) {
+                                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f))
+                            }
+                            renderedLimitRows++
                             val acc = summary.account
                             val safeAccId = acc.id.ifBlank { acc.name }.lowercase().replace(Regex("[^a-z0-9]+"), "_")
                             val ratio = (summary.spent / summary.limit.coerceAtLeast(1.0)).toFloat().coerceIn(0f, 1f)
-                            val pct = ((summary.spent / summary.limit.coerceAtLeast(1.0)) * 100.0).roundToInt()
                             val barColor = when {
                                 summary.isOverLimit -> BudgetDangerCoral
                                 summary.isNearAlert -> BudgetWarnAmber
                                 else -> BudgetSafeGreen
                             }
-                            val isCreditCard = summary.section == AccountSectionType.CREDIT_CARD
-                            Surface(
-                                shape = RoundedCornerShape(18.dp),
-                                color = MaterialTheme.colorScheme.surfaceContainer,
+                            Column(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .clip(RoundedCornerShape(18.dp))
+                                    .clip(RoundedCornerShape(14.dp))
                                     .clickable {
                                         performHaptic()
                                         onAccountClick(acc.id)
                                     }
-                                    .testTag("home_limit_item_account_$safeAccId")
+                                    .padding(vertical = 6.dp)
+                                    .testTag("home_limit_item_account_$safeAccId"),
+                                verticalArrangement = Arrangement.spacedBy(6.dp)
                             ) {
-                                Column(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(horizontal = 14.dp, vertical = 12.dp),
-                                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                                @OptIn(ExperimentalLayoutApi::class)
+                                FlowRow(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalArrangement = Arrangement.spacedBy(2.dp)
                                 ) {
-                                    @OptIn(ExperimentalLayoutApi::class)
-                                    FlowRow(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.SpaceBetween,
-                                        verticalArrangement = Arrangement.spacedBy(4.dp)
-                                    ) {
-                                        Column {
-                                            Text(
-                                                text = acc.name,
-                                                style = MaterialTheme.typography.titleSmall,
-                                                fontWeight = FontWeight.Bold,
-                                                maxLines = 1,
-                                                overflow = TextOverflow.Ellipsis
-                                            )
-                                            if (isCreditCard || acc.billingCycleDay > 1) {
-                                                Text(
-                                                    text = "Billing Cycle Day ${acc.billingCycleDay.coerceIn(1, 31)}",
-                                                    style = MaterialTheme.typography.labelSmall,
-                                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                                )
-                                            }
-                                        }
-                                        Text(
-                                            text = "${formatCurrency(summary.spent, currency)} / ${formatCurrency(summary.limit, currency)} ($pct%)",
-                                            style = MaterialTheme.typography.labelMedium.copy(fontFamily = ReceiptMonoFontFamily),
-                                            fontWeight = FontWeight.Bold,
-                                            color = barColor,
-                                            maxLines = 1
-                                        )
-                                    }
-                                    LinearProgressIndicator(
-                                        progress = { ratio },
+                                    Text(
+                                        text = acc.name,
+                                        style = MaterialTheme.typography.titleSmall,
+                                        fontWeight = FontWeight.SemiBold,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                    Text(
+                                        text = "${formatCurrency(summary.spent, currency)} / ${formatCurrency(summary.limit, currency)}",
+                                        style = MaterialTheme.typography.labelMedium.copy(fontFamily = ReceiptMonoFontFamily),
+                                        fontWeight = FontWeight.Bold,
                                         color = barColor,
-                                        trackColor = MaterialTheme.colorScheme.surfaceContainerHighest,
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .height(7.dp)
-                                            .clip(RoundedCornerShape(50))
+                                        maxLines = 1
                                     )
                                 }
+                                LinearProgressIndicator(
+                                    progress = { ratio },
+                                    color = barColor,
+                                    trackColor = MaterialTheme.colorScheme.surfaceContainerHighest,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(5.dp)
+                                        .clip(RoundedCornerShape(50))
+                                )
                             }
                         }
 
                         // C. Category Budget Limits
                         activeCategoryLimits.forEach { catItem ->
+                            if (renderedLimitRows > 0) {
+                                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f))
+                            }
+                            renderedLimitRows++
                             val safeCatId = catItem.category.lowercase().replace(Regex("[^a-z0-9]+"), "_")
                             val ratio = (catItem.spent / catItem.limit.coerceAtLeast(1.0)).toFloat().coerceIn(0f, 1f)
                             val pct = ((catItem.spent / catItem.limit.coerceAtLeast(1.0)) * 100.0).roundToInt()
@@ -1478,64 +1290,57 @@ fun HomeTabScreen(
                                 else -> BudgetSafeGreen
                             }
                             val catColor = categoryAccentColor(catItem.category)
-                            Surface(
-                                shape = RoundedCornerShape(18.dp),
-                                color = MaterialTheme.colorScheme.surfaceContainer,
+                            Column(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .clip(RoundedCornerShape(18.dp))
+                                    .clip(RoundedCornerShape(14.dp))
                                     .clickable {
                                         performHaptic()
                                         editingBudgetForCategory = catItem.category to catItem.limit
                                     }
-                                    .testTag("home_limit_item_category_$safeCatId")
+                                    .padding(vertical = 6.dp)
+                                    .testTag("home_limit_item_category_$safeCatId"),
+                                verticalArrangement = Arrangement.spacedBy(6.dp)
                             ) {
-                                Column(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(horizontal = 14.dp, vertical = 12.dp),
-                                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                                @OptIn(ExperimentalLayoutApi::class)
+                                FlowRow(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalArrangement = Arrangement.spacedBy(2.dp)
                                 ) {
-                                    @OptIn(ExperimentalLayoutApi::class)
-                                    FlowRow(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.SpaceBetween,
-                                        verticalArrangement = Arrangement.spacedBy(4.dp)
-                                    ) {
-                                        Row(verticalAlignment = Alignment.CenterVertically) {
-                                            CategoryBadgeGlyph(
-                                                category = catItem.category,
-                                                tint = catColor,
-                                                iconSize = 16.dp,
-                                                customEmoji = customEmojis[catItem.category.trim().lowercase()]
-                                            )
-                                            Spacer(modifier = Modifier.width(8.dp))
-                                            Text(
-                                                text = catItem.category,
-                                                style = MaterialTheme.typography.titleSmall,
-                                                fontWeight = FontWeight.Bold,
-                                                maxLines = 1,
-                                                overflow = TextOverflow.Ellipsis
-                                            )
-                                        }
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        CategoryBadgeGlyph(
+                                            category = catItem.category,
+                                            tint = catColor,
+                                            iconSize = 16.dp,
+                                            customEmoji = customEmojis[catItem.category.trim().lowercase()]
+                                        )
+                                        Spacer(modifier = Modifier.width(8.dp))
                                         Text(
-                                            text = "${formatCurrency(catItem.spent, currency)} / ${formatCurrency(catItem.limit, currency)} ($pct%)",
-                                            style = MaterialTheme.typography.labelMedium.copy(fontFamily = ReceiptMonoFontFamily),
-                                            fontWeight = FontWeight.Bold,
-                                            color = barColor,
-                                            maxLines = 1
+                                            text = catItem.category,
+                                            style = MaterialTheme.typography.titleSmall,
+                                            fontWeight = FontWeight.SemiBold,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
                                         )
                                     }
-                                    LinearProgressIndicator(
-                                        progress = { ratio },
+                                    Text(
+                                        text = "${formatCurrency(catItem.spent, currency)} / ${formatCurrency(catItem.limit, currency)}",
+                                        style = MaterialTheme.typography.labelMedium.copy(fontFamily = ReceiptMonoFontFamily),
+                                        fontWeight = FontWeight.Bold,
                                         color = barColor,
-                                        trackColor = MaterialTheme.colorScheme.surfaceContainerHighest,
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .height(7.dp)
-                                            .clip(RoundedCornerShape(50))
+                                        maxLines = 1
                                     )
                                 }
+                                LinearProgressIndicator(
+                                    progress = { ratio },
+                                    color = barColor,
+                                    trackColor = MaterialTheme.colorScheme.surfaceContainerHighest,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(5.dp)
+                                        .clip(RoundedCornerShape(50))
+                                )
                             }
                         }
                     }
@@ -2502,6 +2307,10 @@ fun HouseholdTabScreen(
     onUpdatePreferredCurrency: (String) -> Unit = {},
     onAddAccountClick: () -> Unit = {},
     onScanSmsClick: () -> Unit = {},
+    smsSyncPeriodOption: SmsSyncPeriodOption = SmsSyncPeriodOption.ALL_TIME,
+    smsSyncCustomRange: Pair<Long, Long>? = null,
+    onSelectSmsSyncPeriod: (SmsSyncPeriodOption) -> Unit = {},
+    onSelectSmsSyncCustomRange: (Long, Long) -> Unit = { _, _ -> },
     onExportCsvClick: () -> Unit = {},
     onSendTestFcmAlertClick: () -> Unit = {},
     onRunStabilityCheckClick: () -> Unit = {},
@@ -2548,6 +2357,19 @@ fun HouseholdTabScreen(
     var joinCodeInput by remember { mutableStateOf("") }
     var inviteEmailInput by remember { mutableStateOf("") }
     var showDeleteAccountConfirmDialog by rememberSaveable { mutableStateOf(false) }
+    var showSmsCustomRangePicker by rememberSaveable { mutableStateOf(false) }
+
+    if (showSmsCustomRangePicker) {
+        CustomDateRangePickerModal(
+            initialStartMillis = smsSyncCustomRange?.first,
+            initialEndMillis = smsSyncCustomRange?.second,
+            onDismiss = { showSmsCustomRangePicker = false },
+            onApplyRange = { startMillis, endMillis ->
+                onSelectSmsSyncCustomRange(startMillis, endMillis)
+                showSmsCustomRangePicker = false
+            }
+        )
+    }
 
     if (showDeleteAccountConfirmDialog) {
         AlertDialog(
@@ -2711,7 +2533,7 @@ fun HouseholdTabScreen(
                                     fontWeight = FontWeight.Bold
                                 )
                                 Text(
-                                    text = "Choose your preferred paper & ink style",
+                                    text = "Light, dark, and accent style",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
@@ -2729,43 +2551,7 @@ fun HouseholdTabScreen(
                         )
                     }
 
-                    // M3 Checkmark SingleChoiceSegmentedButtonRow (Light | Auto | Dark)
-                    val segmentedModes = listOf(
-                        AppThemeMode.LIGHT to "Light",
-                        AppThemeMode.SYSTEM to "Auto",
-                        AppThemeMode.DARK to "Dark"
-                    )
-                    SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
-                        segmentedModes.forEachIndexed { idx, (mode, labelText) ->
-                            val selected = currentThemeMode == mode
-                            SegmentedButton(
-                                selected = selected,
-                                onClick = {
-                                    performHaptic()
-                                    LocalAccountSessionManager.setThemeMode(context, mode)
-                                },
-                                shape = SegmentedButtonDefaults.itemShape(index = idx, count = segmentedModes.size),
-                                icon = {
-                                    SegmentedButtonDefaults.Icon(active = selected) {
-                                        Icon(
-                                            imageVector = Icons.Default.Check,
-                                            contentDescription = null,
-                                            modifier = Modifier.size(SegmentedButtonDefaults.IconSize)
-                                        )
-                                    }
-                                },
-                                modifier = Modifier.testTag("appearance_segment_${labelText.lowercase()}")
-                            ) {
-                                Text(
-                                    text = labelText,
-                                    style = MaterialTheme.typography.labelLarge,
-                                    fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium
-                                )
-                            }
-                        }
-                    }
-
-                    // Pure Color Swatch Theme Selector
+                    // Unified Minimal Light | Auto | Dark Pill Selector
                     ThemeModeSelectorBar(
                         currentMode = currentThemeMode,
                         onSelectMode = {
@@ -4110,27 +3896,27 @@ fun HouseholdTabScreen(
             }
         }
 
-        // Account Stack Card 5 of 7: SMS Inbox Sync
+        // Account Stack Card 5 of 7: SMS Inbox Sync (with fetch period & custom date range like initial setup)
         item {
             Card(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = dimens.horizontalPadding, vertical = 1.5.dp),
+                    .padding(horizontal = dimens.horizontalPadding, vertical = 1.5.dp)
+                    .testTag("settings_sms_sync_card"),
                 shape = groupedCardShape(index = 4, count = 7),
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
                 elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
             ) {
-                Row(
+                Column(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(dimens.cardPadding),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
                     Row(
+                        modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(12.dp),
-                        modifier = Modifier.weight(1f)
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
                         SquircleIconBadge(
                             icon = Icons.Default.Sync,
@@ -4138,11 +3924,13 @@ fun HouseholdTabScreen(
                             containerColor = MaterialTheme.colorScheme.primaryContainer,
                             contentDescription = "SMS Sync"
                         )
-                        Column {
+                        Column(modifier = Modifier.weight(1f)) {
                             Text(
                                 text = "SMS Inbox Sync",
                                 style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.Bold
+                                fontWeight = FontWeight.Bold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
                             )
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
@@ -4157,13 +3945,128 @@ fun HouseholdTabScreen(
                                 Text(
                                     text = "Auto-detect Bank & UPI SMS receipts",
                                     style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis
                                 )
                             }
                         }
                     }
 
-                    Spacer(modifier = Modifier.width(8.dp))
+                    // Fetch SMS From period & custom date range selector (mirrors initial setup)
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("settings_sms_sync_period_selector"),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.CalendarMonth,
+                                    contentDescription = "Fetch SMS From",
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Text(
+                                    text = "Fetch SMS From",
+                                    style = MaterialTheme.typography.labelLarge,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Surface(
+                                shape = RoundedCornerShape(50),
+                                color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.78f),
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(50))
+                                    .clickable {
+                                        if (smsSyncPeriodOption == SmsSyncPeriodOption.CUSTOM) {
+                                            performHaptic()
+                                            showSmsCustomRangePicker = true
+                                        }
+                                    }
+                                    .testTag("settings_sms_sync_selected_period_label")
+                            ) {
+                                Text(
+                                    text = smsSyncPeriodOption.formatRangeSummary(smsSyncCustomRange),
+                                    style = MaterialTheme.typography.labelSmall.copy(fontFamily = ReceiptMonoFontFamily),
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                                )
+                            }
+                        }
+
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            SmsSyncPeriodOption.entries.forEach { option ->
+                                val isSelected = smsSyncPeriodOption == option
+                                FilterChip(
+                                    selected = isSelected,
+                                    onClick = {
+                                        performHaptic()
+                                        if (option == SmsSyncPeriodOption.CUSTOM) {
+                                            showSmsCustomRangePicker = true
+                                        } else {
+                                            onSelectSmsSyncPeriod(option)
+                                        }
+                                    },
+                                    label = {
+                                        Text(
+                                            text = if (option == SmsSyncPeriodOption.CUSTOM && smsSyncCustomRange != null) {
+                                                option.formatRangeSummary(smsSyncCustomRange)
+                                            } else {
+                                                option.label
+                                            },
+                                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    },
+                                    leadingIcon = if (isSelected) {
+                                        {
+                                            Icon(
+                                                imageVector = Icons.Default.Check,
+                                                contentDescription = null,
+                                                modifier = Modifier.size(FilterChipDefaults.IconSize)
+                                            )
+                                        }
+                                    } else if (option == SmsSyncPeriodOption.CUSTOM) {
+                                        {
+                                            Icon(
+                                                imageVector = Icons.Default.CalendarMonth,
+                                                contentDescription = null,
+                                                modifier = Modifier.size(FilterChipDefaults.IconSize)
+                                            )
+                                        }
+                                    } else {
+                                        null
+                                    },
+                                    shape = RoundedCornerShape(50),
+                                    modifier = Modifier.testTag("settings_sms_period_chip_${option.name.lowercase()}")
+                                )
+                            }
+                        }
+                    }
 
                     FilledTonalButton(
                         onClick = {
@@ -4171,12 +4074,23 @@ fun HouseholdTabScreen(
                             onScanSmsClick()
                         },
                         shape = RoundedCornerShape(50),
-                        modifier = Modifier.testTag("scan_sms_button")
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = 48.dp)
+                            .testTag("scan_sms_button")
                     ) {
                         Icon(
                             imageVector = Icons.Default.Sync,
-                            contentDescription = "Sync SMS",
+                            contentDescription = null,
                             modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "Sync SMS Now",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
                         )
                     }
                 }

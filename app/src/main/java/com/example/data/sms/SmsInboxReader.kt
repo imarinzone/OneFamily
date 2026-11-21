@@ -4,6 +4,7 @@ import android.content.Context
 import android.net.Uri
 import android.provider.Telephony
 import com.example.data.local.LocalAccountDataStore
+import com.ritesh.parser.core.ParsedBalanceUpdate
 import com.ritesh.parser.core.ParsedTransaction
 import com.ritesh.parser.core.bank.BankParserFactory
 import java.util.Locale
@@ -63,7 +64,8 @@ class SmsInboxReader(private val context: Context) {
             totalCount: Int,
             matchedCount: Int,
             latestCandidate: SmsCandidate?
-        ) -> Unit = { _, _, _, _, _ -> }
+        ) -> Unit = { _, _, _, _, _ -> },
+        onBalanceUpdatesParsed: suspend (List<ParsedBalanceUpdate>) -> Unit = {}
     ): List<SmsCandidate> {
         val totalCount = rawRows.size
         if (totalCount == 0) {
@@ -78,6 +80,7 @@ class SmsInboxReader(private val context: Context) {
         val seenSignatures = existingSignatures.toMutableSet()
         val seenBodyTimestamps = mutableMapOf<String, MutableList<Long>>()
         val allCandidates = mutableListOf<SmsCandidate>()
+        val latestBalanceUpdatesByAccount = mutableMapOf<String, ParsedBalanceUpdate>()
         val readCounter = AtomicInteger(0)
         val matchedCounter = AtomicInteger(0)
         var maxReportedRead = 0
@@ -167,8 +170,45 @@ class SmsInboxReader(private val context: Context) {
                                                 }
                                             }
 
+                                            if (parsed.balance != null) {
+                                                val balUpdate = ParsedBalanceUpdate(
+                                                    bankName = parsed.bankName,
+                                                    accountNumber = parsed.accountNumber,
+                                                    balance = parsed.balance,
+                                                    creditLimit = parsed.creditLimit,
+                                                    isFromCard = parsed.isFromCard,
+                                                    smsBody = parsed.smsBody,
+                                                    sender = parsed.sender,
+                                                    timestamp = parsed.timestamp,
+                                                    currency = parsed.currency
+                                                )
+                                                val balKey = "${balUpdate.bankName.lowercase()}|${balUpdate.isFromCard}|${balUpdate.accountNumber.orEmpty()}"
+                                                synchronized(signatureLock) {
+                                                    val prev = latestBalanceUpdatesByAccount[balKey]
+                                                    if (prev == null || balUpdate.timestamp >= prev.timestamp) {
+                                                        latestBalanceUpdatesByAccount[balKey] = balUpdate
+                                                    }
+                                                }
+                                            }
+
                                             if (acceptedCandidate != null) {
                                                 batchCandidates.add(acceptedCandidate)
+                                            }
+                                        } else {
+                                            // Also parse balance-only bank alerts (e.g. HDFC daily balance SMS)
+                                            val balUpdate = BankParserFactory.parseBalanceSms(
+                                                smsBody = body,
+                                                sender = sender,
+                                                timestamp = timestamp
+                                            )
+                                            if (balUpdate != null) {
+                                                val balKey = "${balUpdate.bankName.lowercase()}|${balUpdate.isFromCard}|${balUpdate.accountNumber.orEmpty()}"
+                                                synchronized(signatureLock) {
+                                                    val prev = latestBalanceUpdatesByAccount[balKey]
+                                                    if (prev == null || balUpdate.timestamp >= prev.timestamp) {
+                                                        latestBalanceUpdatesByAccount[balKey] = balUpdate
+                                                    }
+                                                }
                                             }
                                         }
                                     }
@@ -216,6 +256,12 @@ class SmsInboxReader(private val context: Context) {
         }
 
         LocalAccountDataStore.persistSmsRawCache()
+        val collectedBalanceUpdates = synchronized(signatureLock) {
+            latestBalanceUpdatesByAccount.values.sortedBy { it.timestamp }
+        }
+        if (collectedBalanceUpdates.isNotEmpty()) {
+            onBalanceUpdatesParsed(collectedBalanceUpdates)
+        }
         return synchronized(signatureLock) {
             allCandidates.sortedBy { it.parsed.timestamp }
         }
@@ -242,7 +288,8 @@ class SmsInboxReader(private val context: Context) {
             totalCount: Int,
             matchedCount: Int,
             latestCandidate: SmsCandidate?
-        ) -> Unit = { _, _, _, _, _ -> }
+        ) -> Unit = { _, _, _, _, _ -> },
+        onBalanceUpdatesParsed: suspend (List<ParsedBalanceUpdate>) -> Unit = {}
     ): List<SmsCandidate> = withContext(Dispatchers.IO) {
         val rawRows = mutableListOf<RawSmsRow>()
 
@@ -349,7 +396,8 @@ class SmsInboxReader(private val context: Context) {
             readerThreads = readerThreads.coerceIn(MIN_PARALLEL_THREADS, DEFAULT_PARALLEL_READER_THREADS),
             perBatchDelayMs = perBatchDelayMs,
             onProgress = onProgress,
-            onBatchParsed = onBatchParsed
+            onBatchParsed = onBatchParsed,
+            onBalanceUpdatesParsed = onBalanceUpdatesParsed
         )
     }
 
@@ -524,6 +572,21 @@ class SmsInboxReader(private val context: Context) {
             suggestedAccountName = BankParserFactory.formatAccountDisplayName(parsed),
             suggestedPaymentMode = BankParserFactory.inferPaymentMode(parsed),
             isSharedByDefault = isShared
+        )
+    }
+
+    /**
+     * Parses a balance-only bank SMS (such as HDFC Bank's daily available/total balance alert).
+     */
+    fun parseBalanceSms(
+        sender: String,
+        body: String,
+        timestamp: Long = System.currentTimeMillis()
+    ): ParsedBalanceUpdate? {
+        return BankParserFactory.parseBalanceSms(
+            smsBody = body,
+            sender = sender,
+            timestamp = timestamp
         )
     }
 

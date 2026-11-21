@@ -39,6 +39,18 @@ data class ParsedTransaction(
     }
 }
 
+data class ParsedBalanceUpdate(
+    val bankName: String,
+    val accountNumber: String?,
+    val balance: BigDecimal,
+    val creditLimit: BigDecimal? = null,
+    val isFromCard: Boolean = false,
+    val smsBody: String,
+    val sender: String,
+    val timestamp: Long,
+    val currency: String = "INR"
+)
+
 object CompiledPatterns {
     val DLT_PATTERNS = listOf(
         Regex("^[A-Z]{2}-[A-Z0-9]+-[A-Z]$", RegexOption.IGNORE_CASE),
@@ -62,8 +74,17 @@ object CompiledPatterns {
     )
 
     val BALANCE_PATTERNS = listOf(
-        Regex("""(?:avl\.?\s*bal(?:ance)?|available\s+balance|avail\.?\s*bal(?:ance)?|bal(?:ance)?|updated\s+balance|total\s+bal|a/c\s+bal|clear\s+bal|closing\s+bal|new\s+balance)[\s:is\-]*(?:Rs\.?|INR\.?|₹|\$)?[\s:\-]*([0-9,]+(?:\.[0-9]{1,2})?)""", RegexOption.IGNORE_CASE),
-        Regex("""(?:Rs\.?|INR\.?|₹|\$)\s*([0-9,]+(?:\.[0-9]{1,2})?)\s*(?:is\s+your\s+available\s+balance|avl\.?\s*bal)""", RegexOption.IGNORE_CASE)
+        // Direct balance phrase + currency + amount: "Avl Bal: Rs. 41,250.00", "Avl Bal of Rs 48,900.25", "Total balance: INR 52,400.00"
+        Regex("""(?<!unclear\s)(?<!min\s)(?<!minimum\s)(?<!hold\s)\b(?:avl\.?\s*bal(?:ance)?|available\s+bal(?:ance)?|avail\.?\s*bal(?:ance)?|updated\s+bal(?:ance)?|total\s+bal(?:ance)?|a/c\s+bal(?:ance)?|clear\s+bal(?:ance)?|closing\s+bal(?:ance)?|new\s+bal(?:ance)?|curr(?:ent)?\s+bal(?:ance)?|bal(?:ance)?)[\s:\-]*(?:is|of|:)?[\s:\-]*(?:Rs\.?|INR\.?|₹|\$)[\s:\-]*([0-9,]+(?:\.[0-9]{1,2})?)""", RegexOption.IGNORE_CASE),
+        // HDFC & Indian bank daily balance SMS with intervening account/date clause:
+        // "Available balance in A/c XX1234 on 21-Nov-26 is INR 1,45,230.50"
+        // "Your HDFC Bank A/c *4821 closing balance on 21/11/2026 is Rs. 1,20,500.00"
+        // "Bal in HDFC Bank A/c XX1234 on 21-Nov-26 is Rs.1,12,345.67"
+        Regex("""(?<!unclear\s)(?<!min\s)(?<!minimum\s)(?<!hold\s)\b(?:avl\.?\s*bal(?:ance)?|available\s+bal(?:ance)?|avail\.?\s*bal(?:ance)?|total\s+bal(?:ance)?|closing\s+bal(?:ance)?|clear\s+bal(?:ance)?|updated\s+bal(?:ance)?|a/c\s+bal(?:ance)?|curr(?:ent)?\s+bal(?:ance)?|bal(?:ance)?)\b[^.\n\r;]{0,90}?\b(?:is|of|at|:)\s*(?:Rs\.?|INR\.?|₹|\$)[\s:\-]*([0-9,]+(?:\.[0-9]{1,2})?)""", RegexOption.IGNORE_CASE),
+        // Direct balance phrase without currency symbol: "Avl Bal: 41,250.00"
+        Regex("""(?<!unclear\s)(?<!min\s)(?<!minimum\s)(?<!hold\s)\b(?:avl\.?\s*bal(?:ance)?|available\s+bal(?:ance)?|avail\.?\s*bal(?:ance)?|updated\s+bal(?:ance)?|total\s+bal(?:ance)?|a/c\s+bal(?:ance)?|clear\s+bal(?:ance)?|closing\s+bal(?:ance)?|new\s+bal(?:ance)?)[\s:is\-]+([0-9,]+(?:\.[0-9]{1,2})?)""", RegexOption.IGNORE_CASE),
+        // Amount before balance label: "INR 64,210.00 is your available balance"
+        Regex("""(?:Rs\.?|INR\.?|₹|\$)\s*([0-9,]+(?:\.[0-9]{1,2})?)\s*(?:is\s+your\s+(?:available|total|closing|clear|account|a/c)?\s*bal(?:ance)?|avl\.?\s*bal)""", RegexOption.IGNORE_CASE)
     )
 
     val CREDIT_LIMIT_PATTERNS = listOf(

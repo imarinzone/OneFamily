@@ -1145,7 +1145,9 @@ object TransactionNotificationHelper {
                         balance = parsed.balance?.toDouble() ?: 0.0,
                         creditLimit = parsed.creditLimit?.toDouble() ?: 0.0,
                         isSharedVisible = effectiveShared,
-                        asOfTimestampMillis = parsed.timestamp
+                        asOfTimestampMillis = parsed.timestamp,
+                        updateBalance = parsed.balance != null,
+                        updateCreditLimit = parsed.creditLimit != null
                     )
                 }
             }
@@ -1214,7 +1216,9 @@ object TransactionNotificationHelper {
                                     balance = parsed.balance?.toDouble() ?: 0.0,
                                     creditLimit = parsed.creditLimit?.toDouble() ?: 0.0,
                                     isSharedVisible = remoteShared,
-                                    asOfTimestampMillis = parsed.timestamp
+                                    asOfTimestampMillis = parsed.timestamp,
+                                    updateBalance = parsed.balance != null,
+                                    updateCreditLimit = parsed.creditLimit != null
                                 )
                             }
                         }
@@ -1277,6 +1281,57 @@ object TransactionNotificationHelper {
                 subsystem = "SMS_REALTIME_SYNC",
                 severity = "NON_FATAL",
                 message = "Guarded incoming SMS processing: ${e.javaClass.simpleName}: ${e.localizedMessage.orEmpty()}"
+            )
+        }
+    }
+
+    /**
+     * Silently updates the matching bank/card account balance from a daily/enquiry balance SMS
+     * (such as HDFC daily balance alerts) without creating a transaction or posting a notification.
+     */
+    suspend fun processIncomingBalanceUpdate(
+        context: Context,
+        balanceUpdate: com.ritesh.parser.core.ParsedBalanceUpdate
+    ) = incomingSmsMutex.withLock {
+        val appContext = context.applicationContext
+        try {
+            LocalAccountSessionManager.ensureInitialized(appContext)
+            LocalAccountDataStore.ensureInitialized(appContext)
+
+            val firebaseUser = runCatching { Firebase.auth.currentUser }.getOrNull()
+            val localUser = LocalAccountSessionManager.getCurrentUser(appContext)
+            val isFirebaseBacked = firebaseUser != null
+            val activeUid = firebaseUser?.uid ?: localUser?.uid ?: return@withLock
+
+            val cachedProfile = LocalAccountDataStore.getUserProfileOnce(activeUid)
+            val cachedHousehold = cachedProfile?.activeHouseholdId
+                ?.takeIf { it.isNotBlank() }
+                ?.let { LocalAccountDataStore.getHouseholdOnce(it) }
+            val effectiveShared = cachedHousehold != null
+
+            runCatching {
+                LocalAccountDataStore.applyAccountBalanceUpdates(
+                    uid = activeUid,
+                    updates = listOf(balanceUpdate),
+                    isSharedVisible = effectiveShared
+                )
+            }
+
+            if (isFirebaseBacked) {
+                val repo = OneFamilyRepository(appContext)
+                kotlinx.coroutines.withTimeoutOrNull(8_000L) {
+                    repo.applyAccountBalanceUpdates(
+                        updates = listOf(balanceUpdate),
+                        isSharedVisible = effectiveShared
+                    )
+                }
+            }
+        } catch (e: Exception) {
+            LocalAccountSessionManager.recordDiagnostic(
+                context = appContext,
+                subsystem = "SMS_BALANCE_SYNC",
+                severity = "NON_FATAL",
+                message = "Guarded incoming balance SMS processing: ${e.javaClass.simpleName}: ${e.localizedMessage.orEmpty()}"
             )
         }
     }
@@ -1355,24 +1410,35 @@ class IncomingSmsBroadcastReceiver : BroadcastReceiver() {
         }
 
         val reader = SmsInboxReader(appContext)
-        val candidates = groupedBySender.mapNotNull { (sender, parts) ->
+        val candidates = mutableListOf<SmsCandidate>()
+        val balanceUpdates = mutableListOf<com.ritesh.parser.core.ParsedBalanceUpdate>()
+        for ((sender, parts) in groupedBySender) {
             val fullBody = parts.joinToString(separator = "") { part ->
                 part.displayMessageBody ?: part.messageBody.orEmpty()
             }
             val timestamp = parts.firstOrNull()?.timestampMillis?.takeIf { it > 0L }
                 ?: System.currentTimeMillis()
-            if (sender.isBlank() || fullBody.isBlank()) {
-                null
+            if (sender.isBlank() || fullBody.isBlank()) continue
+            val txCandidate = reader.parseRawSms(
+                sender = sender,
+                body = fullBody,
+                timestamp = timestamp,
+                defaultShared = true
+            )
+            if (txCandidate != null) {
+                candidates.add(txCandidate)
             } else {
-                reader.parseRawSms(
+                val balanceUpdate = reader.parseBalanceSms(
                     sender = sender,
                     body = fullBody,
-                    timestamp = timestamp,
-                    defaultShared = true
+                    timestamp = timestamp
                 )
+                if (balanceUpdate != null) {
+                    balanceUpdates.add(balanceUpdate)
+                }
             }
         }
-        if (candidates.isEmpty()) return
+        if (candidates.isEmpty() && balanceUpdates.isEmpty()) return
 
         val pendingResult = goAsync()
         CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
@@ -1381,6 +1447,12 @@ class IncomingSmsBroadcastReceiver : BroadcastReceiver() {
                     TransactionNotificationHelper.processIncomingSmsCandidateAndNotify(
                         context = appContext,
                         candidate = candidate
+                    )
+                }
+                for (balanceUpdate in balanceUpdates) {
+                    TransactionNotificationHelper.processIncomingBalanceUpdate(
+                        context = appContext,
+                        balanceUpdate = balanceUpdate
                     )
                 }
             } finally {
@@ -1459,6 +1531,18 @@ class SmsInboxContentObserver(
                                         context = context.applicationContext,
                                         candidate = candidate
                                     )
+                                } else {
+                                    val balanceUpdate = reader.parseBalanceSms(
+                                        sender = sender,
+                                        body = body,
+                                        timestamp = dateMillis
+                                    )
+                                    if (balanceUpdate != null) {
+                                        TransactionNotificationHelper.processIncomingBalanceUpdate(
+                                            context = context.applicationContext,
+                                            balanceUpdate = balanceUpdate
+                                        )
+                                    }
                                 }
                             }
                         }

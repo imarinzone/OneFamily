@@ -97,6 +97,8 @@ import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.TextField
+import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.material3.TimePicker
 import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.material3.rememberTimePickerState
@@ -475,6 +477,8 @@ private fun InteractiveReceiptSheet(
     var isShared by remember { mutableStateOf(initialIsShared && hasHousehold) }
     var isExcludedFromExpense by remember { mutableStateOf(initialIsExcludedFromExpense) }
     var txDateMillis by remember { mutableLongStateOf(initialDateMillis) }
+    val isEditMode = showDeleteButton
+    var showMoreEditDetails by remember { mutableStateOf(false) }
     var showExtraDetails by remember { mutableStateOf(initialNotes.isNotBlank() || initialTagsInput.isNotBlank()) }
     var showDatePickerModal by remember { mutableStateOf(false) }
     var showTimePickerModal by remember { mutableStateOf(false) }
@@ -648,223 +652,6 @@ private fun InteractiveReceiptSheet(
                             }
                         }
 
-                        // Row 2: Personal/Household Scope Pill & Secondary Tools (Link / Delete) never overlay Save
-                        if (hasHousehold || onLinkDuplicate != null || (showDeleteButton && onDelete != null)) {
-                            Spacer(modifier = Modifier.height(8.dp))
-                            FlowRow(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                if (hasHousehold) {
-                                    val stampColor = if (isShared) HouseholdBadgeIndigo else PersonalBadgeTeal
-                                    Surface(
-                                        shape = RoundedCornerShape(50),
-                                        color = stampColor.copy(alpha = 0.14f),
-                                        modifier = Modifier
-                                            .heightIn(min = 40.dp)
-                                            .clip(RoundedCornerShape(50))
-                                            .border(1.5.dp, stampColor, RoundedCornerShape(50))
-                                            .clickable {
-                                                performHaptic()
-                                                isShared = !isShared
-                                            }
-                                            .testTag("transaction_shared_switch")
-                                    ) {
-                                        Row(
-                                            modifier = Modifier.padding(
-                                                horizontal = 12.dp,
-                                                vertical = 8.dp
-                                            ),
-                                            verticalAlignment = Alignment.CenterVertically
-                                        ) {
-                                            Icon(
-                                                imageVector = if (isShared) Icons.Default.Groups else Icons.Default.Lock,
-                                                contentDescription = null,
-                                                tint = stampColor,
-                                                modifier = Modifier.size(16.dp)
-                                            )
-                                            Spacer(modifier = Modifier.width(6.dp))
-                                            Text(
-                                                text = if (isShared) "HOUSEHOLD" else "PERSONAL",
-                                                style = MaterialTheme.typography.labelSmall,
-                                                fontWeight = FontWeight.Bold,
-                                                color = stampColor,
-                                                maxLines = 1
-                                            )
-                                        }
-                                    }
-                                }
-
-                                if (onLinkDuplicate != null || (showDeleteButton && onDelete != null)) {
-                                    Row(
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                    ) {
-                                        if (onLinkDuplicate != null) {
-                                            CircularTonalIconButton(
-                                                icon = Icons.Default.Link,
-                                                contentDescription = "Link Duplicate SMS / Transaction",
-                                                onClick = onLinkDuplicate,
-                                                containerColor = MaterialTheme.colorScheme.secondaryContainer,
-                                                contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
-                                                modifier = Modifier.testTag("edit_dialog_link_duplicate_button")
-                                            )
-                                        }
-                                        if (showDeleteButton && onDelete != null) {
-                                            CircularTonalIconButton(
-                                                icon = Icons.Default.DeleteOutline,
-                                                contentDescription = "Delete Receipt",
-                                                onClick = onDelete,
-                                                containerColor = MaterialTheme.colorScheme.errorContainer,
-                                                contentColor = MaterialTheme.colorScheme.onErrorContainer,
-                                                modifier = Modifier.testTag("edit_dialog_delete_button")
-                                            )
-                                        }
-                                    }
-                                }
-                            }
-                        }
-
-                        // M3 Checkmark SingleChoiceSegmentedButtonRow: Expense vs Income
-                        Spacer(modifier = Modifier.height(10.dp))
-                        SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
-                            val isExp = type == "EXPENSE"
-                            SegmentedButton(
-                                selected = isExp,
-                                onClick = {
-                                    performHaptic()
-                                    type = "EXPENSE"
-                                    if (ExpenseCategories.isIncomeCategory(category)) {
-                                        category = spendCategories.firstOrNull() ?: "Groceries"
-                                    }
-                                },
-                                shape = SegmentedButtonDefaults.itemShape(index = 0, count = 2),
-                                icon = {
-                                    SegmentedButtonDefaults.Icon(active = isExp) {
-                                        Icon(
-                                            imageVector = Icons.Default.Check,
-                                            contentDescription = null,
-                                            modifier = Modifier.size(SegmentedButtonDefaults.IconSize)
-                                        )
-                                    }
-                                },
-                                modifier = Modifier.testTag("receipt_type_chip_expense")
-                            ) {
-                                Text("Expense", fontWeight = if (isExp) FontWeight.Bold else FontWeight.Medium)
-                            }
-
-                            val isInc = type == "INCOME"
-                            SegmentedButton(
-                                selected = isInc,
-                                onClick = {
-                                    performHaptic()
-                                    type = "INCOME"
-                                    if (!ExpenseCategories.isIncomeCategory(category)) {
-                                        category = incomeCategories.firstOrNull() ?: "Salary & Income"
-                                    }
-                                },
-                                shape = SegmentedButtonDefaults.itemShape(index = 1, count = 2),
-                                icon = {
-                                    SegmentedButtonDefaults.Icon(active = isInc) {
-                                        Icon(
-                                            imageVector = Icons.Default.Check,
-                                            contentDescription = null,
-                                            modifier = Modifier.size(SegmentedButtonDefaults.IconSize)
-                                        )
-                                    }
-                                },
-                                modifier = Modifier.testTag("receipt_type_chip_income")
-                            ) {
-                                Text("Income", fontWeight = if (isInc) FontWeight.Bold else FontWeight.Medium)
-                            }
-                        }
-
-                        // Original & Linked Duplicate SMS Section when editing an SMS-backed transaction
-                        val allSmsRecords = remember(rawSmsRecord, linkedSmsRecords) {
-                            buildList {
-                                if (rawSmsRecord != null && rawSmsRecord.body.isNotBlank()) add(rawSmsRecord)
-                                linkedSmsRecords.filter { it.body.isNotBlank() }.forEach { rec ->
-                                    if (none { it.signature == rec.signature || it.body == rec.body }) {
-                                        add(rec)
-                                    }
-                                }
-                            }
-                        }
-                        if (allSmsRecords.isNotEmpty()) {
-                            Spacer(modifier = Modifier.height(10.dp))
-                            Surface(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .testTag("edit_dialog_raw_sms_box"),
-                                shape = RoundedCornerShape(18.dp),
-                                color = MaterialTheme.colorScheme.surfaceContainerHigh
-                            ) {
-                                Column(
-                                    modifier = Modifier.padding(14.dp),
-                                    verticalArrangement = Arrangement.spacedBy(6.dp)
-                                ) {
-                                    if (allSmsRecords.size > 1) {
-                                        Row(verticalAlignment = Alignment.CenterVertically) {
-                                            Icon(
-                                                imageVector = Icons.Default.Link,
-                                                contentDescription = null,
-                                                tint = MaterialTheme.colorScheme.primary,
-                                                modifier = Modifier.size(16.dp)
-                                            )
-                                            Spacer(modifier = Modifier.width(6.dp))
-                                            Text(
-                                                text = "Linked SMS Alerts (${allSmsRecords.size})",
-                                                style = MaterialTheme.typography.labelMedium,
-                                                fontWeight = FontWeight.Bold,
-                                                color = MaterialTheme.colorScheme.primary
-                                            )
-                                        }
-                                    }
-                                    allSmsRecords.forEachIndexed { idx, rec ->
-                                        if (idx > 0) {
-                                            ReceiptDashedDividerLine()
-                                        }
-                                        Row(
-                                            modifier = Modifier.fillMaxWidth(),
-                                            horizontalArrangement = Arrangement.SpaceBetween,
-                                            verticalAlignment = Alignment.CenterVertically
-                                        ) {
-                                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                                Icon(
-                                                    imageVector = Icons.Default.Message,
-                                                    contentDescription = null,
-                                                    tint = MaterialTheme.colorScheme.primary,
-                                                    modifier = Modifier.size(15.dp)
-                                                )
-                                                Spacer(modifier = Modifier.width(6.dp))
-                                                Text(
-                                                    text = rec.sender.ifBlank { "SMS" },
-                                                    style = MaterialTheme.typography.labelMedium.copy(fontFamily = ReceiptMonoFontFamily),
-                                                    fontWeight = FontWeight.Bold,
-                                                    color = MaterialTheme.colorScheme.primary
-                                                )
-                                            }
-                                            Text(
-                                                text = formatFullTimestamp(
-                                                    if (rec.timestamp > 0L) rec.timestamp else txDateMillis
-                                                ),
-                                                style = MaterialTheme.typography.labelSmall.copy(fontFamily = ReceiptMonoFontFamily),
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                                            )
-                                        }
-                                        Text(
-                                            text = rec.body,
-                                            style = MaterialTheme.typography.bodySmall.copy(fontFamily = ReceiptMonoFontFamily),
-                                            color = MaterialTheme.colorScheme.onSurface
-                                        )
-                                    }
-                                }
-                            }
-                        }
-
-                        ReceiptDashedDividerLine()
-
                         val amountError = if (attemptedSubmit || amountText.isNotEmpty()) {
                             validatePositiveAmount(amountText)
                         } else {
@@ -875,546 +662,982 @@ private fun InteractiveReceiptSheet(
                         } else {
                             null
                         }
-
-                        // Big Receipt Total & Merchant Input
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(10.dp),
-                            verticalAlignment = Alignment.Top
-                        ) {
-                            OutlinedTextField(
-                                value = amountText,
-                                onValueChange = { amountText = sanitizeDecimalInput(it) },
-                                label = { Text("Total ($currencySymbol)") },
-                                textStyle = MaterialTheme.typography.bodyLarge.copy(
-                                    fontFamily = ReceiptMonoFontFamily,
-                                    fontWeight = FontWeight.Bold
-                                ),
-                                isError = amountError != null,
-                                supportingText = amountError?.let { err -> { Text(err) } },
-                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                                singleLine = true,
-                                shape = RoundedCornerShape(16.dp),
-                                modifier = Modifier
-                                    .weight(0.48f)
-                                    .testTag(amountTestTag)
-                            )
-
-                            OutlinedTextField(
-                                value = title,
-                                onValueChange = { title = it.take(100) },
-                                label = { Text("Merchant") },
-                                supportingText = if (title.length >= 95) {
-                                    { Text("${title.length}/100") }
-                                } else {
-                                    null
-                                },
-                                singleLine = true,
-                                shape = RoundedCornerShape(16.dp),
-                                modifier = Modifier
-                                    .weight(0.52f)
-                                    .testTag(titleTestTag)
-                            )
-                        }
-
-                        ReceiptDashedDividerLine()
-
-                        // Category Section on Receipt (Wheel-style icon-only nodes; shows text only for the selected category; strictly filtered by addition vs deduction)
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                Text(
-                                    text = "Category",
-                                    style = MaterialTheme.typography.titleSmall,
-                                    fontWeight = FontWeight.Bold
-                                )
-                                Surface(
-                                    shape = RoundedCornerShape(50),
-                                    color = catAccent.copy(alpha = 0.16f),
-                                    modifier = Modifier.testTag("receipt_selected_category_pill")
-                                ) {
-                                    Row(
-                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(5.dp)
-                                    ) {
-                                        CategoryBadgeGlyph(
-                                            category = category,
-                                            tint = catAccent,
-                                            iconSize = 14.dp,
-                                            customEmoji = customEmojis[category.trim().lowercase()],
-                                            contentDescription = null
-                                        )
-                                        Text(
-                                            text = category,
-                                            style = MaterialTheme.typography.labelSmall,
-                                            fontWeight = FontWeight.Bold,
-                                            color = catAccent
-                                        )
-                                    }
-                                }
-                            }
-                            TextButton(
-                                onClick = {
-                                    performHaptic()
-                                    showCustomCategoryField = !showCustomCategoryField
-                                }
-                            ) {
-                                Icon(
-                                    Icons.Default.Add,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(16.dp)
-                                )
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text("Custom", style = MaterialTheme.typography.labelMedium)
-                            }
-                        }
-
-                        AnimatedVisibility(visible = showCustomCategoryField) {
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(bottom = 8.dp),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                verticalAlignment = Alignment.Top
-                            ) {
-                                OutlinedTextField(
-                                    value = customCategoryEmoji,
-                                    onValueChange = {
-                                        customCategoryEmoji = LocalAccountSessionManager.extractFirstEmojiCluster(it)
-                                    },
-                                    label = { Text("Emoji") },
-                                    placeholder = { Text("✨") },
-                                    singleLine = true,
-                                    textStyle = MaterialTheme.typography.titleMedium.copy(textAlign = TextAlign.Center),
-                                    shape = RoundedCornerShape(16.dp),
-                                    modifier = Modifier
-                                        .width(82.dp)
-                                        .testTag("receipt_custom_category_emoji_input")
-                                )
-                                OutlinedTextField(
-                                    value = customCategoryInput,
-                                    onValueChange = {
-                                        customCategoryInput = it.take(40)
-                                        if (it.isNotBlank()) {
-                                            val trimmed = ExpenseCategories.normalizeCategory(it.trim())
-                                            category = trimmed
-                                            if (ExpenseCategories.isIncomeCategory(trimmed)) {
-                                                type = "INCOME"
-                                            }
-                                        }
-                                    },
-                                    label = { Text("Custom Category") },
-                                    isError = customCatError != null,
-                                    supportingText = customCatError?.let { err -> { Text(err) } },
-                                    singleLine = true,
-                                    shape = RoundedCornerShape(16.dp),
-                                    modifier = Modifier.weight(1f)
-                                )
-                            }
-                        }
-
-                        val renderCategoryNode: @Composable (String) -> Unit = { cat ->
-                            val isSelected = category.equals(cat, ignoreCase = true)
-                            val chipAccent = categoryAccentColor(cat)
-                            val neutralBg = MaterialTheme.colorScheme.surfaceContainerHighest
-                            val chipEmoji = customEmojis[cat.trim().lowercase()]
-                            val catChipTag = cat.lowercase().replace(Regex("[^a-z0-9]+"), "_").trim('_')
-                            Surface(
-                                shape = CircleShape,
-                                color = if (isSelected) chipAccent else neutralBg,
-                                shadowElevation = if (isSelected) 4.dp else 0.dp,
-                                border = if (isSelected) {
-                                    BorderStroke(2.dp, Color.White.copy(alpha = 0.9f))
-                                } else {
-                                    BorderStroke(1.dp, chipAccent.copy(alpha = 0.35f))
-                                },
-                                modifier = Modifier
-                                    .size(48.dp)
-                                    .clip(CircleShape)
-                                    .semantics { contentDescription = cat }
-                                    .clickable {
-                                        performHaptic()
-                                        category = cat
-                                        if (ExpenseCategories.isIncomeCategory(cat)) {
-                                            type = "INCOME"
-                                        } else {
-                                            type = "EXPENSE"
-                                        }
-                                    }
-                                    .testTag("receipt_category_chip_$catChipTag")
-                            ) {
-                                Box(
-                                    modifier = Modifier.fillMaxSize(),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    CategoryBadgeGlyph(
-                                        category = cat,
-                                        tint = if (isSelected) Color.White else chipAccent,
-                                        iconSize = if (isSelected) 22.dp else 20.dp,
-                                        customEmoji = chipEmoji,
-                                        contentDescription = null
-                                    )
-                                }
-                            }
-                        }
-
-                        if (type == "INCOME") {
-                            if (incomeCategories.isNotEmpty()) {
-                                Column(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .testTag("receipt_category_division_income"),
-                                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                                ) {
-                                    FlowRow(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                                    ) {
-                                        incomeCategories.forEach { cat ->
-                                            renderCategoryNode(cat)
-                                        }
-                                    }
-                                }
-                            }
-                        } else {
-                            if (spendCategories.isNotEmpty()) {
-                                Column(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .testTag("receipt_category_division_spend"),
-                                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                                ) {
-                                    FlowRow(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                                    ) {
-                                        spendCategories.forEach { cat ->
-                                            renderCategoryNode(cat)
-                                        }
+                        val allSmsRecords = remember(rawSmsRecord, linkedSmsRecords) {
+                            buildList {
+                                if (rawSmsRecord != null && rawSmsRecord.body.isNotBlank()) add(rawSmsRecord)
+                                linkedSmsRecords.filter { it.body.isNotBlank() }.forEach { rec ->
+                                    if (none { it.signature == rec.signature || it.body == rec.body }) {
+                                        add(rec)
                                     }
                                 }
                             }
                         }
-
-                        ReceiptDashedDividerLine()
-
-                        // Payment Method Row (Tonal Preset Chips)
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .horizontalScroll(rememberScrollState()),
-                            horizontalArrangement = Arrangement.spacedBy(6.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            listOf("UPI", "CARD", "BANK", "CASH", "WALLET").forEach { mode ->
-                                val selectedMode = paymentMode.equals(mode, ignoreCase = true)
-                                FilterChip(
-                                    selected = selectedMode,
-                                    onClick = {
-                                        performHaptic()
-                                        paymentMode = mode
-                                    },
-                                    leadingIcon = if (selectedMode) {
-                                        {
-                                            Icon(
-                                                imageVector = Icons.Default.Check,
-                                                contentDescription = null,
-                                                modifier = Modifier.size(14.dp)
-                                            )
-                                        }
-                                    } else {
-                                        null
-                                    },
-                                    label = { Text(mode, style = MaterialTheme.typography.labelSmall) },
-                                    shape = RoundedCornerShape(50)
-                                )
-                            }
-                        }
-
-                        Spacer(modifier = Modifier.height(8.dp))
-
-                        // Account / Card Popup Selector (Only existing accounts selectable; supports adding a new account)
                         val selectedAccountObj = remember(selectableAccounts, accountName) {
                             selectableAccounts.firstOrNull {
                                 it.name.equals(accountName.trim(), ignoreCase = true)
                             }
                         }
-                        Surface(
-                            shape = RoundedCornerShape(18.dp),
-                            color = MaterialTheme.colorScheme.surfaceContainerHigh,
-                            border = BorderStroke(
-                                width = 1.dp,
-                                color = if (accountMissingError) {
-                                    MaterialTheme.colorScheme.error
-                                } else {
-                                    MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f)
-                                }
-                            ),
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(18.dp))
-                                .clickable {
-                                    performHaptic()
-                                    showAccountPickerDialog = true
-                                }
-                                .testTag("tx_account_picker_button")
-                        ) {
+                        val isIncomeType = type.equals("INCOME", ignoreCase = true)
+
+                        val renderCategorySection: @Composable () -> Unit = {
                             Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(horizontal = 14.dp, vertical = 12.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.SpaceBetween
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Row(
                                     verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
                                     modifier = Modifier.weight(1f)
                                 ) {
-                                    Icon(
-                                        imageVector = when (FinancialAccount.normalizeAccountType(selectedAccountObj?.accountType ?: "")) {
-                                            "CREDIT_CARD", "DEBIT_CARD" -> Icons.Default.CreditCard
-                                            "WALLET", "CASH" -> Icons.Default.AccountBalanceWallet
-                                            else -> Icons.Default.AccountBalance
-                                        },
-                                        contentDescription = null,
-                                        tint = MaterialTheme.colorScheme.primary,
-                                        modifier = Modifier.size(20.dp)
+                                    Text(
+                                        text = "Category",
+                                        style = MaterialTheme.typography.titleSmall,
+                                        fontWeight = FontWeight.Bold
                                     )
-                                    Spacer(modifier = Modifier.width(10.dp))
-                                    Column {
-                                        Text(
-                                            text = "Account / Card",
-                                            style = MaterialTheme.typography.labelSmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
-                                        Text(
-                                            text = if (accountName.isNotBlank()) {
-                                                accountName
-                                            } else if (selectableAccounts.isNotEmpty()) {
-                                                selectableAccounts.first().name
+                                    Surface(
+                                        shape = RoundedCornerShape(50),
+                                        color = catAccent.copy(alpha = 0.16f),
+                                        modifier = Modifier.testTag("receipt_selected_category_pill")
+                                    ) {
+                                        Row(
+                                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(5.dp)
+                                        ) {
+                                            CategoryBadgeGlyph(
+                                                category = category,
+                                                tint = catAccent,
+                                                iconSize = 14.dp,
+                                                customEmoji = customEmojis[category.trim().lowercase()],
+                                                contentDescription = null
+                                            )
+                                            Text(
+                                                text = category,
+                                                style = MaterialTheme.typography.labelSmall,
+                                                fontWeight = FontWeight.Bold,
+                                                color = catAccent,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                        }
+                                    }
+                                }
+                                TextButton(
+                                    onClick = {
+                                        performHaptic()
+                                        showCustomCategoryField = !showCustomCategoryField
+                                    }
+                                ) {
+                                    Icon(
+                                        Icons.Default.Add,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text("Custom", style = MaterialTheme.typography.labelMedium)
+                                }
+                            }
+
+                            AnimatedVisibility(visible = showCustomCategoryField) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(bottom = 8.dp),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                    verticalAlignment = Alignment.Top
+                                ) {
+                                    OutlinedTextField(
+                                        value = customCategoryEmoji,
+                                        onValueChange = {
+                                            customCategoryEmoji = LocalAccountSessionManager.extractFirstEmojiCluster(it)
+                                        },
+                                        label = { Text("Emoji") },
+                                        placeholder = { Text("✨") },
+                                        singleLine = true,
+                                        textStyle = MaterialTheme.typography.titleMedium.copy(textAlign = TextAlign.Center),
+                                        shape = RoundedCornerShape(16.dp),
+                                        modifier = Modifier
+                                            .width(82.dp)
+                                            .testTag("receipt_custom_category_emoji_input")
+                                    )
+                                    OutlinedTextField(
+                                        value = customCategoryInput,
+                                        onValueChange = {
+                                            customCategoryInput = it.take(40)
+                                            if (it.isNotBlank()) {
+                                                val trimmed = ExpenseCategories.normalizeCategory(it.trim())
+                                                category = trimmed
+                                                if (ExpenseCategories.isIncomeCategory(trimmed)) {
+                                                    type = "INCOME"
+                                                }
+                                            }
+                                        },
+                                        label = { Text("Custom Category") },
+                                        isError = customCatError != null,
+                                        supportingText = customCatError?.let { err -> { Text(err) } },
+                                        singleLine = true,
+                                        shape = RoundedCornerShape(16.dp),
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                }
+                            }
+
+                            val renderCategoryNode: @Composable (String) -> Unit = { cat ->
+                                val isSelected = category.equals(cat, ignoreCase = true)
+                                val chipAccent = categoryAccentColor(cat)
+                                val neutralBg = MaterialTheme.colorScheme.surfaceContainerHighest
+                                val chipEmoji = customEmojis[cat.trim().lowercase()]
+                                val catChipTag = cat.lowercase().replace(Regex("[^a-z0-9]+"), "_").trim('_')
+                                Surface(
+                                    shape = CircleShape,
+                                    color = if (isSelected) chipAccent else neutralBg,
+                                    shadowElevation = if (isSelected) 4.dp else 0.dp,
+                                    border = if (isSelected) {
+                                        BorderStroke(2.dp, Color.White.copy(alpha = 0.9f))
+                                    } else {
+                                        BorderStroke(1.dp, chipAccent.copy(alpha = 0.35f))
+                                    },
+                                    modifier = Modifier
+                                        .size(48.dp)
+                                        .clip(CircleShape)
+                                        .semantics { contentDescription = cat }
+                                        .clickable {
+                                            performHaptic()
+                                            category = cat
+                                            if (ExpenseCategories.isIncomeCategory(cat)) {
+                                                type = "INCOME"
                                             } else {
-                                                "Tap to select or add account"
-                                            },
-                                            style = MaterialTheme.typography.titleSmall,
-                                            fontWeight = FontWeight.Bold,
-                                            color = if (accountName.isNotBlank() || selectableAccounts.isNotEmpty()) {
-                                                MaterialTheme.colorScheme.onSurface
-                                            } else {
-                                                MaterialTheme.colorScheme.primary
-                                            },
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis,
-                                            modifier = Modifier.testTag("tx_selected_account_label")
+                                                type = "EXPENSE"
+                                            }
+                                        }
+                                        .testTag("receipt_category_chip_$catChipTag")
+                                ) {
+                                    Box(
+                                        modifier = Modifier.fillMaxSize(),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        CategoryBadgeGlyph(
+                                            category = cat,
+                                            tint = if (isSelected) Color.White else chipAccent,
+                                            iconSize = if (isSelected) 22.dp else 20.dp,
+                                            customEmoji = chipEmoji,
+                                            contentDescription = null
                                         )
                                     }
                                 }
-                                Icon(
-                                    imageVector = Icons.Default.ArrowDropDown,
-                                    contentDescription = "Choose Account",
-                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                        }
-
-                        if (accountMissingError) {
-                            Text(
-                                text = "Please choose an existing account or add a new account.",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.error,
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(top = 4.dp, start = 8.dp)
-                            )
-                        }
-
-                        Spacer(modifier = Modifier.height(8.dp))
-
-                        // Exact Date & Timestamp Selector Row
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            FilledTonalButton(
-                                onClick = { showDatePickerModal = true },
-                                shape = RoundedCornerShape(50),
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .testTag("tx_date_picker_button")
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.CalendarMonth,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(16.dp)
-                                )
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text(
-                                    text = formatExactDate(txDateMillis),
-                                    style = MaterialTheme.typography.labelMedium,
-                                    fontWeight = FontWeight.SemiBold,
-                                    maxLines = 1
-                                )
                             }
 
-                            FilledTonalButton(
-                                onClick = { showTimePickerModal = true },
-                                shape = RoundedCornerShape(50),
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .testTag("tx_time_picker_button")
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.AccessTime,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(16.dp)
-                                )
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text(
-                                    text = formatExactTime(txDateMillis),
-                                    style = MaterialTheme.typography.labelMedium,
-                                    fontWeight = FontWeight.SemiBold,
-                                    maxLines = 1
-                                )
-                            }
-                        }
-
-                        // Exclude from Expenses / Income Toggle Card (available for both Expenses and Income)
-                        val isIncomeType = type.equals("INCOME", ignoreCase = true)
-                        Surface(
-                            shape = RoundedCornerShape(18.dp),
-                            color = if (isExcludedFromExpense) {
-                                MaterialTheme.colorScheme.secondaryContainer
+                            val activeCategories = if (type == "INCOME") incomeCategories else spendCategories
+                            val divisionTag = if (type == "INCOME") {
+                                "receipt_category_division_income"
                             } else {
-                                MaterialTheme.colorScheme.surfaceContainerHigh
-                            },
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(top = 8.dp)
-                                .clip(RoundedCornerShape(18.dp))
-                                .clickable {
-                                    performHaptic()
-                                    isExcludedFromExpense = !isExcludedFromExpense
+                                "receipt_category_division_spend"
+                            }
+                            if (activeCategories.isNotEmpty()) {
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .testTag(divisionTag),
+                                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    if (isEditMode) {
+                                        val orderedEditCategories = remember(activeCategories, initialCategory) {
+                                            val initialNorm = ExpenseCategories.normalizeCategory(initialCategory)
+                                            val match = activeCategories.firstOrNull {
+                                                it.equals(initialNorm, ignoreCase = true)
+                                            }
+                                            if (match != null) {
+                                                listOf(match) + activeCategories.filterNot {
+                                                    it.equals(match, ignoreCase = true)
+                                                }
+                                            } else {
+                                                activeCategories
+                                            }
+                                        }
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .horizontalScroll(rememberScrollState()),
+                                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            orderedEditCategories.forEach { cat ->
+                                                renderCategoryNode(cat)
+                                            }
+                                        }
+                                    } else {
+                                        FlowRow(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                                        ) {
+                                            activeCategories.forEach { cat ->
+                                                renderCategoryNode(cat)
+                                            }
+                                        }
+                                    }
                                 }
-                                .testTag("transaction_exclude_expense_row")
-                        ) {
-                            Row(
+                            }
+                        }
+
+                        val renderExcludeToggleCard: @Composable () -> Unit = {
+                            Surface(
+                                shape = RoundedCornerShape(18.dp),
+                                color = if (isExcludedFromExpense) {
+                                    MaterialTheme.colorScheme.secondaryContainer
+                                } else {
+                                    MaterialTheme.colorScheme.surfaceContainerHigh
+                                },
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .padding(horizontal = 14.dp, vertical = 10.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.SpaceBetween
+                                    .clip(RoundedCornerShape(18.dp))
+                                    .clickable {
+                                        performHaptic()
+                                        isExcludedFromExpense = !isExcludedFromExpense
+                                    }
+                                    .testTag("transaction_exclude_expense_row")
                             ) {
                                 Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 14.dp, vertical = 10.dp),
                                     verticalAlignment = Alignment.CenterVertically,
-                                    modifier = Modifier.weight(1f)
+                                    horizontalArrangement = Arrangement.SpaceBetween
                                 ) {
-                                    Icon(
-                                        imageVector = Icons.Default.MoneyOff,
-                                        contentDescription = null,
-                                        tint = if (isExcludedFromExpense) {
-                                            MaterialTheme.colorScheme.onSecondaryContainer
-                                        } else {
-                                            MaterialTheme.colorScheme.onSurfaceVariant
-                                        },
-                                        modifier = Modifier.size(20.dp)
-                                    )
-                                    Spacer(modifier = Modifier.width(10.dp))
-                                    Column {
-                                        Text(
-                                            text = if (isIncomeType) {
-                                                "Exclude from Income"
-                                            } else {
-                                                "Exclude from Expenses"
-                                            },
-                                            style = MaterialTheme.typography.titleSmall,
-                                            fontWeight = FontWeight.Bold,
-                                            color = if (isExcludedFromExpense) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        modifier = Modifier.weight(1f)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.MoneyOff,
+                                            contentDescription = null,
+                                            tint = if (isExcludedFromExpense) {
                                                 MaterialTheme.colorScheme.onSecondaryContainer
                                             } else {
-                                                MaterialTheme.colorScheme.onSurface
-                                            }
-                                        )
-                                        Text(
-                                            text = if (isIncomeType) {
-                                                "Ignore in monthly income & trends"
-                                            } else {
-                                                "Ignore in monthly spend, budgets & trends"
-                                            },
-                                            style = MaterialTheme.typography.labelSmall,
-                                            color = if (isExcludedFromExpense) {
-                                                MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.8f)
-                                            } else {
                                                 MaterialTheme.colorScheme.onSurfaceVariant
-                                            }
+                                            },
+                                            modifier = Modifier.size(20.dp)
                                         )
+                                        Spacer(modifier = Modifier.width(10.dp))
+                                        Column {
+                                            Text(
+                                                text = if (isIncomeType) {
+                                                    "Exclude from Income"
+                                                } else {
+                                                    "Exclude from Expenses"
+                                                },
+                                                style = MaterialTheme.typography.titleSmall,
+                                                fontWeight = FontWeight.Bold,
+                                                color = if (isExcludedFromExpense) {
+                                                    MaterialTheme.colorScheme.onSecondaryContainer
+                                                } else {
+                                                    MaterialTheme.colorScheme.onSurface
+                                                }
+                                            )
+                                            Text(
+                                                text = if (isIncomeType) {
+                                                    "Ignore in monthly income & trends"
+                                                } else {
+                                                    "Ignore in monthly spend, budgets & trends"
+                                                },
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = if (isExcludedFromExpense) {
+                                                    MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.8f)
+                                                } else {
+                                                    MaterialTheme.colorScheme.onSurfaceVariant
+                                                }
+                                            )
+                                        }
                                     }
+                                    Switch(
+                                        checked = isExcludedFromExpense,
+                                        onCheckedChange = {
+                                            performHaptic()
+                                            isExcludedFromExpense = it
+                                        },
+                                        modifier = Modifier.testTag("transaction_exclude_expense_switch")
+                                    )
                                 }
-                                Switch(
-                                    checked = isExcludedFromExpense,
-                                    onCheckedChange = {
-                                        performHaptic()
-                                        isExcludedFromExpense = it
-                                    },
-                                    modifier = Modifier.testTag("transaction_exclude_expense_switch")
-                                )
                             }
                         }
 
-                        // Progressive Disclosure: Expandable More Details
-                        TextButton(
-                            onClick = { showExtraDetails = !showExtraDetails },
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Text(
-                                text = if (showExtraDetails) "Less Details" else "More Details",
-                                style = MaterialTheme.typography.labelMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Icon(
-                                imageVector = if (showExtraDetails) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.size(18.dp)
-                            )
+                        val renderScopeAndToolsRow: @Composable () -> Unit = {
+                            if (hasHousehold || onLinkDuplicate != null || (showDeleteButton && onDelete != null)) {
+                                FlowRow(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    if (hasHousehold) {
+                                        val stampColor = if (isShared) HouseholdBadgeIndigo else PersonalBadgeTeal
+                                        Surface(
+                                            shape = RoundedCornerShape(50),
+                                            color = stampColor.copy(alpha = 0.14f),
+                                            modifier = Modifier
+                                                .heightIn(min = 40.dp)
+                                                .clip(RoundedCornerShape(50))
+                                                .border(1.5.dp, stampColor, RoundedCornerShape(50))
+                                                .clickable {
+                                                    performHaptic()
+                                                    isShared = !isShared
+                                                }
+                                                .testTag("transaction_shared_switch")
+                                        ) {
+                                            Row(
+                                                modifier = Modifier.padding(
+                                                    horizontal = 12.dp,
+                                                    vertical = 8.dp
+                                                ),
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                Icon(
+                                                    imageVector = if (isShared) Icons.Default.Groups else Icons.Default.Lock,
+                                                    contentDescription = null,
+                                                    tint = stampColor,
+                                                    modifier = Modifier.size(16.dp)
+                                                )
+                                                Spacer(modifier = Modifier.width(6.dp))
+                                                Text(
+                                                    text = if (isShared) "HOUSEHOLD" else "PERSONAL",
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = stampColor,
+                                                    maxLines = 1
+                                                )
+                                            }
+                                        }
+                                    }
+
+                                    if (onLinkDuplicate != null || (showDeleteButton && onDelete != null)) {
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                        ) {
+                                            if (onLinkDuplicate != null) {
+                                                CircularTonalIconButton(
+                                                    icon = Icons.Default.Link,
+                                                    contentDescription = "Link Duplicate SMS / Transaction",
+                                                    onClick = onLinkDuplicate,
+                                                    containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                                                    contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+                                                    modifier = Modifier.testTag("edit_dialog_link_duplicate_button")
+                                                )
+                                            }
+                                            if (showDeleteButton && onDelete != null) {
+                                                CircularTonalIconButton(
+                                                    icon = Icons.Default.DeleteOutline,
+                                                    contentDescription = "Delete Receipt",
+                                                    onClick = onDelete,
+                                                    containerColor = MaterialTheme.colorScheme.errorContainer,
+                                                    contentColor = MaterialTheme.colorScheme.onErrorContainer,
+                                                    modifier = Modifier.testTag("edit_dialog_delete_button")
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                         }
 
-                        AnimatedVisibility(visible = showExtraDetails) {
-                            Column(
+                        val renderTypeSegmentedRow: @Composable () -> Unit = {
+                            SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+                                val isExp = type == "EXPENSE"
+                                SegmentedButton(
+                                    selected = isExp,
+                                    onClick = {
+                                        performHaptic()
+                                        type = "EXPENSE"
+                                        if (ExpenseCategories.isIncomeCategory(category)) {
+                                            category = spendCategories.firstOrNull() ?: "Groceries"
+                                        }
+                                    },
+                                    shape = SegmentedButtonDefaults.itemShape(index = 0, count = 2),
+                                    icon = {
+                                        SegmentedButtonDefaults.Icon(active = isExp) {
+                                            Icon(
+                                                imageVector = Icons.Default.Check,
+                                                contentDescription = null,
+                                                modifier = Modifier.size(SegmentedButtonDefaults.IconSize)
+                                            )
+                                        }
+                                    },
+                                    modifier = Modifier.testTag("receipt_type_chip_expense")
+                                ) {
+                                    Text("Expense", fontWeight = if (isExp) FontWeight.Bold else FontWeight.Medium)
+                                }
+
+                                val isInc = type == "INCOME"
+                                SegmentedButton(
+                                    selected = isInc,
+                                    onClick = {
+                                        performHaptic()
+                                        type = "INCOME"
+                                        if (!ExpenseCategories.isIncomeCategory(category)) {
+                                            category = incomeCategories.firstOrNull() ?: "Salary & Income"
+                                        }
+                                    },
+                                    shape = SegmentedButtonDefaults.itemShape(index = 1, count = 2),
+                                    icon = {
+                                        SegmentedButtonDefaults.Icon(active = isInc) {
+                                            Icon(
+                                                imageVector = Icons.Default.Check,
+                                                contentDescription = null,
+                                                modifier = Modifier.size(SegmentedButtonDefaults.IconSize)
+                                            )
+                                        }
+                                    },
+                                    modifier = Modifier.testTag("receipt_type_chip_income")
+                                ) {
+                                    Text("Income", fontWeight = if (isInc) FontWeight.Bold else FontWeight.Medium)
+                                }
+                            }
+                        }
+
+                        val renderPaymentAccountDateBlock: @Composable () -> Unit = {
+                            // Payment Method Row (Tonal Preset Chips)
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .horizontalScroll(rememberScrollState()),
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                listOf("UPI", "CARD", "BANK", "CASH", "WALLET").forEach { mode ->
+                                    val selectedMode = paymentMode.equals(mode, ignoreCase = true)
+                                    FilterChip(
+                                        selected = selectedMode,
+                                        onClick = {
+                                            performHaptic()
+                                            paymentMode = mode
+                                        },
+                                        leadingIcon = if (selectedMode) {
+                                            {
+                                                Icon(
+                                                    imageVector = Icons.Default.Check,
+                                                    contentDescription = null,
+                                                    modifier = Modifier.size(14.dp)
+                                                )
+                                            }
+                                        } else {
+                                            null
+                                        },
+                                        label = { Text(mode, style = MaterialTheme.typography.labelSmall) },
+                                        shape = RoundedCornerShape(50)
+                                    )
+                                }
+                            }
+
+                            Spacer(modifier = Modifier.height(8.dp))
+
+                            // Account / Card Popup Selector
+                            Surface(
+                                shape = RoundedCornerShape(18.dp),
+                                color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                                border = BorderStroke(
+                                    width = 1.dp,
+                                    color = if (accountMissingError) {
+                                        MaterialTheme.colorScheme.error
+                                    } else {
+                                        MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f)
+                                    }
+                                ),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(18.dp))
+                                    .clickable {
+                                        performHaptic()
+                                        showAccountPickerDialog = true
+                                    }
+                                    .testTag("tx_account_picker_button")
+                            ) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 14.dp, vertical = 12.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        modifier = Modifier.weight(1f)
+                                    ) {
+                                        Icon(
+                                            imageVector = when (FinancialAccount.normalizeAccountType(selectedAccountObj?.accountType ?: "")) {
+                                                "CREDIT_CARD", "DEBIT_CARD" -> Icons.Default.CreditCard
+                                                "WALLET", "CASH" -> Icons.Default.AccountBalanceWallet
+                                                else -> Icons.Default.AccountBalance
+                                            },
+                                            contentDescription = null,
+                                            tint = MaterialTheme.colorScheme.primary,
+                                            modifier = Modifier.size(20.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(10.dp))
+                                        Column {
+                                            Text(
+                                                text = "Account / Card",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                            Text(
+                                                text = if (accountName.isNotBlank()) {
+                                                    accountName
+                                                } else if (selectableAccounts.isNotEmpty()) {
+                                                    selectableAccounts.first().name
+                                                } else {
+                                                    "Tap to select or add account"
+                                                },
+                                                style = MaterialTheme.typography.titleSmall,
+                                                fontWeight = FontWeight.Bold,
+                                                color = if (accountName.isNotBlank() || selectableAccounts.isNotEmpty()) {
+                                                    MaterialTheme.colorScheme.onSurface
+                                                } else {
+                                                    MaterialTheme.colorScheme.primary
+                                                },
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis,
+                                                modifier = Modifier.testTag("tx_selected_account_label")
+                                            )
+                                        }
+                                    }
+                                    Icon(
+                                        imageVector = Icons.Default.ArrowDropDown,
+                                        contentDescription = "Choose Account",
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+
+                            if (accountMissingError) {
+                                Text(
+                                    text = "Please choose an existing account or add a new account.",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.error,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(top = 4.dp, start = 8.dp)
+                                )
+                            }
+
+                            Spacer(modifier = Modifier.height(8.dp))
+
+                            // Exact Date & Timestamp Selector Row
+                            Row(
                                 modifier = Modifier.fillMaxWidth(),
-                                verticalArrangement = Arrangement.spacedBy(8.dp)
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                FilledTonalButton(
+                                    onClick = { showDatePickerModal = true },
+                                    shape = RoundedCornerShape(50),
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .testTag("tx_date_picker_button")
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.CalendarMonth,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(
+                                        text = formatExactDate(txDateMillis),
+                                        style = MaterialTheme.typography.labelMedium,
+                                        fontWeight = FontWeight.SemiBold,
+                                        maxLines = 1
+                                    )
+                                }
+
+                                FilledTonalButton(
+                                    onClick = { showTimePickerModal = true },
+                                    shape = RoundedCornerShape(50),
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .testTag("tx_time_picker_button")
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.AccessTime,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(
+                                        text = formatExactTime(txDateMillis),
+                                        style = MaterialTheme.typography.labelMedium,
+                                        fontWeight = FontWeight.SemiBold,
+                                        maxLines = 1
+                                    )
+                                }
+                            }
+                        }
+
+                        val renderRawSmsBox: @Composable () -> Unit = {
+                            if (allSmsRecords.isNotEmpty()) {
+                                Surface(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .testTag("edit_dialog_raw_sms_box"),
+                                    shape = RoundedCornerShape(18.dp),
+                                    color = MaterialTheme.colorScheme.surfaceContainerHigh
+                                ) {
+                                    Column(
+                                        modifier = Modifier.padding(14.dp),
+                                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                                    ) {
+                                        if (allSmsRecords.size > 1) {
+                                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                                Icon(
+                                                    imageVector = Icons.Default.Link,
+                                                    contentDescription = null,
+                                                    tint = MaterialTheme.colorScheme.primary,
+                                                    modifier = Modifier.size(16.dp)
+                                                )
+                                                Spacer(modifier = Modifier.width(6.dp))
+                                                Text(
+                                                    text = "Linked SMS Alerts (${allSmsRecords.size})",
+                                                    style = MaterialTheme.typography.labelMedium,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = MaterialTheme.colorScheme.primary
+                                                )
+                                            }
+                                        }
+                                        allSmsRecords.forEachIndexed { idx, rec ->
+                                            if (idx > 0) {
+                                                ReceiptDashedDividerLine()
+                                            }
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                horizontalArrangement = Arrangement.SpaceBetween,
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                                    Icon(
+                                                        imageVector = Icons.Default.Message,
+                                                        contentDescription = null,
+                                                        tint = MaterialTheme.colorScheme.primary,
+                                                        modifier = Modifier.size(15.dp)
+                                                    )
+                                                    Spacer(modifier = Modifier.width(6.dp))
+                                                    Text(
+                                                        text = rec.sender.ifBlank { "SMS" },
+                                                        style = MaterialTheme.typography.labelMedium.copy(fontFamily = ReceiptMonoFontFamily),
+                                                        fontWeight = FontWeight.Bold,
+                                                        color = MaterialTheme.colorScheme.primary
+                                                    )
+                                                }
+                                                Text(
+                                                    text = formatFullTimestamp(
+                                                        if (rec.timestamp > 0L) rec.timestamp else txDateMillis
+                                                    ),
+                                                    style = MaterialTheme.typography.labelSmall.copy(fontFamily = ReceiptMonoFontFamily),
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                )
+                                            }
+                                            Text(
+                                                text = rec.body,
+                                                style = MaterialTheme.typography.bodySmall.copy(fontFamily = ReceiptMonoFontFamily),
+                                                color = MaterialTheme.colorScheme.onSurface
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        if (isEditMode) {
+                            // Simplified Edit Transaction View:
+                            // 1) Main Hero Banner showing ONLY the editable amount
+                            Spacer(modifier = Modifier.height(12.dp))
+                            Surface(
+                                shape = RoundedCornerShape(24.dp),
+                                color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .testTag("edit_tx_amount_hero_banner")
+                            ) {
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 16.dp, vertical = 14.dp),
+                                    horizontalAlignment = Alignment.CenterHorizontally
+                                ) {
+                                    TextField(
+                                        value = amountText,
+                                        onValueChange = { amountText = sanitizeDecimalInput(it) },
+                                        prefix = {
+                                            Text(
+                                                text = currencySymbol,
+                                                style = MaterialTheme.typography.headlineMedium.copy(
+                                                    fontFamily = ReceiptMonoFontFamily,
+                                                    fontWeight = FontWeight.Bold
+                                                ),
+                                                color = if (isIncomeType) {
+                                                    BudgetSafeGreen
+                                                } else {
+                                                    MaterialTheme.colorScheme.onSurfaceVariant
+                                                }
+                                            )
+                                        },
+                                        placeholder = {
+                                            Text(
+                                                text = "0",
+                                                style = MaterialTheme.typography.headlineLarge.copy(
+                                                    fontFamily = ReceiptMonoFontFamily,
+                                                    fontWeight = FontWeight.ExtraBold,
+                                                    textAlign = TextAlign.Center
+                                                ),
+                                                modifier = Modifier.fillMaxWidth()
+                                            )
+                                        },
+                                        textStyle = MaterialTheme.typography.headlineLarge.copy(
+                                            fontFamily = ReceiptMonoFontFamily,
+                                            fontWeight = FontWeight.ExtraBold,
+                                            color = if (isIncomeType) {
+                                                BudgetSafeGreen
+                                            } else {
+                                                MaterialTheme.colorScheme.onSurface
+                                            },
+                                            textAlign = TextAlign.Center
+                                        ),
+                                        isError = amountError != null,
+                                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                                        singleLine = true,
+                                        colors = TextFieldDefaults.colors(
+                                            focusedContainerColor = Color.Transparent,
+                                            unfocusedContainerColor = Color.Transparent,
+                                            errorContainerColor = Color.Transparent,
+                                            focusedIndicatorColor = Color.Transparent,
+                                            unfocusedIndicatorColor = Color.Transparent,
+                                            errorIndicatorColor = Color.Transparent
+                                        ),
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .testTag(amountTestTag)
+                                    )
+                                    if (amountError != null) {
+                                        Text(
+                                            text = amountError,
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.error,
+                                            textAlign = TextAlign.Center
+                                        )
+                                    }
+                                }
+                            }
+
+                            // 2) Category Selector
+                            Spacer(modifier = Modifier.height(14.dp))
+                            renderCategorySection()
+
+                            // 3) Exclude from Expense / Income Toggle
+                            Spacer(modifier = Modifier.height(14.dp))
+                            renderExcludeToggleCard()
+
+                            // 4) Collapsible "Show More" button housing all secondary edit fields
+                            Spacer(modifier = Modifier.height(12.dp))
+                            FilledTonalButton(
+                                onClick = {
+                                    performHaptic()
+                                    showMoreEditDetails = !showMoreEditDetails
+                                },
+                                shape = RoundedCornerShape(50),
+                                colors = ButtonDefaults.filledTonalButtonColors(
+                                    containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                                    contentColor = MaterialTheme.colorScheme.onSurface
+                                ),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .heightIn(min = 48.dp)
+                                    .testTag("edit_tx_show_more_button")
+                            ) {
+                                Text(
+                                    text = if (showMoreEditDetails) "Show Less" else "Show More",
+                                    style = MaterialTheme.typography.labelLarge,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Icon(
+                                    imageVector = if (showMoreEditDetails) {
+                                        Icons.Default.ExpandLess
+                                    } else {
+                                        Icons.Default.ExpandMore
+                                    },
+                                    contentDescription = if (showMoreEditDetails) "Collapse details" else "Expand details",
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+
+                            AnimatedVisibility(visible = showMoreEditDetails) {
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(top = 12.dp)
+                                        .testTag("edit_tx_more_details_section"),
+                                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                                ) {
+                                    OutlinedTextField(
+                                        value = title,
+                                        onValueChange = { title = it.take(100) },
+                                        label = { Text("Merchant") },
+                                        supportingText = if (title.length >= 95) {
+                                            { Text("${title.length}/100") }
+                                        } else {
+                                            null
+                                        },
+                                        singleLine = true,
+                                        shape = RoundedCornerShape(16.dp),
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .testTag(titleTestTag)
+                                    )
+
+                                    renderTypeSegmentedRow()
+
+                                    renderScopeAndToolsRow()
+
+                                    Column(modifier = Modifier.fillMaxWidth()) {
+                                        renderPaymentAccountDateBlock()
+                                    }
+
+                                    OutlinedTextField(
+                                        value = tagsInput,
+                                        onValueChange = { tagsInput = it.take(120) },
+                                        label = { Text("#Tags") },
+                                        singleLine = true,
+                                        shape = RoundedCornerShape(16.dp),
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .testTag("add_tx_tags_input")
+                                    )
+
+                                    OutlinedTextField(
+                                        value = notes,
+                                        onValueChange = { notes = it.take(500) },
+                                        label = { Text("Note (${notes.length}/500)") },
+                                        maxLines = 3,
+                                        shape = RoundedCornerShape(16.dp),
+                                        modifier = Modifier.fillMaxWidth()
+                                    )
+
+                                    renderRawSmsBox()
+                                }
+                            }
+                        } else {
+                            // Full Add New Transaction Flow
+                            if (hasHousehold) {
+                                Spacer(modifier = Modifier.height(8.dp))
+                                renderScopeAndToolsRow()
+                            }
+
+                            Spacer(modifier = Modifier.height(10.dp))
+                            renderTypeSegmentedRow()
+
+                            if (allSmsRecords.isNotEmpty()) {
+                                Spacer(modifier = Modifier.height(10.dp))
+                                renderRawSmsBox()
+                            }
+
+                            ReceiptDashedDividerLine()
+
+                            // Big Receipt Total & Merchant Input
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                verticalAlignment = Alignment.Top
                             ) {
                                 OutlinedTextField(
-                                    value = tagsInput,
-                                    onValueChange = { tagsInput = it.take(120) },
-                                    label = { Text("#Tags") },
+                                    value = amountText,
+                                    onValueChange = { amountText = sanitizeDecimalInput(it) },
+                                    label = { Text("Total ($currencySymbol)") },
+                                    textStyle = MaterialTheme.typography.bodyLarge.copy(
+                                        fontFamily = ReceiptMonoFontFamily,
+                                        fontWeight = FontWeight.Bold
+                                    ),
+                                    isError = amountError != null,
+                                    supportingText = amountError?.let { err -> { Text(err) } },
+                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                                     singleLine = true,
                                     shape = RoundedCornerShape(16.dp),
                                     modifier = Modifier
-                                        .fillMaxWidth()
-                                        .testTag("add_tx_tags_input")
+                                        .weight(0.48f)
+                                        .testTag(amountTestTag)
                                 )
+
                                 OutlinedTextField(
-                                    value = notes,
-                                    onValueChange = { notes = it.take(500) },
-                                    label = { Text("Note (${notes.length}/500)") },
-                                    maxLines = 3,
+                                    value = title,
+                                    onValueChange = { title = it.take(100) },
+                                    label = { Text("Merchant") },
+                                    supportingText = if (title.length >= 95) {
+                                        { Text("${title.length}/100") }
+                                    } else {
+                                        null
+                                    },
+                                    singleLine = true,
                                     shape = RoundedCornerShape(16.dp),
-                                    modifier = Modifier.fillMaxWidth()
+                                    modifier = Modifier
+                                        .weight(0.52f)
+                                        .testTag(titleTestTag)
                                 )
+                            }
+
+                            ReceiptDashedDividerLine()
+
+                            renderCategorySection()
+
+                            ReceiptDashedDividerLine()
+
+                            renderPaymentAccountDateBlock()
+
+                            Spacer(modifier = Modifier.height(8.dp))
+                            renderExcludeToggleCard()
+
+                            // Progressive Disclosure: Expandable More Details
+                            TextButton(
+                                onClick = { showExtraDetails = !showExtraDetails },
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text(
+                                    text = if (showExtraDetails) "Less Details" else "More Details",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Icon(
+                                    imageVector = if (showExtraDetails) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+
+                            AnimatedVisibility(visible = showExtraDetails) {
+                                Column(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    OutlinedTextField(
+                                        value = tagsInput,
+                                        onValueChange = { tagsInput = it.take(120) },
+                                        label = { Text("#Tags") },
+                                        singleLine = true,
+                                        shape = RoundedCornerShape(16.dp),
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .testTag("add_tx_tags_input")
+                                    )
+                                    OutlinedTextField(
+                                        value = notes,
+                                        onValueChange = { notes = it.take(500) },
+                                        label = { Text("Note (${notes.length}/500)") },
+                                        maxLines = 3,
+                                        shape = RoundedCornerShape(16.dp),
+                                        modifier = Modifier.fillMaxWidth()
+                                    )
+                                }
                             }
                         }
 
-                        Spacer(modifier = Modifier.height(10.dp))
+                        Spacer(modifier = Modifier.height(12.dp))
 
                         Button(
                             onClick = submitReceipt,
@@ -3558,7 +3781,9 @@ fun FirstTimeSmsSyncScreen(
     onSelectPeriodOption: (SmsSyncPeriodOption) -> Unit = {},
     onSelectCustomDateRange: (Long, Long) -> Unit = { _, _ -> },
     permissionWarningMessage: String? = null,
-    onOpenAppSettingsClick: () -> Unit = {}
+    onOpenAppSettingsClick: () -> Unit = {},
+    isFromSettings: Boolean = false,
+    onSyncAnotherPeriodClick: (() -> Unit)? = null
 ) {
     val context = LocalContext.current
     val dimens = LocalAppDimens.current
@@ -3579,6 +3804,11 @@ fun FirstTimeSmsSyncScreen(
     androidx.activity.compose.BackHandler(enabled = syncState.isSyncing) {
         performHaptic()
         backPressBlockedWarning = true
+    }
+
+    androidx.activity.compose.BackHandler(enabled = isFromSettings && !syncState.isSyncing) {
+        performHaptic()
+        onSkipClick()
     }
 
     if (showCustomRangePicker) {
@@ -4167,32 +4397,62 @@ fun FirstTimeSmsSyncScreen(
                                 },
                                 modifier = Modifier.testTag("skip_first_time_sms_sync_button")
                             ) {
-                                Text("Skip for Now")
+                                Text(if (isFromSettings) "Back" else "Skip for Now")
                             }
                         }
                     } else if (syncState.isCompleted && !syncState.isSyncing) {
-                        Button(
-                            onClick = {
-                                performHaptic()
-                                onContinueToAppClick()
-                            },
-                            shape = RoundedCornerShape(50),
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(54.dp)
-                                .testTag("finish_sms_sync_continue_button")
+                        Column(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
-                            Icon(
-                                imageVector = Icons.Default.Check,
-                                contentDescription = "Continue to Home",
-                                modifier = Modifier.size(18.dp)
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text(
-                                text = "Continue to Home",
-                                style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.Bold
-                            )
+                            Button(
+                                onClick = {
+                                    performHaptic()
+                                    onContinueToAppClick()
+                                },
+                                shape = RoundedCornerShape(50),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(54.dp)
+                                    .testTag("finish_sms_sync_continue_button")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Check,
+                                    contentDescription = if (isFromSettings) "Back to Settings" else "Continue to Home",
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    text = if (isFromSettings) "Back to Settings" else "Continue to Home",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                            if (isFromSettings && onSyncAnotherPeriodClick != null) {
+                                FilledTonalButton(
+                                    onClick = {
+                                        performHaptic()
+                                        onSyncAnotherPeriodClick()
+                                    },
+                                    shape = RoundedCornerShape(50),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .heightIn(min = 48.dp)
+                                        .testTag("sms_sync_another_period_button")
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.CalendarMonth,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text(
+                                        text = "Sync Another Period",
+                                        style = MaterialTheme.typography.titleSmall,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                            }
                         }
                     } else if (syncState.isSyncing) {
                         TextButton(
@@ -4202,7 +4462,7 @@ fun FirstTimeSmsSyncScreen(
                             },
                             modifier = Modifier.testTag("skip_during_sms_sync_button")
                         ) {
-                            Text("Skip & Enter App")
+                            Text(if (isFromSettings) "Cancel" else "Skip & Enter App")
                         }
                     }
                 }

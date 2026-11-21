@@ -1,6 +1,7 @@
 package com.ritesh.parser.core.bank
 
 import com.ritesh.parser.core.CompiledPatterns
+import com.ritesh.parser.core.ParsedBalanceUpdate
 import com.ritesh.parser.core.ParsedTransaction
 import com.ritesh.parser.core.TransactionType
 
@@ -119,6 +120,22 @@ object BankParserFactory {
         return parser.parse(smsBody, sender, timestamp)
     }
 
+    /**
+     * Parses a balance-only bank SMS (such as HDFC Bank's daily available/total/closing balance SMS)
+     * into a [ParsedBalanceUpdate] so account balances stay accurate without creating fake transactions.
+     */
+    fun parseBalanceSms(
+        smsBody: String,
+        sender: String,
+        timestamp: Long = System.currentTimeMillis()
+    ): ParsedBalanceUpdate? {
+        if (BankParser.isMandateOrBillReminderOrNonTransaction(smsBody)) {
+            return null
+        }
+        val parser = getParser(sender, smsBody) ?: return null
+        return parser.parseBalanceUpdate(smsBody, sender, timestamp)
+    }
+
     fun inferCategory(parsed: ParsedTransaction): String {
         val haystack = "${parsed.merchant.orEmpty()} ${parsed.smsBody}".lowercase()
         if (parsed.type == TransactionType.INCOME) {
@@ -159,6 +176,15 @@ object BankParserFactory {
             "${parsed.bankName} Card$suffix"
         } else {
             "${parsed.bankName}$suffix"
+        }
+    }
+
+    fun formatBalanceAccountDisplayName(update: ParsedBalanceUpdate): String {
+        val suffix = update.accountNumber?.let { " ••$it" } ?: ""
+        return if (update.isFromCard) {
+            "${update.bankName} Card$suffix"
+        } else {
+            "${update.bankName}$suffix"
         }
     }
 }

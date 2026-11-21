@@ -54,6 +54,7 @@ import androidx.compose.material.icons.filled.AccountBalanceWallet
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Bolt
+import androidx.compose.material.icons.filled.BrightnessAuto
 import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.CardGiftcard
 import androidx.compose.material.icons.filled.Category
@@ -93,6 +94,9 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
@@ -136,6 +140,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -581,9 +586,7 @@ fun MasterFeatureToggleBanner(
 }
 
 /**
- * Asymmetric top-right corner cutout hero card for Appearance (inspired by Screenshot 6):
- * Concave cutout cradles a floating Theme badge while displaying live Dark & Light mini
- * thermal paper receipt preview tiles.
+ * Minimal appearance summary card with a single-tap Light / Dark circular toggle button.
  */
 @Composable
 fun ExpressiveCutoutAppearanceHeroCard(
@@ -592,186 +595,69 @@ fun ExpressiveCutoutAppearanceHeroCard(
     onToggleQuickTheme: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val density = LocalDensity.current
     val performHaptic = rememberAppHapticPerformer()
-    val cutoutShape = remember(density) {
-        GenericShape { size, _ ->
-            val r = with(density) { 28.dp.toPx() }.coerceAtMost(size.minDimension * 0.25f)
-            val cutW = with(density) { 76.dp.toPx() }.coerceAtMost(size.width * 0.32f)
-            val cutH = with(density) { 68.dp.toPx() }.coerceAtMost(size.height * 0.42f)
-            val fillet = with(density) { 20.dp.toPx() }
-            val w = size.width
-            val h = size.height
-
-            moveTo(r, 0f)
-            lineTo(w - cutW - fillet, 0f)
-            quadraticTo(w - cutW, 0f, w - cutW, fillet)
-            lineTo(w - cutW, cutH - fillet)
-            quadraticTo(w - cutW, cutH, w - cutW + fillet, cutH)
-            lineTo(w - fillet, cutH)
-            quadraticTo(w, cutH, w, cutH + fillet)
-            lineTo(w, h - r)
-            arcTo(Rect(w - 2 * r, h - 2 * r, w, h), 0f, 90f, false)
-            lineTo(r, h)
-            arcTo(Rect(0f, h - 2 * r, 2 * r, h), 90f, 90f, false)
-            lineTo(0f, r)
-            arcTo(Rect(0f, 0f, 2 * r, 2 * r), 180f, 90f, false)
-            close()
-        }
+    val statusText = when {
+        isDarkActive && amoledEnabled -> "Dark mode · AMOLED"
+        isDarkActive -> "Dark mode"
+        else -> "Light mode"
     }
 
-    Box(
+    Surface(
         modifier = modifier
             .fillMaxWidth()
-            .testTag("appearance_cutout_hero_card")
+            .testTag("appearance_cutout_hero_card"),
+        shape = RoundedCornerShape(24.dp),
+        color = MaterialTheme.colorScheme.surfaceContainerLow,
+        contentColor = MaterialTheme.colorScheme.onSurface,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f))
     ) {
-        Surface(
-            modifier = Modifier.fillMaxWidth(),
-            shape = cutoutShape,
-            color = MaterialTheme.colorScheme.primaryContainer,
-            contentColor = MaterialTheme.colorScheme.onPrimaryContainer
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp, vertical = 16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
         ) {
             Column(
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(start = 20.dp, end = 20.dp, top = 20.dp, bottom = 18.dp),
-                verticalArrangement = Arrangement.spacedBy(16.dp)
+                    .weight(1f)
+                    .padding(end = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(2.dp)
             ) {
-                Column(
-                    modifier = Modifier.padding(end = 72.dp),
-                    verticalArrangement = Arrangement.spacedBy(4.dp)
-                ) {
-                    Text(
-                        text = "Paper & Ink",
-                        style = MaterialTheme.typography.headlineLarge,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onPrimaryContainer
-                    )
-                    Text(
-                        text = "Tactile thermal receipts styled with Material You.",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.82f)
-                    )
-                }
-
-                // Side-by-side Dark & Light Mini Receipt Preview Tiles
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    // Dark Preview Tile
-                    val darkTileBg = if (amoledEnabled) Color(0xFF000000) else Color(0xFF151813)
-                    Surface(
-                        shape = RoundedCornerShape(18.dp),
-                        color = darkTileBg,
-                        border = if (isDarkActive) {
-                            BorderStroke(2.dp, MaterialTheme.colorScheme.primary)
-                        } else {
-                            BorderStroke(1.dp, Color.White.copy(alpha = 0.10f))
-                        },
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 14.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(10.dp)
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .size(28.dp)
-                                    .clip(RoundedCornerShape(9.dp))
-                                    .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.85f))
-                            )
-                            Column(
-                                modifier = Modifier.weight(1f),
-                                verticalArrangement = Arrangement.spacedBy(5.dp)
-                            ) {
-                                Box(
-                                    modifier = Modifier
-                                        .fillMaxWidth(0.85f)
-                                        .height(6.dp)
-                                        .clip(CircleShape)
-                                        .background(Color.White.copy(alpha = 0.82f))
-                                )
-                                Box(
-                                    modifier = Modifier
-                                        .fillMaxWidth(0.55f)
-                                        .height(5.dp)
-                                        .clip(CircleShape)
-                                        .background(Color.White.copy(alpha = 0.42f))
-                                )
-                            }
-                        }
-                    }
-
-                    // Light Paper Preview Tile
-                    Surface(
-                        shape = RoundedCornerShape(18.dp),
-                        color = Color(0xFFFAF6EB),
-                        border = if (!isDarkActive) {
-                            BorderStroke(2.dp, MaterialTheme.colorScheme.primary)
-                        } else {
-                            BorderStroke(1.dp, Color.Black.copy(alpha = 0.08f))
-                        },
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 14.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(10.dp)
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .size(28.dp)
-                                    .clip(RoundedCornerShape(9.dp))
-                                    .background(Color(0xFF4B5320))
-                            )
-                            Column(
-                                modifier = Modifier.weight(1f),
-                                verticalArrangement = Arrangement.spacedBy(5.dp)
-                            ) {
-                                Box(
-                                    modifier = Modifier
-                                        .fillMaxWidth(0.85f)
-                                        .height(6.dp)
-                                        .clip(CircleShape)
-                                        .background(Color(0xFF231F20).copy(alpha = 0.72f))
-                                )
-                                Box(
-                                    modifier = Modifier
-                                        .fillMaxWidth(0.55f)
-                                        .height(5.dp)
-                                        .clip(CircleShape)
-                                        .background(Color(0xFF231F20).copy(alpha = 0.32f))
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        // Floating Theme Emblem nestled in the top-right cutout
-        Surface(
-            onClick = {
-                performHaptic()
-                onToggleQuickTheme()
-            },
-            modifier = Modifier
-                .align(Alignment.TopEnd)
-                .padding(top = 6.dp, end = 8.dp)
-                .size(52.dp)
-                .testTag("appearance_cutout_theme_emblem"),
-            shape = CircleShape,
-            color = MaterialTheme.colorScheme.surfaceContainerHighest,
-            contentColor = MaterialTheme.colorScheme.primary
-        ) {
-            Box(contentAlignment = Alignment.Center) {
-                Icon(
-                    imageVector = if (isDarkActive) Icons.Default.DarkMode else Icons.Default.LightMode,
-                    contentDescription = "Toggle Light or Dark Theme",
-                    modifier = Modifier.size(26.dp)
+                Text(
+                    text = "Appearance",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurface
                 )
+                Text(
+                    text = statusText,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+
+            Surface(
+                onClick = {
+                    performHaptic()
+                    onToggleQuickTheme()
+                },
+                modifier = Modifier
+                    .size(48.dp)
+                    .testTag("appearance_cutout_theme_emblem"),
+                shape = CircleShape,
+                color = MaterialTheme.colorScheme.primaryContainer,
+                contentColor = MaterialTheme.colorScheme.onPrimaryContainer
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(
+                        imageVector = if (isDarkActive) Icons.Default.DarkMode else Icons.Default.LightMode,
+                        contentDescription = if (isDarkActive) "Switch to light theme" else "Switch to dark theme",
+                        modifier = Modifier.size(22.dp)
+                    )
+                }
             }
         }
     }
@@ -1351,9 +1237,12 @@ fun MonthlyBudgetPulseCard(
     dailySafeSpend: Double,
     @Suppress("UNUSED_PARAMETER") remainingDays: Int,
     currencySymbol: String,
-    periodLabel: String,
+    @Suppress("UNUSED_PARAMETER") periodLabel: String,
     @Suppress("UNUSED_PARAMETER") household: Household?,
     @Suppress("UNUSED_PARAMETER") monthlyTrendBars: List<MonthlySpendBar> = emptyList(),
+    transactionsCount: Int = 0,
+    onOpenTransactionsClick: (() -> Unit)? = null,
+    onQuickAddClick: (() -> Unit)? = null,
     onEditBudgetClick: () -> Unit
 ) {
     val dimens = LocalAppDimens.current
@@ -1362,200 +1251,188 @@ fun MonthlyBudgetPulseCard(
     val rawProgress = if (hasAssignedBudget) (totalSpent / monthlyBudget).toFloat().coerceIn(0f, 1f) else 0f
     val animatedProgress by animateFloatAsState(
         targetValue = rawProgress,
-        animationSpec = spring(dampingRatio = Spring.DampingRatioLowBouncy, stiffness = Spring.StiffnessLow),
-        label = "budget_ring_progress"
+        animationSpec = spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessLow),
+        label = "budget_bar_progress"
     )
-    val pct = if (hasAssignedBudget) ((totalSpent / monthlyBudget) * 100).toInt() else 0
+    val isAboveBudget = hasAssignedBudget && totalSpent > monthlyBudget
+    val diffAmount = kotlin.math.abs(monthlyBudget - totalSpent)
+    val heroBgStart = MaterialTheme.colorScheme.primaryContainer
+    val heroBgEnd = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.72f)
+    val heroInk = MaterialTheme.colorScheme.onPrimaryContainer
     val statusColor = when {
-        pct >= 100 -> BudgetDangerCoral
-        pct >= 80 -> BudgetWarnAmber
-        else -> BudgetSafeGreen
+        isAboveBudget -> BudgetDangerCoral
+        hasAssignedBudget && rawProgress >= 0.8f -> BudgetWarnAmber
+        else -> heroInk
     }
 
-    ReceiptTicketCard(
+    Surface(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = dimens.horizontalPadding)
-            .clickable {
-                performHaptic()
-                onEditBudgetClick()
-            },
-        containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
-        contentColor = MaterialTheme.colorScheme.onSurface
+            .testTag("home_hero_card"),
+        shape = RoundedCornerShape(32.dp),
+        color = heroBgStart,
+        contentColor = heroInk
     ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .background(
                     Brush.verticalGradient(
-                        colors = listOf(
-                            MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.42f),
-                            MaterialTheme.colorScheme.surfaceContainerLow
-                        )
+                        colors = listOf(heroBgStart, heroBgEnd)
                     )
                 )
-                .padding(dimens.cardPadding)
+                .padding(horizontal = 20.dp, vertical = 22.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            // Top Thermal Receipt Stub Header
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+            // Centered Editorial Eyebrow & Hero Amount (Rhythm-inspired calm minimalism)
+            Text(
+                text = "Monthly spend",
+                style = MaterialTheme.typography.titleMedium.copy(fontStyle = FontStyle.Italic),
+                color = heroInk.copy(alpha = 0.72f),
+                textAlign = TextAlign.Center,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            Spacer(modifier = Modifier.height(2.dp))
+            Text(
+                text = formatCurrency(totalSpent, currencySymbol),
+                style = MaterialTheme.typography.displayMedium.copy(
+                    fontFamily = ReceiptMonoFontFamily,
+                    letterSpacing = (-1.2).sp
+                ),
+                fontWeight = FontWeight.ExtraBold,
+                color = heroInk,
+                textAlign = TextAlign.Center,
+                maxLines = 1,
+                softWrap = false,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.testTag("home_hero_amount")
+            )
+
+            if (hasAssignedBudget) {
+                Spacer(modifier = Modifier.height(10.dp))
+                LinearProgressIndicator(
+                    progress = { animatedProgress },
+                    color = statusColor,
+                    trackColor = heroInk.copy(alpha = 0.14f),
+                    modifier = Modifier
+                        .fillMaxWidth(0.58f)
+                        .height(5.dp)
+                        .clip(RoundedCornerShape(50))
+                )
+                Spacer(modifier = Modifier.height(6.dp))
+                val statusLabel = if (isAboveBudget) {
+                    "${formatCurrency(diffAmount, currencySymbol)} over ${formatCurrency(monthlyBudget, currencySymbol)}"
+                } else {
+                    "${formatCurrency(diffAmount, currencySymbol)} left · ${formatCurrency(dailySafeSpend, currencySymbol)}/d"
+                }
+                Text(
+                    text = statusLabel,
+                    style = MaterialTheme.typography.labelMedium.copy(fontFamily = ReceiptMonoFontFamily),
+                    fontWeight = FontWeight.SemiBold,
+                    color = if (isAboveBudget) BudgetDangerCoral else heroInk.copy(alpha = 0.78f),
+                    textAlign = TextAlign.Center,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.testTag("home_budget_status_pill")
+                )
+            }
+
+            if (totalIncome > 0.0) {
+                Spacer(modifier = Modifier.height(6.dp))
+                Surface(
+                    shape = RoundedCornerShape(50),
+                    color = heroInk.copy(alpha = 0.08f),
+                    modifier = Modifier.testTag("home_monthly_income_pill")
                 ) {
-                    Icon(
-                        imageVector = Icons.AutoMirrored.Filled.ReceiptLong,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(16.dp)
-                    )
                     Text(
-                        text = "RECEIPT SUMMARY",
-                        style = MaterialTheme.typography.labelSmall.copy(fontFamily = ReceiptMonoFontFamily),
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.primary,
+                        text = "+${formatCurrency(totalIncome, currencySymbol)} income",
+                        style = MaterialTheme.typography.labelMedium.copy(fontFamily = ReceiptMonoFontFamily),
+                        fontWeight = FontWeight.SemiBold,
+                        color = heroInk.copy(alpha = 0.86f),
                         maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
                     )
                 }
-                IconButton(
+            }
+
+            Spacer(modifier = Modifier.height(18.dp))
+
+            // Signature Rhythm Bottom Pill Action Row: [ ○ Budget ] [  Transactions (N)  ] [ ○ Add ]
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Surface(
                     onClick = {
                         performHaptic()
                         onEditBudgetClick()
                     },
+                    shape = CircleShape,
+                    color = heroInk.copy(alpha = 0.11f),
+                    contentColor = heroInk,
                     modifier = Modifier
+                        .size(50.dp)
                         .minimumInteractiveComponentSize()
-                        .size(48.dp)
                         .testTag("edit_monthly_budget_button")
                 ) {
-                    Icon(
-                        imageVector = Icons.Default.Edit,
-                        contentDescription = "Manage Budgets",
-                        tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(22.dp)
-                    )
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(
+                            imageVector = Icons.Default.Edit,
+                            contentDescription = "Manage Budgets",
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
                 }
-            }
 
-            Spacer(modifier = Modifier.height(6.dp))
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Column(modifier = Modifier.weight(1f)) {
+                Button(
+                    onClick = {
+                        performHaptic()
+                        (onOpenTransactionsClick ?: onEditBudgetClick).invoke()
+                    },
+                    shape = RoundedCornerShape(50),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = heroInk,
+                        contentColor = heroBgStart
+                    ),
+                    contentPadding = PaddingValues(horizontal = 18.dp, vertical = 0.dp),
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(50.dp)
+                        .testTag("view_all_transactions_footer_button")
+                ) {
                     Text(
-                        text = formatCurrency(totalSpent, currencySymbol),
-                        style = MaterialTheme.typography.displayMedium.copy(fontFamily = ReceiptMonoFontFamily),
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onSurface,
+                        text = if (transactionsCount > 0) "Transactions ($transactionsCount)" else "Transactions",
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.SemiBold,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
-                    if (hasAssignedBudget) {
-                        Text(
-                            text = "of ${formatCurrency(monthlyBudget, currencySymbol)} envelope",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                    }
                 }
-                Spacer(modifier = Modifier.width(8.dp))
 
-                if (hasAssignedBudget) {
-                    Box(
-                        modifier = Modifier.size(dimens.pulseRingSize),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        val trackColor = MaterialTheme.colorScheme.surfaceContainerHighest
-                        Canvas(modifier = Modifier.size(dimens.pulseRingSize * 0.9f)) {
-                            val strokeWidth = size.minDimension * 0.13f
-                            drawArc(
-                                color = trackColor,
-                                startAngle = 135f,
-                                sweepAngle = 270f,
-                                useCenter = false,
-                                style = Stroke(width = strokeWidth, cap = StrokeCap.Round)
-                            )
-                            drawArc(
-                                color = statusColor,
-                                startAngle = 135f,
-                                sweepAngle = 270f * animatedProgress,
-                                useCenter = false,
-                                style = Stroke(width = strokeWidth, cap = StrokeCap.Round)
-                            )
-                        }
-                        Text(
-                            text = "$pct%",
-                            style = MaterialTheme.typography.titleMedium.copy(fontFamily = ReceiptMonoFontFamily),
-                            fontWeight = FontWeight.Bold,
-                            color = statusColor
-                        )
-                    }
-                } else {
-                    FilledTonalButton(
-                        onClick = {
-                            performHaptic()
-                            onEditBudgetClick()
-                        },
-                        shape = RoundedCornerShape(50),
-                        modifier = Modifier.testTag("home_go_to_budgets_button")
-                    ) {
-                        Text("Budgets", fontWeight = FontWeight.SemiBold)
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
-                            contentDescription = null,
-                            modifier = Modifier.size(18.dp)
-                        )
-                    }
-                }
-            }
-
-            if (totalIncome > 0.0) {
-                Spacer(modifier = Modifier.height(dimens.itemSpacing * 0.75f))
-                MetricMiniPill(
+                Surface(
+                    onClick = {
+                        performHaptic()
+                        (onQuickAddClick ?: onEditBudgetClick).invoke()
+                    },
+                    shape = CircleShape,
+                    color = heroInk.copy(alpha = 0.11f),
+                    contentColor = heroInk,
                     modifier = Modifier
-                        .fillMaxWidth()
-                        .testTag("home_monthly_income_pill"),
-                    text = "+${formatCurrency(totalIncome, currencySymbol)} Salary / Income",
-                    accentColor = PersonalBadgeTeal
-                )
-            }
-
-            if (hasAssignedBudget) {
-                Spacer(modifier = Modifier.height(dimens.itemSpacing * 0.85f))
-
-                val isAboveBudget = totalSpent > monthlyBudget
-                val diffAmount = kotlin.math.abs(monthlyBudget - totalSpent)
-                val statusPillLabel = if (isAboveBudget) {
-                    "▲ ${formatCurrency(diffAmount, currencySymbol)} above"
-                } else {
-                    "▼ ${formatCurrency(diffAmount, currencySymbol)} below"
-                }
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        .size(50.dp)
+                        .minimumInteractiveComponentSize()
+                        .testTag("home_quick_add_button")
                 ) {
-                    MetricMiniPill(
-                        modifier = Modifier
-                            .weight(1f)
-                            .testTag("home_budget_status_pill"),
-                        text = statusPillLabel,
-                        accentColor = if (isAboveBudget) BudgetDangerCoral else BudgetSafeGreen
-                    )
-                    MetricMiniPill(
-                        modifier = Modifier.weight(1f),
-                        text = "${formatCurrency(dailySafeSpend, currencySymbol)}/d",
-                        accentColor = MaterialTheme.colorScheme.primary
-                    )
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(
+                            imageVector = Icons.Default.Add,
+                            contentDescription = "Add Transaction",
+                            modifier = Modifier.size(22.dp)
+                        )
+                    }
                 }
             }
         }
@@ -2817,130 +2694,85 @@ fun ThemeModeSelectorBar(
     onSelectMode: (com.example.ui.theme.AppThemeMode) -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val dimens = LocalAppDimens.current
-    val activePrimary = MaterialTheme.colorScheme.primary
+    val options = remember {
+        listOf(
+            Triple(com.example.ui.theme.AppThemeMode.LIGHT, "Light", Icons.Default.LightMode),
+            Triple(com.example.ui.theme.AppThemeMode.SYSTEM, "Auto", Icons.Default.BrightnessAuto),
+            Triple(com.example.ui.theme.AppThemeMode.DARK, "Dark", Icons.Default.DarkMode)
+        )
+    }
+
     Surface(
         modifier = modifier
             .fillMaxWidth()
             .testTag("theme_color_swatch_bar"),
         shape = RoundedCornerShape(50),
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.75f)
+        color = MaterialTheme.colorScheme.surfaceContainerHigh
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(
-                    horizontal = dimens.horizontalPadding * 0.5f,
-                    vertical = dimens.itemSpacing * 0.55f
-                ),
-            horizontalArrangement = Arrangement.SpaceEvenly,
+                .padding(4.dp),
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            com.example.ui.theme.AppThemeMode.entries.forEach { mode ->
+            options.forEach { (mode, label, icon) ->
                 val isSelected = currentMode == mode
-                val ringScale by animateFloatAsState(
-                    targetValue = if (isSelected) 1.12f else 1.0f,
+                val containerColor by animateColorAsState(
+                    targetValue = if (isSelected) {
+                        MaterialTheme.colorScheme.primary
+                    } else {
+                        Color.Transparent
+                    },
                     animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
-                    label = "theme_swatch_scale"
+                    label = "theme_pill_container"
                 )
-                val borderColor by animateColorAsState(
-                    targetValue = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline.copy(alpha = 0.45f),
+                val contentColor by animateColorAsState(
+                    targetValue = if (isSelected) {
+                        MaterialTheme.colorScheme.onPrimary
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    },
                     animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
-                    label = "theme_swatch_border"
+                    label = "theme_pill_content"
                 )
 
                 Box(
                     modifier = Modifier
                         .weight(1f)
                         .height(48.dp)
-                        .clip(RoundedCornerShape(50))
-                        .background(
-                            if (isSelected) {
-                                MaterialTheme.colorScheme.primary.copy(alpha = 0.16f)
-                            } else {
-                                Color.Transparent
-                            }
-                        )
-                        .clickable { onSelectMode(mode) }
-                        .testTag("theme_mode_${mode.name.lowercase()}"),
-                    contentAlignment = Alignment.Center
+                        .testTag("theme_mode_${mode.name.lowercase()}")
                 ) {
-                    Canvas(
-                        modifier = Modifier.size((34.dp * ringScale).coerceIn(30.dp, 42.dp))
+                    Surface(
+                        onClick = { onSelectMode(mode) },
+                        shape = RoundedCornerShape(50),
+                        color = containerColor,
+                        contentColor = contentColor,
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .testTag("appearance_segment_${label.lowercase()}")
                     ) {
-                        val radius = size.minDimension / 2f
-                        val centerOffset = Offset(size.width / 2f, size.height / 2f)
-
-                        when (mode) {
-                            com.example.ui.theme.AppThemeMode.SYSTEM -> {
-                                // Dual-tone split swatch: Warm Cream (Light) + AMOLED Black (Dark) + Active Primary Dot
-                                drawArc(
-                                    color = Color(0xFFFAF6F0),
-                                    startAngle = 90f,
-                                    sweepAngle = 180f,
-                                    useCenter = true,
-                                    topLeft = Offset(centerOffset.x - radius, centerOffset.y - radius),
-                                    size = Size(radius * 2f, radius * 2f)
-                                )
-                                drawArc(
-                                    color = Color(0xFF050505),
-                                    startAngle = -90f,
-                                    sweepAngle = 180f,
-                                    useCenter = true,
-                                    topLeft = Offset(centerOffset.x - radius, centerOffset.y - radius),
-                                    size = Size(radius * 2f, radius * 2f)
-                                )
-                                drawCircle(
-                                    color = activePrimary,
-                                    radius = radius * 0.42f,
-                                    center = centerOffset
-                                )
-                            }
-                            com.example.ui.theme.AppThemeMode.LIGHT -> {
-                                // Warm Cream & Active Primary Light Swatch
-                                drawCircle(
-                                    color = Color(0xFFFAF6F0),
-                                    radius = radius,
-                                    center = centerOffset
-                                )
-                                drawCircle(
-                                    color = activePrimary.copy(alpha = 0.35f),
-                                    radius = radius * 0.62f,
-                                    center = centerOffset
-                                )
-                                drawCircle(
-                                    color = activePrimary,
-                                    radius = radius * 0.36f,
-                                    center = centerOffset
-                                )
-                            }
-                            com.example.ui.theme.AppThemeMode.DARK -> {
-                                // Pure AMOLED Black & Active Primary Dark Swatch
-                                drawCircle(
-                                    color = Color(0xFF000000),
-                                    radius = radius,
-                                    center = centerOffset
-                                )
-                                drawCircle(
-                                    color = Color(0xFF1F1F26),
-                                    radius = radius * 0.66f,
-                                    center = centerOffset
-                                )
-                                drawCircle(
-                                    color = activePrimary,
-                                    radius = radius * 0.36f,
-                                    center = centerOffset
-                                )
-                            }
+                        Row(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(horizontal = 8.dp),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterHorizontally),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                imageVector = icon,
+                                contentDescription = "$label theme",
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Text(
+                                text = label,
+                                style = MaterialTheme.typography.labelLarge,
+                                fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Medium,
+                                maxLines = 1,
+                                softWrap = false,
+                                overflow = TextOverflow.Ellipsis
+                            )
                         }
-
-                        // Outer selection ring
-                        drawCircle(
-                            color = borderColor,
-                            radius = radius - 1.5.dp.toPx(),
-                            center = centerOffset,
-                            style = Stroke(width = if (isSelected) 3.dp.toPx() else 1.5.dp.toPx())
-                        )
                     }
                 }
             }

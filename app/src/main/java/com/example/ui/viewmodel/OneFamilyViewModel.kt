@@ -1983,6 +1983,15 @@ class OneFamilyViewModel(
                 }
             }
 
+            val capturedBalanceUpdates = java.util.Collections.synchronizedList(
+                mutableListOf<com.ritesh.parser.core.ParsedBalanceUpdate>()
+            )
+            val onBalanceUpdatesCallback: suspend (List<com.ritesh.parser.core.ParsedBalanceUpdate>) -> Unit = { balanceUpdates ->
+                if (balanceUpdates.isNotEmpty()) {
+                    capturedBalanceUpdates.addAll(balanceUpdates)
+                }
+            }
+
             val discovered = if (rawRowsOverride != null) {
                 val filteredRows = rawRowsOverride.filter { row ->
                     (minTimestampMillis == null || row.timestamp >= minTimestampMillis) &&
@@ -2007,7 +2016,8 @@ class OneFamilyViewModel(
                             )
                         }
                     },
-                    onBatchParsed = onBatchParsedCallback
+                    onBatchParsed = onBatchParsedCallback,
+                    onBalanceUpdatesParsed = onBalanceUpdatesCallback
                 )
             } else {
                 smsInboxReader.scanDeviceSmsInboxWithProgress(
@@ -2030,13 +2040,27 @@ class OneFamilyViewModel(
                             )
                         }
                     },
-                    onBatchParsed = onBatchParsedCallback
+                    onBatchParsed = onBatchParsedCallback,
+                    onBalanceUpdatesParsed = onBalanceUpdatesCallback
                 )
             }
 
             // Close channel once all reader threads have finished emitting batches and wait for all writer threads
             candidateBatchChannel.close()
             writerJobs.awaitAll()
+
+            // Apply daily/enquiry bank balance SMS updates after transaction writers complete
+            val balanceUpdatesToApply = synchronized(capturedBalanceUpdates) {
+                capturedBalanceUpdates.toList()
+            }
+            if (balanceUpdatesToApply.isNotEmpty()) {
+                runCatching {
+                    repository.applyAccountBalanceUpdates(
+                        updates = balanceUpdatesToApply,
+                        isSharedVisible = household != null
+                    )
+                }
+            }
 
             val firstWriterErr = writerError.get()
             if (discovered.isNotEmpty() && savedCounter.get() == 0 && firstWriterErr != null) {
@@ -2055,6 +2079,7 @@ class OneFamilyViewModel(
         context: Context? = null,
         silentIfEmpty: Boolean = false,
         notifyNewest: Boolean = true,
+        overridePeriodOption: SmsSyncPeriodOption? = null,
         onComplete: (() -> Unit)? = null
     ) {
         if (context != null &&
@@ -2147,8 +2172,10 @@ class OneFamilyViewModel(
 
                 val existingSignatures = stateSignatures + repoSignatures
                 val userName = currentUserName.ifBlank { state.userProfile?.displayName ?: "Me" }
-                val (minTimestampMillis, maxTimestampMillis) = _smsSyncPeriodOption.value
-                    .computeBoundsMillis(_smsSyncCustomRange.value)
+                val effectivePeriod = overridePeriodOption ?: _smsSyncPeriodOption.value
+                val effectiveCustomRange = if (overridePeriodOption == null) _smsSyncCustomRange.value else null
+                val (minTimestampMillis, maxTimestampMillis) = effectivePeriod
+                    .computeBoundsMillis(effectiveCustomRange)
 
                 synchronized(syncProgressLock) {
                     _smsSyncProgress.value = _smsSyncProgress.value.copy(
@@ -2359,7 +2386,10 @@ class OneFamilyViewModel(
                     lastFourDigits = parsed.accountNumber.orEmpty(),
                     balance = parsed.balance?.toDouble() ?: 0.0,
                     creditLimit = parsed.creditLimit?.toDouble() ?: 0.0,
-                    isSharedVisible = shareFlag
+                    isSharedVisible = shareFlag,
+                    asOfTimestampMillis = parsed.timestamp,
+                    updateBalance = parsed.balance != null,
+                    updateCreditLimit = parsed.creditLimit != null
                 )
             }
 

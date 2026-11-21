@@ -1080,6 +1080,7 @@ object LocalAccountDataStore {
 
     private val storeLock = Any()
     private val accountTimestampMap = mutableMapOf<String, Long>()
+    private val accountBalanceTimestampMap = mutableMapOf<String, Long>()
     private val pendingCloudSyncKeys = mutableSetOf<String>()
 
     private var appContext: Context? = null
@@ -2172,7 +2173,13 @@ object LocalAccountDataStore {
 
             if (parsed.balance != null || parsed.creditLimit != null || parsed.accountNumber != null) {
                 val prevCandidate = accountsToUpsert[candidate.suggestedAccountName]
-                if (prevCandidate == null || parsed.timestamp >= prevCandidate.parsed.timestamp) {
+                val shouldReplace = when {
+                    prevCandidate == null -> true
+                    parsed.balance != null && prevCandidate.parsed.balance == null -> true
+                    parsed.balance == null && prevCandidate.parsed.balance != null -> false
+                    else -> parsed.timestamp >= prevCandidate.parsed.timestamp
+                }
+                if (shouldReplace) {
                     accountsToUpsert[candidate.suggestedAccountName] = candidate
                 }
             }
@@ -2203,7 +2210,9 @@ object LocalAccountDataStore {
                 balance = parsed.balance?.toDouble() ?: 0.0,
                 creditLimit = parsed.creditLimit?.toDouble() ?: 0.0,
                 isSharedVisible = effectiveShared,
-                asOfTimestampMillis = parsed.timestamp
+                asOfTimestampMillis = parsed.timestamp,
+                updateBalance = parsed.balance != null,
+                updateCreditLimit = parsed.creditLimit != null
             )
         }
 
@@ -2471,7 +2480,9 @@ object LocalAccountDataStore {
         spendLimitEndMillis: Long? = null,
         alertThresholdPercent: Int? = null,
         isHidden: Boolean? = null,
-        explicitId: String? = null
+        explicitId: String? = null,
+        updateBalance: Boolean = true,
+        updateCreditLimit: Boolean = true
     ): String = synchronized(storeLock) {
         val validType = FinancialAccount.normalizeAccountType(accountType)
         val docKey = explicitId?.takeIf { it.isNotBlank() } ?: "${uid}_${bankName}_${validType}_${lastFourDigits}"
@@ -2482,10 +2493,22 @@ object LocalAccountDataStore {
             .ifBlank { UUID.randomUUID().toString().take(16) }
 
         val prevTimestamp = accountTimestampMap[docKey] ?: Long.MIN_VALUE
-        if (asOfTimestampMillis != Long.MAX_VALUE && prevTimestamp != Long.MAX_VALUE && asOfTimestampMillis < prevTimestamp) {
+        val prevBalanceTs = accountBalanceTimestampMap[docKey] ?: Long.MIN_VALUE
+        val canApplyBalance = updateBalance && (
+            asOfTimestampMillis == Long.MAX_VALUE ||
+                prevBalanceTs == Long.MIN_VALUE ||
+                asOfTimestampMillis >= prevBalanceTs
+            )
+        if (asOfTimestampMillis != Long.MAX_VALUE &&
+            prevTimestamp != Long.MAX_VALUE &&
+            asOfTimestampMillis < prevTimestamp &&
+            !canApplyBalance
+        ) {
             return docKey
         }
-        accountTimestampMap[docKey] = asOfTimestampMillis
+        if (asOfTimestampMillis != Long.MAX_VALUE && asOfTimestampMillis >= prevTimestamp) {
+            accountTimestampMap[docKey] = asOfTimestampMillis
+        }
 
         val virtSlug = "virtual_${name.trim().ifBlank { bankName }.lowercase().replace(Regex("[^a-z0-9]+"), "_").trim('_')}"
         val existing = accountsFlow.value.firstOrNull { it.id == docKey }
@@ -2495,6 +2518,23 @@ object LocalAccountDataStore {
             null
         }
         val baseSource = existing ?: existingVirtual
+        val resolvedBalance = if (canApplyBalance) {
+            if (asOfTimestampMillis == Long.MAX_VALUE) {
+                if (balance != 0.0) {
+                    accountBalanceTimestampMap[docKey] = System.currentTimeMillis()
+                }
+            } else {
+                accountBalanceTimestampMap[docKey] = asOfTimestampMillis
+            }
+            balance
+        } else {
+            baseSource?.balance ?: 0.0
+        }
+        val resolvedCreditLimit = if (updateCreditLimit) {
+            creditLimit.coerceAtLeast(0.0)
+        } else {
+            (baseSource?.creditLimit ?: 0.0).coerceAtLeast(0.0)
+        }
         val resolvedPeriod = com.example.data.model.AccountLimitPeriod.fromRaw(
             spendLimitPeriod ?: baseSource?.spendLimitPeriod
         ).name
@@ -2507,8 +2547,8 @@ object LocalAccountDataStore {
             bankName = bankName.trim().ifBlank { "Bank" }.take(100),
             accountType = validType,
             lastFourDigits = lastFourDigits.trim().take(10),
-            balance = balance,
-            creditLimit = creditLimit.coerceAtLeast(0.0),
+            balance = resolvedBalance,
+            creditLimit = resolvedCreditLimit,
             linkedBankAccountId = (linkedBankAccountId ?: baseSource?.linkedBankAccountId ?: "").trim().take(128),
             linkedBankAccountName = (linkedBankAccountName ?: baseSource?.linkedBankAccountName ?: "").trim().take(100),
             monthlySpendLimit = (monthlySpendLimit ?: baseSource?.monthlySpendLimit ?: 0.0).coerceAtLeast(0.0),
@@ -2529,6 +2569,76 @@ object LocalAccountDataStore {
         accountsFlow.value = updated
         saveAccounts(updated)
         return docKey
+    }
+
+    /**
+     * Applies parsed daily/enquiry bank balance SMS updates (such as HDFC daily balance alerts)
+     * directly onto matching existing accounts or creates/updates the corresponding bank account
+     * without creating any synthetic transaction.
+     */
+    fun applyAccountBalanceUpdates(
+        uid: String,
+        updates: List<com.ritesh.parser.core.ParsedBalanceUpdate>,
+        isSharedVisible: Boolean = true
+    ): Int = synchronized(storeLock) {
+        if (uid.isBlank() || updates.isEmpty()) return@synchronized 0
+        var applied = 0
+        for (update in updates.sortedBy { it.timestamp }) {
+            val bankClean = update.bankName.trim().ifBlank { "Bank" }
+            val digits = update.accountNumber?.trim().orEmpty()
+            val accType = if (update.isFromCard) "CREDIT_CARD" else "BANK"
+            val bankToken = bankClean
+                .lowercase()
+                .replace(Regex("[^a-z0-9\\s]+"), " ")
+                .split(Regex("\\s+"))
+                .firstOrNull { it.length >= 3 && it !in setOf("bank", "india", "the") }
+                ?: bankClean.lowercase()
+
+            val userAccounts = accountsFlow.value.filter { it.userId == uid }
+            val matchedExisting = if (digits.isNotBlank()) {
+                userAccounts
+                    .filter { existing ->
+                        val sameDigits = existing.lastFourDigits.equals(digits, ignoreCase = true) ||
+                            (existing.lastFourDigits.length >= 4 && digits.length >= 4 &&
+                                existing.lastFourDigits.takeLast(4).equals(digits.takeLast(4), ignoreCase = true))
+                        val isCardMatch = if (update.isFromCard) {
+                            FinancialAccount.normalizeAccountType(existing.accountType) == "CREDIT_CARD"
+                        } else {
+                            FinancialAccount.normalizeAccountType(existing.accountType) != "CREDIT_CARD"
+                        }
+                        val bankMatches = existing.bankName.contains(bankToken, ignoreCase = true) ||
+                            existing.name.contains(bankToken, ignoreCase = true) ||
+                            bankClean.contains(existing.bankName.trim(), ignoreCase = true)
+                        sameDigits && isCardMatch && bankMatches
+                    }
+                    .sortedBy { if (FinancialAccount.normalizeAccountType(it.accountType) == accType) 0 else 1 }
+                    .firstOrNull()
+            } else {
+                userAccounts.firstOrNull { existing ->
+                    FinancialAccount.normalizeAccountType(existing.accountType) == accType &&
+                        existing.lastFourDigits.isBlank() &&
+                        (existing.bankName.equals(bankClean, ignoreCase = true) ||
+                            existing.name.contains(bankToken, ignoreCase = true))
+                }
+            }
+
+            upsertAccount(
+                uid = uid,
+                name = matchedExisting?.name ?: com.ritesh.parser.core.bank.BankParserFactory.formatBalanceAccountDisplayName(update),
+                bankName = matchedExisting?.bankName?.ifBlank { bankClean } ?: bankClean,
+                accountType = matchedExisting?.accountType ?: accType,
+                lastFourDigits = matchedExisting?.lastFourDigits?.ifBlank { digits } ?: digits,
+                balance = update.balance.toDouble(),
+                creditLimit = update.creditLimit?.toDouble() ?: (matchedExisting?.creditLimit ?: 0.0),
+                isSharedVisible = matchedExisting?.isSharedVisible ?: isSharedVisible,
+                asOfTimestampMillis = update.timestamp,
+                explicitId = matchedExisting?.id,
+                updateBalance = true,
+                updateCreditLimit = update.creditLimit != null
+            )
+            applied++
+        }
+        applied
     }
 
     fun updateAccountSpendLimit(
@@ -2622,6 +2732,7 @@ object LocalAccountDataStore {
 
     fun deleteAccount(accountId: String) = synchronized(storeLock) {
         accountTimestampMap.remove(accountId)
+        accountBalanceTimestampMap.remove(accountId)
         val updated = accountsFlow.value.filterNot { it.id == accountId }
         accountsFlow.value = updated
         saveAccounts(updated)
@@ -2695,7 +2806,10 @@ object LocalAccountDataStore {
         saveBudgets(remainingBudgets)
 
         val removedAccountIds = accountsFlow.value.filter { it.userId in targetUids }.map { it.id }.toSet()
-        removedAccountIds.forEach { accountTimestampMap.remove(it) }
+        removedAccountIds.forEach {
+            accountTimestampMap.remove(it)
+            accountBalanceTimestampMap.remove(it)
+        }
         val remainingAccounts = accountsFlow.value.filterNot { it.userId in targetUids }
         accountsFlow.value = remainingAccounts
         saveAccounts(remainingAccounts)

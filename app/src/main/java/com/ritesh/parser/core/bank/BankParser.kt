@@ -1,6 +1,7 @@
 package com.ritesh.parser.core.bank
 
 import com.ritesh.parser.core.CompiledPatterns
+import com.ritesh.parser.core.ParsedBalanceUpdate
 import com.ritesh.parser.core.ParsedTransaction
 import com.ritesh.parser.core.TransactionType
 import java.math.BigDecimal
@@ -55,6 +56,52 @@ abstract class BankParser {
             timestamp = timestamp,
             bankName = bankName,
             isFromCard = isCard
+        )
+    }
+
+    /**
+     * Parses daily/enquiry account balance SMS alerts (e.g., HDFC Bank daily available/total/closing
+     * balance SMS) without creating a fake transaction.
+     */
+    open fun parseBalanceUpdate(
+        smsBody: String,
+        sender: String,
+        timestamp: Long
+    ): ParsedBalanceUpdate? {
+        if (isMandateOrBillReminderOrNonTransaction(smsBody)) {
+            return null
+        }
+        val lower = smsBody.lowercase()
+        val hasBalanceIndicator = lower.contains("balance") ||
+            Regex("""\b(?:avl\.?\s*bal|avail\.?\s*bal|clear\s*bal|closing\s*bal|total\s*bal|a/c\s*bal|bal\s+in\b|bal\s+for\b|bal\s+of\b|bal:)""").containsMatchIn(lower)
+        if (!hasBalanceIndicator) {
+            return null
+        }
+        val balanceWarningPhrases = listOf(
+            "minimum balance", "min balance", "min bal", "min. bal",
+            "average monthly balance", "average quarterly balance",
+            "insufficient balance", "low balance", "maintain balance",
+            "maintain a balance", "balance below", "falls below",
+            "zero balance account", "open a zero balance"
+        )
+        if (balanceWarningPhrases.any { lower.contains(it) }) {
+            return null
+        }
+        val balance = extractBalance(smsBody) ?: return null
+        if (balance < BigDecimal.ZERO) return null
+        val accountNumber = extractAccountNumber(smsBody)
+        val availableLimit = extractAvailableLimit(smsBody)
+        val isCard = detectIsCard(smsBody) && !lower.contains("a/c") && !lower.contains("account") && !lower.contains("acct")
+
+        return ParsedBalanceUpdate(
+            bankName = bankName,
+            accountNumber = accountNumber,
+            balance = balance,
+            creditLimit = availableLimit,
+            isFromCard = isCard,
+            smsBody = smsBody,
+            sender = sender,
+            timestamp = timestamp
         )
     }
 
@@ -278,11 +325,12 @@ abstract class BankParser {
             return false
         }
 
-        // Strip "ignore if already paid" / "if already paid" before checking transaction indicators
+        // Strip non-transactional boilerplates ("ignore if already paid", HDFC "cheques/credits deposited are subject to clearing")
         val cleanedLower = message.lowercase()
             .replace("ignore if already paid", "")
             .replace("ignore if paid", "")
             .replace("if already paid", "")
+            .replace(Regex("""(?:cheques?|chqs?|credits?|deposits?)\s+(?:deposited|in\s+a/c)\s+(?:are\s+)?subject\s+to\s+clearing"""), "")
 
         val transactionIndicators = listOf(
             "debited", "credited", "spent", "paid", "withdrawn",

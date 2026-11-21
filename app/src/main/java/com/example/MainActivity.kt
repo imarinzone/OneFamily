@@ -482,7 +482,8 @@ fun OneFamilyMainShell(
                     viewModel.scanDeviceSmsInbox(
                         context = context,
                         silentIfEmpty = true,
-                        notifyNewest = true
+                        notifyNewest = true,
+                        overridePeriodOption = com.example.ui.viewmodel.SmsSyncPeriodOption.LAST_30_DAYS
                     )
                 }
             }
@@ -514,9 +515,13 @@ fun OneFamilyMainShell(
         }
     }
 
+    var smsSyncOpenedFromSettings by rememberSaveable { mutableStateOf(false) }
+
     val triggerSmsSync = {
+        smsSyncOpenedFromSettings = true
         viewModel.resetSmsSyncProgress()
         showSmsSyncScreen = true
+        startOrRequestSmsSync()
     }
 
     val navigateToTab: (OneFamilyNavTab) -> Unit = { tab ->
@@ -561,11 +566,13 @@ fun OneFamilyMainShell(
                 onContinueToAppClick = {
                     LocalAccountSessionManager.setInitialSmsSyncCompleted(context, currentUserId, true)
                     viewModel.resetSmsSyncProgress()
+                    smsSyncOpenedFromSettings = false
                     showSmsSyncScreen = false
                 },
                 onSkipClick = {
                     viewModel.cancelSmsSync()
                     LocalAccountSessionManager.setInitialSmsSyncCompleted(context, currentUserId, true)
+                    smsSyncOpenedFromSettings = false
                     showSmsSyncScreen = false
                 },
                 currencySymbol = currency,
@@ -584,6 +591,12 @@ fun OneFamilyMainShell(
                         addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                     }
                     runCatching { context.startActivity(intent) }
+                },
+                isFromSettings = smsSyncOpenedFromSettings,
+                onSyncAnotherPeriodClick = if (smsSyncOpenedFromSettings) {
+                    { viewModel.resetSmsSyncProgress() }
+                } else {
+                    null
                 }
             )
         } else {
@@ -898,6 +911,12 @@ fun OneFamilyMainShell(
                                             showAddAccountDialog = true
                                         },
                                         onScanSmsClick = triggerSmsSync,
+                                        smsSyncPeriodOption = smsSyncPeriodOption,
+                                        smsSyncCustomRange = smsSyncCustomRange,
+                                        onSelectSmsSyncPeriod = { viewModel.selectSmsSyncPeriod(it) },
+                                        onSelectSmsSyncCustomRange = { startMs, endMs ->
+                                            viewModel.selectSmsSyncCustomRange(startMs, endMs)
+                                        },
                                         onExportCsvClick = { showExportCsvDialog = true },
                                         onSendTestFcmAlertClick = {
                                             viewModel.sendTestFcmPushAlert(context)

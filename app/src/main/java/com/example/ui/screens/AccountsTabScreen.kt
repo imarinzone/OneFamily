@@ -197,17 +197,30 @@ fun AccountsTabScreen(
         filteredAccountSummaries.count { it.isHidden }
     }
 
-    val totalSpendAllAccounts = remember(visibleAccountSummaries) {
-        visibleAccountSummaries.sumOf { it.spent }
+    val visibleBankIds = remember(visibleAccountSummaries) {
+        visibleAccountSummaries
+            .filter { it.section == AccountSectionType.BANK }
+            .map { it.account.id }
+            .toSet()
     }
-    val totalIncomeAllAccounts = remember(visibleAccountSummaries) {
-        visibleAccountSummaries.sumOf { it.income }
+    val balanceContributingAccounts = remember(visibleAccountSummaries, visibleBankIds) {
+        visibleAccountSummaries.filter { summary ->
+            when (summary.section) {
+                AccountSectionType.WALLET,
+                AccountSectionType.BANK -> true
+                AccountSectionType.DEBIT_CARD -> {
+                    val linkedId = summary.account.linkedBankAccountId
+                    linkedId.isBlank() || linkedId !in visibleBankIds
+                }
+                AccountSectionType.CREDIT_CARD -> false
+            }
+        }
     }
-    val activeLimitCount = remember(visibleAccountSummaries) {
-        visibleAccountSummaries.count { it.limit > 0.0 }
+    val totalBalanceAllAccounts = remember(balanceContributingAccounts) {
+        balanceContributingAccounts.sumOf { it.account.balance }
     }
-    val overLimitCount = remember(visibleAccountSummaries) {
-        visibleAccountSummaries.count { it.isOverLimit }
+    val accountsWithBalanceCount = remember(balanceContributingAccounts) {
+        balanceContributingAccounts.count { it.account.balance != 0.0 }
     }
 
     val sectionOrder = remember {
@@ -432,109 +445,57 @@ fun AccountsTabScreen(
             }
         }
 
-        // 3. Serrated Paper Receipt Summary Card
+        // 3. Total Balance Summary Card
         item {
             Box(
                 modifier = Modifier
                     .padding(horizontal = dimens.horizontalPadding)
                     .padding(bottom = 12.dp)
+                    .testTag("accounts_total_balance_card")
             ) {
                 ReceiptTicketCard(
                     containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
                     contentColor = MaterialTheme.colorScheme.onSurface
                 ) {
-                    Column(modifier = Modifier.padding(dimens.cardPadding)) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(
-                                text = "Accounts Ledger",
-                                style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.Bold
-                            )
-                            Surface(
-                                shape = RoundedCornerShape(50),
-                                color = if (overLimitCount > 0) {
-                                    BudgetDangerCoral.copy(alpha = 0.16f)
-                                } else {
-                                    MaterialTheme.colorScheme.secondaryContainer
-                                }
-                            ) {
-                                Text(
-                                    text = if (overLimitCount > 0) {
-                                        "$overLimitCount over limit"
-                                    } else {
-                                        "$activeLimitCount limits set"
-                                    },
-                                    style = MaterialTheme.typography.labelMedium,
-                                    fontWeight = FontWeight.Bold,
-                                    color = if (overLimitCount > 0) {
-                                        BudgetDangerCoral
-                                    } else {
-                                        MaterialTheme.colorScheme.onSecondaryContainer
-                                    },
-                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
-                                )
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(dimens.cardPadding),
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Text(
+                            text = "Total Balance",
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Text(
+                            text = formatCurrency(totalBalanceAllAccounts, currency),
+                            style = MaterialTheme.typography.headlineMedium.copy(
+                                fontFamily = ReceiptMonoFontFamily
+                            ),
+                            fontWeight = FontWeight.ExtraBold,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            maxLines = 1,
+                            softWrap = false,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.testTag("accounts_total_balance_value")
+                        )
+                        val balanceSubtitle = when {
+                            accountsWithBalanceCount > 0 -> {
+                                val noun = if (accountsWithBalanceCount == 1) "account" else "accounts"
+                                "Across $accountsWithBalanceCount $noun"
                             }
+                            balanceContributingAccounts.isNotEmpty() -> "Sync bank SMS to update balance"
+                            else -> "Add or sync accounts to track balance"
                         }
-
-                        ReceiptDashedDividerLine()
-
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(10.dp)
-                        ) {
-                            Surface(
-                                modifier = Modifier.weight(1f),
-                                shape = RoundedCornerShape(18.dp),
-                                color = MaterialTheme.colorScheme.primaryContainer
-                            ) {
-                                Column(
-                                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
-                                    verticalArrangement = Arrangement.spacedBy(2.dp)
-                                ) {
-                                    Text(
-                                        text = "Period Spend",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = MaterialTheme.colorScheme.onPrimaryContainer
-                                    )
-                                    Text(
-                                        text = formatCurrency(totalSpendAllAccounts, currency),
-                                        style = MaterialTheme.typography.titleMedium.copy(fontFamily = ReceiptMonoFontFamily),
-                                        fontWeight = FontWeight.Bold,
-                                        color = MaterialTheme.colorScheme.onPrimaryContainer,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
-                                }
-                            }
-                            Surface(
-                                modifier = Modifier.weight(1f),
-                                shape = RoundedCornerShape(18.dp),
-                                color = MaterialTheme.colorScheme.tertiaryContainer
-                            ) {
-                                Column(
-                                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
-                                    verticalArrangement = Arrangement.spacedBy(2.dp)
-                                ) {
-                                    Text(
-                                        text = "Period Income",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = MaterialTheme.colorScheme.onTertiaryContainer
-                                    )
-                                    Text(
-                                        text = formatCurrency(totalIncomeAllAccounts, currency),
-                                        style = MaterialTheme.typography.titleMedium.copy(fontFamily = ReceiptMonoFontFamily),
-                                        fontWeight = FontWeight.Bold,
-                                        color = MaterialTheme.colorScheme.onTertiaryContainer,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
-                                }
-                            }
-                        }
+                        Text(
+                            text = balanceSubtitle,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
                     }
                 }
             }

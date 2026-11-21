@@ -1049,7 +1049,13 @@ class OneFamilyRepository(
 
                         if (parsed.balance != null || parsed.creditLimit != null || parsed.accountNumber != null) {
                             val existingAccCand = accountsToUpsert[candidate.suggestedAccountName]
-                            if (existingAccCand == null || parsed.timestamp >= existingAccCand.parsed.timestamp) {
+                            val shouldReplace = when {
+                                existingAccCand == null -> true
+                                parsed.balance != null && existingAccCand.parsed.balance == null -> true
+                                parsed.balance == null && existingAccCand.parsed.balance != null -> false
+                                else -> parsed.timestamp >= existingAccCand.parsed.timestamp
+                            }
+                            if (shouldReplace) {
                                 accountsToUpsert[candidate.suggestedAccountName] = candidate
                             }
                         }
@@ -1089,7 +1095,9 @@ class OneFamilyRepository(
                         balance = parsed.balance?.toDouble() ?: 0.0,
                         creditLimit = parsed.creditLimit?.toDouble() ?: 0.0,
                         isSharedVisible = effectiveShared,
-                        asOfTimestampMillis = parsed.timestamp
+                        asOfTimestampMillis = parsed.timestamp,
+                        updateBalance = parsed.balance != null,
+                        updateCreditLimit = parsed.creditLimit != null
                     )
                 }
             }
@@ -1833,7 +1841,9 @@ class OneFamilyRepository(
         spendLimitEndMillis: Long? = null,
         alertThresholdPercent: Int? = null,
         isHidden: Boolean? = null,
-        explicitId: String? = null
+        explicitId: String? = null,
+        updateBalance: Boolean = true,
+        updateCreditLimit: Boolean = true
     ): Result<String> = runCatching {
         if (isLocalMode()) {
             val uid = requireLocalUserId()
@@ -1856,7 +1866,9 @@ class OneFamilyRepository(
                 spendLimitEndMillis = spendLimitEndMillis,
                 alertThresholdPercent = alertThresholdPercent,
                 isHidden = isHidden,
-                explicitId = explicitId
+                explicitId = explicitId,
+                updateBalance = updateBalance,
+                updateCreditLimit = updateCreditLimit
             )
         }
         val uid = requireUserId()
@@ -1868,11 +1880,23 @@ class OneFamilyRepository(
             .take(64)
             .ifBlank { UUID.randomUUID().toString().take(16) }
 
-        val lastApplied = firestoreAccountTimestampMap[docKey] ?: 0L
-        if (asOfTimestampMillis < lastApplied) {
+        val lastApplied = firestoreAccountTimestampMap[docKey] ?: Long.MIN_VALUE
+        val lastBalanceApplied = firestoreAccountBalanceTimestampMap[docKey] ?: Long.MIN_VALUE
+        val canApplyBalance = updateBalance && (
+            asOfTimestampMillis == Long.MAX_VALUE ||
+                lastBalanceApplied == Long.MIN_VALUE ||
+                asOfTimestampMillis >= lastBalanceApplied
+            )
+        if (asOfTimestampMillis != Long.MAX_VALUE &&
+            lastApplied != Long.MAX_VALUE &&
+            asOfTimestampMillis < lastApplied &&
+            !canApplyBalance
+        ) {
             return@runCatching docKey
         }
-        firestoreAccountTimestampMap[docKey] = asOfTimestampMillis
+        if (asOfTimestampMillis != Long.MAX_VALUE && asOfTimestampMillis >= lastApplied) {
+            firestoreAccountTimestampMap[docKey] = asOfTimestampMillis
+        }
 
         val docRef = db.collection("users").document(uid).collection("accounts").document(docKey)
         try {
@@ -1886,6 +1910,23 @@ class OneFamilyRepository(
                 null
             }
             val sourceSnap = if (existingSnap?.exists() == true) existingSnap else virtSnap
+            val resolvedBalance = if (canApplyBalance) {
+                if (asOfTimestampMillis == Long.MAX_VALUE) {
+                    if (balance != 0.0) {
+                        firestoreAccountBalanceTimestampMap[docKey] = System.currentTimeMillis()
+                    }
+                } else {
+                    firestoreAccountBalanceTimestampMap[docKey] = asOfTimestampMillis
+                }
+                balance
+            } else {
+                sourceSnap?.getDouble("balance") ?: 0.0
+            }
+            val resolvedCreditLimit = if (updateCreditLimit) {
+                creditLimit.coerceAtLeast(0.0)
+            } else {
+                (sourceSnap?.getDouble("creditLimit") ?: 0.0).coerceAtLeast(0.0)
+            }
             val resolvedLinkedId = (linkedBankAccountId ?: sourceSnap?.getString("linkedBankAccountId") ?: "")
                 .trim()
                 .take(128)
@@ -1913,8 +1954,8 @@ class OneFamilyRepository(
                 "bankName" to bankName.trim().ifBlank { "Bank" }.take(100),
                 "accountType" to validType,
                 "lastFourDigits" to lastFourDigits.trim().take(10),
-                "balance" to balance,
-                "creditLimit" to creditLimit.coerceAtLeast(0.0),
+                "balance" to resolvedBalance,
+                "creditLimit" to resolvedCreditLimit,
                 "linkedBankAccountId" to resolvedLinkedId,
                 "linkedBankAccountName" to resolvedLinkedName,
                 "monthlySpendLimit" to resolvedSpendLimit,
@@ -1942,6 +1983,94 @@ class OneFamilyRepository(
             handleFirestoreError(e, OperationType.WRITE, docRef.path)
             throw e
         }
+    }
+
+    /**
+     * Applies daily/enquiry bank balance SMS updates (such as HDFC daily balance SMS) onto
+     * existing matching accounts (or creates the bank account if not yet tracked) without
+     * creating any synthetic transaction records.
+     */
+    suspend fun applyAccountBalanceUpdates(
+        updates: List<com.ritesh.parser.core.ParsedBalanceUpdate>,
+        isSharedVisible: Boolean = true
+    ): Result<Int> = runCatching {
+        if (updates.isEmpty()) return@runCatching 0
+        if (isLocalMode()) {
+            val uid = requireLocalUserId()
+            return@runCatching LocalAccountDataStore.applyAccountBalanceUpdates(
+                uid = uid,
+                updates = updates,
+                isSharedVisible = isSharedVisible
+            )
+        }
+        val uid = requireUserId()
+        val existingAccounts = withTimeoutOrNull(4_000L) {
+            db.collection("users")
+                .document(uid)
+                .collection("accounts")
+                .get()
+                .await()
+                .toObjects(FinancialAccount::class.java)
+        }.orEmpty()
+
+        var applied = 0
+        for (update in updates.sortedBy { it.timestamp }) {
+            val bankClean = update.bankName.trim().ifBlank { "Bank" }
+            val digits = update.accountNumber?.trim().orEmpty()
+            val accType = if (update.isFromCard) "CREDIT_CARD" else "BANK"
+            val bankToken = bankClean
+                .lowercase()
+                .replace(Regex("[^a-z0-9\\s]+"), " ")
+                .split(Regex("\\s+"))
+                .firstOrNull { it.length >= 3 && it !in setOf("bank", "india", "the") }
+                ?: bankClean.lowercase()
+
+            val matchedExisting = if (digits.isNotBlank()) {
+                existingAccounts
+                    .filter { existing ->
+                        val sameDigits = existing.lastFourDigits.equals(digits, ignoreCase = true) ||
+                            (existing.lastFourDigits.length >= 4 && digits.length >= 4 &&
+                                existing.lastFourDigits.takeLast(4).equals(digits.takeLast(4), ignoreCase = true))
+                        val isCardMatch = if (update.isFromCard) {
+                            FinancialAccount.normalizeAccountType(existing.accountType) == "CREDIT_CARD"
+                        } else {
+                            FinancialAccount.normalizeAccountType(existing.accountType) != "CREDIT_CARD"
+                        }
+                        val bankMatches = existing.bankName.contains(bankToken, ignoreCase = true) ||
+                            existing.name.contains(bankToken, ignoreCase = true) ||
+                            bankClean.contains(existing.bankName.trim(), ignoreCase = true)
+                        sameDigits && isCardMatch && bankMatches
+                    }
+                    .sortedBy { if (FinancialAccount.normalizeAccountType(it.accountType) == accType) 0 else 1 }
+                    .firstOrNull()
+            } else {
+                existingAccounts.firstOrNull { existing ->
+                    FinancialAccount.normalizeAccountType(existing.accountType) == accType &&
+                        existing.lastFourDigits.isBlank() &&
+                        (existing.bankName.equals(bankClean, ignoreCase = true) ||
+                            existing.name.contains(bankToken, ignoreCase = true))
+                }
+            }
+
+            runCatching {
+                upsertAccount(
+                    name = matchedExisting?.name
+                        ?: com.ritesh.parser.core.bank.BankParserFactory.formatBalanceAccountDisplayName(update),
+                    bankName = matchedExisting?.bankName?.ifBlank { bankClean } ?: bankClean,
+                    accountType = matchedExisting?.accountType ?: accType,
+                    lastFourDigits = matchedExisting?.lastFourDigits?.ifBlank { digits } ?: digits,
+                    balance = update.balance.toDouble(),
+                    creditLimit = update.creditLimit?.toDouble() ?: (matchedExisting?.creditLimit ?: 0.0),
+                    isSharedVisible = matchedExisting?.isSharedVisible ?: isSharedVisible,
+                    asOfTimestampMillis = update.timestamp,
+                    explicitId = matchedExisting?.id,
+                    updateBalance = true,
+                    updateCreditLimit = update.creditLimit != null
+                )
+                applied++
+            }
+        }
+        applied
     }
 
     suspend fun updateAccountSpendLimit(
@@ -2372,6 +2501,7 @@ class OneFamilyRepository(
             }
         } finally {
             firestoreAccountTimestampMap.clear()
+            firestoreAccountBalanceTimestampMap.clear()
             LocalAccountDataStore.deleteAllUserData(uid, capturedEmail)
         }
     }
@@ -2396,5 +2526,6 @@ class OneFamilyRepository(
         private val inFlightSignatures = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
         private val scrubbedLegacyAutoParsedIds = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
         private val firestoreAccountTimestampMap = java.util.concurrent.ConcurrentHashMap<String, Long>()
+        private val firestoreAccountBalanceTimestampMap = java.util.concurrent.ConcurrentHashMap<String, Long>()
     }
 }

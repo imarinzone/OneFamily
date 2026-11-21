@@ -9,6 +9,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
+import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.junit4.createComposeRule
@@ -78,6 +79,7 @@ import com.example.ui.screens.MerchantCategoryBatchUpdateDialog
 import com.example.ui.screens.mergeSelectedDatePreservingTime
 import com.example.ui.viewmodel.CategorySpendProgress
 import com.example.ui.viewmodel.MerchantCategoryUpdatePrompt
+import com.example.ui.viewmodel.SmsSyncPeriodOption
 import com.ritesh.parser.core.bank.BankParserFactory
 import com.example.ui.screens.mergeSelectedTimePreservingDate
 import com.example.ui.screens.sanitizeDecimalInput
@@ -5520,25 +5522,37 @@ class ExampleRobolectricTest {
         }
         composeTestRule.waitForIdle()
 
-        // Both Personal/Household toggle pill and top Save button must be visible and non-overlapping
-        composeTestRule.onNodeWithTag("transaction_shared_switch").assertIsDisplayed()
+        // Simplified EditTransactionDialog default state: Hero Amount, Category, Exclude toggle, Show More & Save buttons are displayed; secondary clutter is collapsed
+        composeTestRule.onNodeWithTag("edit_tx_amount_hero_banner").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("edit_tx_amount_input").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("receipt_selected_category_pill").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("transaction_exclude_expense_row").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("edit_tx_show_more_button").assertIsDisplayed()
         composeTestRule.onNodeWithTag("save_edited_transaction_button").assertIsDisplayed()
-        val switchBounds = composeTestRule.onNodeWithTag("transaction_shared_switch").getUnclippedBoundsInRoot()
-        val topSaveBounds = composeTestRule.onNodeWithTag("save_edited_transaction_button").getUnclippedBoundsInRoot()
+        composeTestRule.onNodeWithTag("edit_tx_title_input").assertDoesNotExist()
+        composeTestRule.onNodeWithTag("transaction_shared_switch").assertDoesNotExist()
 
+        val topSaveBounds = composeTestRule.onNodeWithTag("save_edited_transaction_button").getUnclippedBoundsInRoot()
         assertTrue("Top Save button must have accessible width", topSaveBounds.width >= 47.dp)
         assertTrue("Top Save button must have accessible height", topSaveBounds.height >= 47.dp)
         assertTrue(
             "Top Save button must fit completely inside 320dp dialog (${topSaveBounds.right})",
             topSaveBounds.right <= 320.dp
         )
+
+        // Expand "Show More" to access Merchant, Personal/Household toggle, Account, Date/Time, etc.
+        composeTestRule.onNodeWithTag("edit_tx_show_more_button").performScrollTo().performClick()
+        composeTestRule.waitForIdle()
+
+        composeTestRule.onNodeWithTag("transaction_shared_switch").performScrollTo().assertIsDisplayed()
+        val switchBounds = composeTestRule.onNodeWithTag("transaction_shared_switch").getUnclippedBoundsInRoot()
         assertTrue(
             "Personal/Household pill (${switchBounds.top}) must be placed cleanly below Save button (${topSaveBounds.bottom})",
             switchBounds.top >= topSaveBounds.bottom
         )
 
         // Toggle PERSONAL -> HOUSEHOLD, update amount, and submit via top Save icon button
-        composeTestRule.onNodeWithTag("transaction_shared_switch").performClick()
+        composeTestRule.onNodeWithTag("transaction_shared_switch").performScrollTo().performClick()
         composeTestRule.waitForIdle()
         composeTestRule.onNodeWithText("HOUSEHOLD").assertIsDisplayed()
 
@@ -5549,7 +5563,7 @@ class ExampleRobolectricTest {
         assertEquals(1999.0, savedAmount, 0.01)
         assertTrue("Transaction should save as Household when toggled to HOUSEHOLD", savedShared)
 
-        // Verify bottom "Save Changes" button is also reachable and submits edits cleanly
+        // Verify bottom "Save Changes" button is also reachable and submits merchant edits from Show More cleanly
         composeTestRule.onNodeWithTag("edit_tx_title_input").performScrollTo().performTextReplacement("FreshMart Updated")
         composeTestRule.onNodeWithTag("save_edited_transaction_button_bottom").performScrollTo().performClick()
         composeTestRule.waitForIdle()
@@ -5750,9 +5764,421 @@ class ExampleRobolectricTest {
         composeTestRule.waitForIdle()
 
         assertTrue("Notification deep link should be consumed", consumed)
-        composeTestRule.onNodeWithTag("edit_tx_title_input").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("edit_tx_amount_hero_banner").assertIsDisplayed()
         composeTestRule.onNodeWithTag("edit_tx_amount_input").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("transaction_exclude_expense_row").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("edit_tx_show_more_button").assertIsDisplayed()
         composeTestRule.onNodeWithTag("save_edited_transaction_button").assertIsDisplayed()
     }
+
+    @Test
+    fun `test Settings SMS Inbox Sync supports period presets, custom date range, and sync launch`() {
+        val selectedPeriodState = mutableStateOf(SmsSyncPeriodOption.ALL_TIME)
+        val customRangeState = mutableStateOf<Pair<Long, Long>?>(null)
+        var scanTriggeredCount = 0
+
+        composeTestRule.setContent {
+            OneFamilyTheme {
+                HouseholdTabScreen(
+                    uiState = OneFamilyDashboardUiState(),
+                    currentUserName = "Alex",
+                    currentUserEmail = "alex@example.com",
+                    onScanSmsClick = { scanTriggeredCount++ },
+                    smsSyncPeriodOption = selectedPeriodState.value,
+                    smsSyncCustomRange = customRangeState.value,
+                    onSelectSmsSyncPeriod = { selectedPeriodState.value = it },
+                    onSelectSmsSyncCustomRange = { startMs, endMs ->
+                        customRangeState.value = startMs to endMs
+                        selectedPeriodState.value = SmsSyncPeriodOption.CUSTOM
+                    },
+                    onCreateHousehold = { _, _ -> },
+                    onJoinByCode = {},
+                    onInviteByEmail = {},
+                    onAcceptEmailInvite = {}
+                )
+            }
+        }
+        composeTestRule.waitForIdle()
+
+        // Scroll to SMS Inbox Sync card in Settings
+        composeTestRule.onNodeWithTag("household_tab_list")
+            .performScrollToNode(hasTestTag("settings_sms_sync_card"))
+        composeTestRule.waitForIdle()
+
+        composeTestRule.onNodeWithTag("settings_sms_sync_period_selector").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("settings_sms_sync_selected_period_label")
+            .assertTextEquals("All Time")
+
+        // Select preset period (Last 30 Days)
+        composeTestRule.onNodeWithTag("settings_sms_period_chip_last_30_days")
+            .performScrollTo()
+            .performClick()
+        composeTestRule.waitForIdle()
+        assertEquals(SmsSyncPeriodOption.LAST_30_DAYS, selectedPeriodState.value)
+
+        // Tap Custom Range chip to open the CustomDateRangePickerModal inside Settings
+        composeTestRule.onNodeWithTag("settings_sms_period_chip_custom")
+            .performScrollTo()
+            .performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("confirm_custom_date_range_button").assertExists()
+
+        // Close modal and simulate applying a custom date range via callback
+        composeTestRule.onNodeWithText("Cancel").performClick()
+        composeTestRule.waitForIdle()
+
+        val startCal = java.util.Calendar.getInstance().apply {
+            set(2026, java.util.Calendar.OCTOBER, 1, 0, 0, 0)
+            set(java.util.Calendar.MILLISECOND, 0)
+        }
+        val endCal = java.util.Calendar.getInstance().apply {
+            set(2026, java.util.Calendar.OCTOBER, 15, 23, 59, 59)
+            set(java.util.Calendar.MILLISECOND, 999)
+        }
+        customRangeState.value = startCal.timeInMillis to endCal.timeInMillis
+        selectedPeriodState.value = SmsSyncPeriodOption.CUSTOM
+        composeTestRule.waitForIdle()
+
+        val expectedRangeLabel = SmsSyncPeriodOption.CUSTOM.formatRangeSummary(customRangeState.value)
+        composeTestRule.onNodeWithTag("settings_sms_sync_selected_period_label")
+            .assertTextEquals(expectedRangeLabel)
+
+        // Trigger SMS sync directly from Settings
+        composeTestRule.onNodeWithTag("scan_sms_button").performClick()
+        composeTestRule.waitForIdle()
+        assertEquals(1, scanTriggeredCount)
+    }
+
+    @Test
+    fun `test AccountsTabScreen removes Accounts Ledger header and shows deduplicated Total Balance`() {
+        val hdfcBank = FinancialAccount(
+            id = "acc_hdfc_bank",
+            userId = "u1",
+            name = "HDFC Bank ••4821",
+            bankName = "HDFC Bank",
+            accountType = "BANK",
+            lastFourDigits = "4821",
+            balance = 145230.50
+        )
+        val linkedHdfcDebit = FinancialAccount(
+            id = "acc_hdfc_debit",
+            userId = "u1",
+            name = "HDFC Platinum Debit ••9012",
+            bankName = "HDFC Bank",
+            accountType = "DEBIT_CARD",
+            lastFourDigits = "9012",
+            balance = 145230.50,
+            linkedBankAccountId = "acc_hdfc_bank",
+            linkedBankAccountName = "HDFC Bank ••4821"
+        )
+        val paytmWallet = FinancialAccount(
+            id = "acc_paytm",
+            userId = "u1",
+            name = "Paytm Wallet",
+            bankName = "Paytm",
+            accountType = "WALLET",
+            balance = 4769.50
+        )
+        val standaloneDebit = FinancialAccount(
+            id = "acc_sbi_debit",
+            userId = "u1",
+            name = "SBI Debit ••3311",
+            bankName = "SBI",
+            accountType = "DEBIT_CARD",
+            lastFourDigits = "3311",
+            balance = 10000.0
+        )
+        val creditCard = FinancialAccount(
+            id = "acc_hdfc_cc",
+            userId = "u1",
+            name = "HDFC Millennia CC ••7744",
+            bankName = "HDFC Bank",
+            accountType = "CREDIT_CARD",
+            lastFourDigits = "7744",
+            balance = 12500.0,
+            creditLimit = 200000.0,
+            monthlySpendLimit = 50000.0
+        )
+
+        val summaries = listOf(
+            AccountSpendSummary(
+                account = paytmWallet,
+                section = AccountSectionType.WALLET,
+                spent = 1200.0,
+                income = 0.0,
+                limit = 0.0,
+                alertThresholdPercent = 80,
+                linkedBankDisplayName = "",
+                transactions = emptyList()
+            ),
+            AccountSpendSummary(
+                account = hdfcBank,
+                section = AccountSectionType.BANK,
+                spent = 15000.0,
+                income = 90000.0,
+                limit = 0.0,
+                alertThresholdPercent = 80,
+                linkedBankDisplayName = "",
+                transactions = emptyList()
+            ),
+            AccountSpendSummary(
+                account = linkedHdfcDebit,
+                section = AccountSectionType.DEBIT_CARD,
+                spent = 2500.0,
+                income = 0.0,
+                limit = 0.0,
+                alertThresholdPercent = 80,
+                linkedBankDisplayName = "HDFC Bank ••4821",
+                transactions = emptyList()
+            ),
+            AccountSpendSummary(
+                account = standaloneDebit,
+                section = AccountSectionType.DEBIT_CARD,
+                spent = 500.0,
+                income = 0.0,
+                limit = 0.0,
+                alertThresholdPercent = 80,
+                linkedBankDisplayName = "",
+                transactions = emptyList()
+            ),
+            AccountSpendSummary(
+                account = creditCard,
+                section = AccountSectionType.CREDIT_CARD,
+                spent = 12500.0,
+                income = 0.0,
+                limit = 50000.0,
+                alertThresholdPercent = 80,
+                linkedBankDisplayName = "",
+                transactions = emptyList()
+            )
+        )
+
+        val state = OneFamilyDashboardUiState(
+            isLoading = false,
+            accounts = listOf(paytmWallet, hdfcBank, linkedHdfcDebit, standaloneDebit, creditCard),
+            accountSummaries = summaries
+        )
+
+        composeTestRule.setContent {
+            OneFamilyTheme {
+                AccountsTabScreen(
+                    uiState = state,
+                    onScopeSelected = {}
+                )
+            }
+        }
+        composeTestRule.waitForIdle()
+
+        // Old "Accounts Ledger" title, limits pill button, and Period Spend/Income tiles must be removed
+        composeTestRule.onNodeWithText("Accounts Ledger").assertDoesNotExist()
+        composeTestRule.onNodeWithText("1 limits set").assertDoesNotExist()
+        composeTestRule.onNodeWithText("Period Spend").assertDoesNotExist()
+        composeTestRule.onNodeWithText("Period Income").assertDoesNotExist()
+
+        // Total Balance hero must be visible and equal 145230.50 + 4769.50 + 10000.0 = 160000.0
+        // (linked HDFC debit card is deduplicated, and credit card is excluded)
+        composeTestRule.onNodeWithTag("accounts_total_balance_card").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Total Balance").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("accounts_total_balance_value")
+            .assertIsDisplayed()
+            .assertTextEquals(formatCurrency(160000.0, "₹"))
+    }
+
+    @Test
+    fun `test HDFC daily balance SMS updates account balance without creating transactions and survives UPI SMS without balance`() = runBlocking {
+        val app = ApplicationProvider.getApplicationContext<Application>()
+        LocalAccountSessionManager.ensureInitialized(app)
+        LocalAccountDataStore.ensureInitialized(app)
+        val localUser = LocalAccountSessionManager.signInWithUsernamePassword(
+            context = app,
+            rawUsername = "hdfc_balance_tester",
+            rawPassword = "pass"
+        ).getOrThrow()
+        LocalAccountDataStore.deleteAllUserData(localUser.uid, localUser.email)
+
+        val t0 = System.currentTimeMillis() - 3_600_000L
+        val t1 = t0 + 600_000L
+        val t2 = t1 + 600_000L
+        val t3 = t2 + 600_000L
+
+        val hdfcDailyBalanceSms =
+            "Update: Available balance in A/c XX4821 on 21-Nov-26 is INR 1,45,230.50. Credits in A/c are subject to clearing."
+        val hdfcClosingBalanceSms =
+            "Your HDFC Bank A/c *4821 closing balance on 21/11/2026 is Rs. 1,48,900.25. Cheques deposited are subject to clearing."
+        val hdfcMinBalWarningSms =
+            "Alert: Minimum balance of Rs. 10,000 is required in your HDFC Bank A/c XX4821."
+        val hdfcUnclearBalSms =
+            "HDFC Bank A/c XX4821 Unclear Bal: INR 5,000.00"
+        val hdfcUpiDebitNoBalanceSms =
+            "Amt Sent Rs.420.00\nFrom HDFC Bank A/C *4821\nTo Blue Tokai Coffee\nOn 21-11-26 Ref 998877665544"
+
+        // 1. Daily balance SMS must NOT be parsed as transactions, and MUST parse as ParsedBalanceUpdate
+        assertNull(
+            "HDFC daily balance SMS must not produce a fake transaction",
+            com.ritesh.parser.core.bank.BankParserFactory.parseSms(hdfcDailyBalanceSms, "VM-HDFCBK", t0)
+        )
+        assertNull(
+            "HDFC closing balance SMS with 'cheques deposited' disclaimer must not produce a fake income transaction",
+            com.ritesh.parser.core.bank.BankParserFactory.parseSms(hdfcClosingBalanceSms, "VM-HDFCBK", t3)
+        )
+        val parsedDaily = com.ritesh.parser.core.bank.BankParserFactory.parseBalanceSms(
+            hdfcDailyBalanceSms,
+            "VM-HDFCBK",
+            t0
+        )
+        assertNotNull("HDFC daily balance SMS must be recognized by parseBalanceSms", parsedDaily)
+        assertEquals("HDFC Bank", parsedDaily!!.bankName)
+        assertEquals("4821", parsedDaily.accountNumber)
+        assertEquals(145230.50, parsedDaily.balance.toDouble(), 0.001)
+
+        // Minimum balance warnings and unclear balances must be ignored
+        assertNull(
+            "Minimum balance warning must not be treated as actual account balance",
+            com.ritesh.parser.core.bank.BankParserFactory.parseBalanceSms(hdfcMinBalWarningSms, "VM-HDFCBK", t0)
+        )
+        assertNull(
+            "Unclear balance SMS must not overwrite real available balance",
+            com.ritesh.parser.core.bank.BankParserFactory.parseBalanceSms(hdfcUnclearBalSms, "VM-HDFCBK", t0)
+        )
+
+        // 2. Parallel SMS batch scan picks up BOTH the UPI transaction and the daily balance SMS
+        val reader = SmsInboxReader(app)
+        val capturedBalances = mutableListOf<com.ritesh.parser.core.ParsedBalanceUpdate>()
+        val candidates = reader.parseSmsBatchesInParallel(
+            rawRows = listOf(
+                RawSmsRow(sender = "VM-HDFCBK", body = hdfcDailyBalanceSms, timestamp = t0),
+                RawSmsRow(sender = "VM-HDFCBK", body = hdfcUpiDebitNoBalanceSms, timestamp = t1)
+            ),
+            existingSignatures = emptySet(),
+            onBalanceUpdatesParsed = { capturedBalances.addAll(it) }
+        )
+        assertEquals("Only the UPI debit should become a transaction", 1, candidates.size)
+        assertEquals("One HDFC daily balance update should be extracted", 1, capturedBalances.size)
+
+        // Import transaction batch AND apply balance updates
+        val repo = OneFamilyRepository(app)
+        repo.batchImportSmsCandidates(
+            candidates = candidates,
+            userName = localUser.displayName,
+            household = null,
+            shareByDefault = false
+        ).getOrThrow()
+        repo.applyAccountBalanceUpdates(capturedBalances, isSharedVisible = false).getOrThrow()
+
+        val afterBatch = LocalAccountDataStore.observeAccounts(localUser.uid).first()
+            .firstOrNull { it.lastFourDigits == "4821" }
+        assertNotNull("HDFC Bank 4821 account should exist", afterBatch)
+        assertEquals(145230.50, afterBatch!!.balance, 0.001)
+
+        // 3. A subsequent newer HDFC UPI debit SMS with NO balance must NOT wipe the account balance to 0
+        val secondUpiCandidate = reader.parseRawSms(
+            sender = "VM-HDFCBK",
+            body = "Amt Sent Rs.180.00\nFrom HDFC Bank A/C *4821\nTo Metro Rail\nOn 21-11-26 Ref 998877665599",
+            timestamp = t2,
+            defaultShared = false
+        )
+        assertNotNull(secondUpiCandidate)
+        TransactionNotificationHelper.processIncomingSmsCandidateAndNotify(app, secondUpiCandidate!!)
+
+        val afterSecondUpi = LocalAccountDataStore.observeAccounts(localUser.uid).first()
+            .firstOrNull { it.lastFourDigits == "4821" }
+        assertNotNull(afterSecondUpi)
+        assertEquals(
+            "Subsequent UPI SMS without balance must preserve existing HDFC balance",
+            145230.50,
+            afterSecondUpi!!.balance,
+            0.001
+        )
+
+        // 4. Real-time incoming HDFC daily closing balance SMS silently updates balance with zero notifications
+        val nm = app.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        nm.cancelAll()
+        val txCountBefore = LocalAccountDataStore.observePersonalExpenses(localUser.uid).first().size
+
+        val realtimeBalance = reader.parseBalanceSms("VM-HDFCBK", hdfcClosingBalanceSms, t3)
+        assertNotNull(realtimeBalance)
+        TransactionNotificationHelper.processIncomingBalanceUpdate(app, realtimeBalance!!)
+
+        val afterRealtimeBalance = LocalAccountDataStore.observeAccounts(localUser.uid).first()
+            .firstOrNull { it.lastFourDigits == "4821" }
+        assertNotNull(afterRealtimeBalance)
+        assertEquals(148900.25, afterRealtimeBalance!!.balance, 0.001)
+        assertEquals(
+            "Daily balance SMS must not add any transaction",
+            txCountBefore,
+            LocalAccountDataStore.observePersonalExpenses(localUser.uid).first().size
+        )
+        assertTrue(
+            "Daily balance SMS must not fire a transaction notification",
+            shadowOf(nm).allNotifications.isEmpty()
+        )
+    }
+
+    @Test
+    fun `test simplified Rhythm-inspired HomeTabScreen hero shows centered spend, pill CTA, and circular quick actions`() {
+        var budgetClicks = 0
+        var transactionsClicks = 0
+        var quickAddClicks = 0
+
+        val sampleTx = ExpenseTransaction(
+            id = "home_simple_tx_1",
+            userId = "u1",
+            userName = "Alex",
+            title = "Coffee House",
+            amount = 450.0,
+            type = "EXPENSE",
+            category = "Food & Dining",
+            transactionDateMillis = System.currentTimeMillis()
+        )
+
+        val state = OneFamilyDashboardUiState(
+            isLoading = false,
+            totalMonthlySpent = 18500.0,
+            totalMonthlyIncome = 95000.0,
+            activeMonthlyBudget = 40000.0,
+            dailySafeSpend = 1075.0,
+            filteredExpenses = listOf(sampleTx),
+            activeExpenses = listOf(sampleTx),
+            allScopedExpenses = listOf(sampleTx)
+        )
+
+        composeTestRule.setContent {
+            OneFamilyTheme {
+                HomeTabScreen(
+                    uiState = state,
+                    onScopeSelected = {},
+                    onEditMonthlyBudget = { budgetClicks++ },
+                    onOpenAllTransactionsPage = { transactionsClicks++ },
+                    onAddTransactionClick = { quickAddClicks++ }
+                )
+            }
+        }
+        composeTestRule.waitForIdle()
+
+        // Old noisy receipt summary label must be gone
+        composeTestRule.onNodeWithText("RECEIPT SUMMARY").assertDoesNotExist()
+
+        // Calm editorial hero + centered amount + Rhythm pill action bar must be displayed
+        composeTestRule.onNodeWithTag("home_hero_card").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Monthly spend").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("home_hero_amount")
+            .assertIsDisplayed()
+            .assertTextEquals(formatCurrency(18500.0, "₹"))
+        composeTestRule.onNodeWithTag("home_budget_status_pill").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("home_monthly_income_pill").assertIsDisplayed()
+
+        // Tap each of the 3 Rhythm action bar controls
+        composeTestRule.onNodeWithTag("edit_monthly_budget_button").assertIsDisplayed().performClick()
+        composeTestRule.onNodeWithTag("view_all_transactions_footer_button").assertIsDisplayed().performClick()
+        composeTestRule.onNodeWithTag("home_quick_add_button").assertIsDisplayed().performClick()
+        composeTestRule.waitForIdle()
+
+        assertEquals(1, budgetClicks)
+        assertEquals(1, transactionsClicks)
+        assertEquals(1, quickAddClicks)
+    }
 }
+
+
+
 
