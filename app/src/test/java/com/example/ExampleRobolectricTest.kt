@@ -1180,12 +1180,22 @@ class ExampleRobolectricTest {
         }
         composeTestRule.waitForIdle()
 
-        // Verify Export CSV card & button are displayed in Settings
+        // Verify Export CSV card & button are displayed inside Currency & Export category page
+        composeTestRule.onNodeWithTag("settings_category_list")
+            .performScrollToNode(hasTestTag("settings_category_row_currency_data"))
+        composeTestRule.onNodeWithTag("settings_category_row_currency_data").performClick()
+        composeTestRule.waitForIdle()
         composeTestRule.onNodeWithTag("household_tab_list")
             .performScrollToNode(hasTestTag("settings_export_csv_button"))
         composeTestRule.onNodeWithTag("settings_export_csv_button").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("settings_category_back_button").performClick()
+        composeTestRule.waitForIdle()
 
-        // 1. Scroll to ThemeModeSelectorBar and verify it uses color-only swatches (no "System", "Light", "Dark" text labels)
+        // 1. Open Appearance category page and verify ThemeModeSelectorBar switches modes cleanly
+        composeTestRule.onNodeWithTag("settings_category_list")
+            .performScrollToNode(hasTestTag("settings_category_row_appearance"))
+        composeTestRule.onNodeWithTag("settings_category_row_appearance").performClick()
+        composeTestRule.waitForIdle()
         composeTestRule.onNodeWithTag("household_tab_list")
             .performScrollToNode(hasTestTag("theme_color_swatch_bar"))
         composeTestRule.onNodeWithTag("theme_color_swatch_bar").assertIsDisplayed()
@@ -1194,23 +1204,35 @@ class ExampleRobolectricTest {
         composeTestRule.onNodeWithTag("theme_mode_dark").assertIsDisplayed()
         assertTrue(composeTestRule.onAllNodesWithText("System").fetchSemanticsNodes().isEmpty())
 
-        // Tap Dark and System color swatches to verify theme mode switches cleanly
+        // Tap Dark and System theme pills to verify theme mode switches cleanly
         composeTestRule.onNodeWithTag("theme_mode_dark").performClick()
         composeTestRule.waitForIdle()
         assertEquals(AppThemeMode.DARK, LocalAccountSessionManager.themeMode.value)
         composeTestRule.onNodeWithTag("theme_mode_system").performClick()
         composeTestRule.waitForIdle()
         assertEquals(AppThemeMode.SYSTEM, LocalAccountSessionManager.themeMode.value)
+        composeTestRule.onNodeWithTag("settings_category_back_button").performClick()
+        composeTestRule.waitForIdle()
 
-        // 2. Verify FCM Push Notifications is unified inside Notifications card (not hidden behind Advanced Settings),
-        // while Advanced Settings controls Crash Analytics only
+        // 2. Verify FCM Push Notifications is unified inside Notifications category page (not hidden behind Advanced),
+        // while Advanced category controls Crash Analytics only
+        composeTestRule.onNodeWithTag("settings_category_list")
+            .performScrollToNode(hasTestTag("settings_category_row_notifications"))
+        composeTestRule.onNodeWithTag("settings_category_row_notifications").performClick()
+        composeTestRule.waitForIdle()
         composeTestRule.onNodeWithTag("household_tab_list")
             .performScrollToNode(hasTestTag("notification_preferences_card"))
         composeTestRule.onNodeWithTag("notification_preferences_card").assertIsDisplayed()
         composeTestRule.onNodeWithTag("household_tab_list")
             .performScrollToNode(hasTestTag("fcm_push_settings_card"))
         composeTestRule.onNodeWithTag("fcm_push_settings_card").assertExists()
+        composeTestRule.onNodeWithTag("settings_category_back_button").performClick()
+        composeTestRule.waitForIdle()
 
+        composeTestRule.onNodeWithTag("settings_category_list")
+            .performScrollToNode(hasTestTag("settings_category_row_advanced"))
+        composeTestRule.onNodeWithTag("settings_category_row_advanced").performClick()
+        composeTestRule.waitForIdle()
         composeTestRule.onNodeWithTag("household_tab_list")
             .performScrollToNode(hasTestTag("expert_feature_flag_card"))
         composeTestRule.onNodeWithTag("expert_feature_flag_card").assertIsDisplayed()
@@ -1311,6 +1333,8 @@ class ExampleRobolectricTest {
         }
         composeTestRule.waitForIdle()
 
+        composeTestRule.onNodeWithTag("settings_category_row_appearance").performClick()
+        composeTestRule.waitForIdle()
         composeTestRule.onNodeWithTag("household_tab_list")
             .performScrollToNode(hasTestTag("primary_color_swatch_bar"))
         composeTestRule.onNodeWithTag("primary_color_swatch_bar").assertIsDisplayed()
@@ -2311,7 +2335,9 @@ class ExampleRobolectricTest {
         composeTestRule.onNodeWithTag("nav_tab_account").performClick()
         composeTestRule.waitForIdle()
 
-        // Scroll directly to household_feature_settings_card in the M3 Settings list
+        // Open Family Household category in Settings and verify Household cards are hidden when toggle is OFF
+        composeTestRule.onNodeWithTag("settings_category_row_family").performClick()
+        composeTestRule.waitForIdle()
         composeTestRule.onNodeWithTag("household_tab_list")
             .performScrollToNode(hasTestTag("household_feature_settings_card"))
         composeTestRule.onNodeWithTag("household_feature_enable_switch").assertIsDisplayed()
@@ -2389,7 +2415,11 @@ class ExampleRobolectricTest {
         }
         composeTestRule.waitForIdle()
 
-        // Verify Asymmetric Cutout Appearance Hero Card & Quick Theme Emblem
+        // Open Appearance settings category page
+        composeTestRule.onNodeWithTag("settings_category_row_appearance").performClick()
+        composeTestRule.waitForIdle()
+
+        // Verify Appearance Hero Card & Quick Theme Emblem
         composeTestRule.onNodeWithTag("appearance_cutout_hero_card").assertIsDisplayed()
         composeTestRule.onNodeWithTag("appearance_cutout_theme_emblem").assertIsDisplayed()
 
@@ -3160,6 +3190,8 @@ class ExampleRobolectricTest {
         }
         composeTestRule.waitForIdle()
 
+        composeTestRule.onNodeWithTag("settings_category_row_notifications").performClick()
+        composeTestRule.waitForIdle()
         composeTestRule.onNodeWithTag("household_tab_list")
             .performScrollToNode(hasTestTag("notification_preferences_card"))
         composeTestRule.onNodeWithTag("notification_preferences_card").assertIsDisplayed()
@@ -3399,6 +3431,8 @@ class ExampleRobolectricTest {
         }
         composeTestRule.waitForIdle()
 
+        composeTestRule.onNodeWithTag("settings_category_row_notifications").performClick()
+        composeTestRule.waitForIdle()
         composeTestRule.onNodeWithTag("household_tab_list")
             .performScrollToNode(hasTestTag("notif_credit_threshold_card"))
         // Redundant preset chips must be removed; only the Slider configures the threshold
@@ -3582,7 +3616,9 @@ class ExampleRobolectricTest {
         showSettingsScreen = true
         composeTestRule.waitForIdle()
 
-        // Verify extra preset/custom toggle buttons are removed and custom timing inputs appear directly under each category
+        // Open Notifications category page and verify custom timing inputs appear directly under each category
+        composeTestRule.onNodeWithTag("settings_category_row_notifications").performClick()
+        composeTestRule.waitForIdle()
         composeTestRule.onNodeWithTag("household_tab_list")
             .performScrollToNode(hasTestTag("notif_category_timing_panel_daily_summary"))
         assertTrue(composeTestRule.onAllNodesWithTag("notif_category_time_chip_daily_summary_9_0").fetchSemanticsNodes().isEmpty())
@@ -4815,10 +4851,11 @@ class ExampleRobolectricTest {
         assertTrue(composeTestRule.onAllNodesWithText("Accounts").fetchSemanticsNodes().isEmpty())
         assertTrue(composeTestRule.onAllNodesWithText(uniquePeriodLabel, substring = true).fetchSemanticsNodes().isEmpty())
 
-        // HouseholdTabScreen: no "Settings" page title header
+        // HouseholdTabScreen: displays categorized Settings hub with clean category rows
         screenMode = "SETTINGS"
         composeTestRule.waitForIdle()
-        assertTrue(composeTestRule.onAllNodesWithText("Settings").fetchSemanticsNodes().isEmpty())
+        composeTestRule.onNodeWithTag("settings_hub_title").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("settings_category_row_appearance").assertIsDisplayed()
 
         // AllTransactionsScreen: no "All transactions" page title, no duplicate periodLabel, Axio strip + 3 sub-tabs + ring gauge visible, search collapsed until toggled
         screenMode = "TRANSACTIONS"
@@ -4864,6 +4901,8 @@ class ExampleRobolectricTest {
                 )
             }
         }
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("settings_category_row_account").performClick()
         composeTestRule.waitForIdle()
         composeTestRule.onNodeWithTag("household_tab_list")
             .performScrollToNode(hasTestTag("sign_out_button"))
@@ -5800,7 +5839,11 @@ class ExampleRobolectricTest {
         }
         composeTestRule.waitForIdle()
 
-        // Scroll to SMS Inbox Sync card in Settings
+        // Open SMS Sync category page in Settings
+        composeTestRule.onNodeWithTag("settings_category_list")
+            .performScrollToNode(hasTestTag("settings_category_row_sms_sync"))
+        composeTestRule.onNodeWithTag("settings_category_row_sms_sync").performClick()
+        composeTestRule.waitForIdle()
         composeTestRule.onNodeWithTag("household_tab_list")
             .performScrollToNode(hasTestTag("settings_sms_sync_card"))
         composeTestRule.waitForIdle()
@@ -6176,6 +6219,76 @@ class ExampleRobolectricTest {
         assertEquals(1, budgetClicks)
         assertEquals(1, transactionsClicks)
         assertEquals(1, quickAddClicks)
+    }
+
+    @Test
+    fun `test Settings displays categorized hub and opens separate page per setting category with back navigation`() {
+        composeTestRule.setContent {
+            OneFamilyTheme {
+                HouseholdTabScreen(
+                    uiState = OneFamilyDashboardUiState(
+                        isLoading = false,
+                        userProfile = UserProfile(uid = "u_cat", displayName = "Arindam", currencySymbol = "₹")
+                    ),
+                    currentUserName = "Arindam",
+                    currentUserEmail = "arindamzipper@gmail.com",
+                    onCreateHousehold = { _, _ -> },
+                    onJoinByCode = {},
+                    onInviteByEmail = {},
+                    onAcceptEmailInvite = {}
+                )
+            }
+        }
+        composeTestRule.waitForIdle()
+
+        // 1. Settings hub renders bold "Settings" title and all 7 setting categories cleanly
+        composeTestRule.onNodeWithTag("settings_hub_title").assertIsDisplayed()
+        val expectedCategoryTags = listOf(
+            "settings_category_row_account",
+            "settings_category_row_appearance",
+            "settings_category_row_family",
+            "settings_category_row_notifications",
+            "settings_category_row_sms_sync",
+            "settings_category_row_currency_data",
+            "settings_category_row_advanced"
+        )
+        expectedCategoryTags.forEach { tag ->
+            composeTestRule.onNodeWithTag("settings_category_list")
+                .performScrollToNode(hasTestTag(tag))
+            composeTestRule.onNodeWithTag(tag).assertIsDisplayed()
+        }
+
+        // Individual detail cards must NOT clutter the main category list
+        assertTrue(composeTestRule.onAllNodesWithTag("theme_and_wallpaper_card").fetchSemanticsNodes().isEmpty())
+        assertTrue(composeTestRule.onAllNodesWithTag("settings_sms_sync_card").fetchSemanticsNodes().isEmpty())
+        assertTrue(composeTestRule.onAllNodesWithTag("sign_out_button").fetchSemanticsNodes().isEmpty())
+
+        // 2. Tap Appearance -> opens separate Appearance page only
+        composeTestRule.onNodeWithTag("settings_category_list")
+            .performScrollToNode(hasTestTag("settings_category_row_appearance"))
+        composeTestRule.onNodeWithTag("settings_category_row_appearance").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("settings_category_page_title")
+            .assertIsDisplayed()
+            .assertTextEquals("Appearance")
+        composeTestRule.onNodeWithTag("theme_and_wallpaper_card").assertIsDisplayed()
+        assertTrue(composeTestRule.onAllNodesWithTag("settings_sms_sync_card").fetchSemanticsNodes().isEmpty())
+
+        // 3. Tap Back -> returns cleanly to Settings category hub
+        composeTestRule.onNodeWithTag("settings_category_back_button").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("settings_category_list").assertIsDisplayed()
+
+        // 4. Tap Account -> opens separate Account page with profile & logout
+        composeTestRule.onNodeWithTag("settings_category_row_account").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("settings_category_page_title")
+            .assertIsDisplayed()
+            .assertTextEquals("Account")
+        composeTestRule.onNodeWithTag("account_sharing_card").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("household_tab_list")
+            .performScrollToNode(hasTestTag("sign_out_button"))
+        composeTestRule.onNodeWithTag("sign_out_button").assertIsDisplayed()
     }
 }
 
