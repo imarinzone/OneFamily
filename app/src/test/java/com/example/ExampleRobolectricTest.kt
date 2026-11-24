@@ -1832,19 +1832,20 @@ class ExampleRobolectricTest {
         composeTestRule.onNodeWithTag("link_duplicate_selected_sms_box").assertIsDisplayed()
 
         // Verify the very end of the >180-char SMS strings is rendered without 2-line truncation
+        // FreshMart Store (dup_cand_2) is the latest transaction from the same merchant so it is selected first
         composeTestRule.onNodeWithText("TailMarkerOriginalFullText991", substring = true).assertIsDisplayed()
-        composeTestRule.onNodeWithText("TailMarkerCandidateOneFullText772", substring = true).assertIsDisplayed()
+        composeTestRule.onNodeWithText("TailMarkerCandidateTwoFullText883", substring = true).assertIsDisplayed()
 
         // 2. Candidate rows below show ONLY Merchant, DateTime, Account, and Amount (no category or Same Amount badge clutter)
         assertTrue(composeTestRule.onAllNodesWithText("Same Amount").fetchSemanticsNodes().isEmpty())
         assertTrue(composeTestRule.onAllNodesWithText("Same Day").fetchSemanticsNodes().isEmpty())
         assertTrue(composeTestRule.onAllNodesWithText("Groceries", substring = true).fetchSemanticsNodes().isEmpty())
 
-        // 3. Selecting the second candidate dynamically updates the top Selected SMS verification box
-        composeTestRule.onNodeWithTag("link_candidate_row_dup_cand_2").performScrollTo().performClick()
+        // 3. Selecting the older candidate dynamically updates the top Selected SMS verification box
+        composeTestRule.onNodeWithTag("link_candidate_row_dup_cand_1").performScrollTo().performClick()
         composeTestRule.waitForIdle()
         composeTestRule.onNodeWithTag("link_duplicate_selected_sms_box").performScrollTo().assertIsDisplayed()
-        composeTestRule.onNodeWithText("TailMarkerCandidateTwoFullText883", substring = true).performScrollTo().assertIsDisplayed()
+        composeTestRule.onNodeWithText("TailMarkerCandidateOneFullText772", substring = true).performScrollTo().assertIsDisplayed()
     }
 
     @Test
@@ -3616,32 +3617,46 @@ class ExampleRobolectricTest {
         showSettingsScreen = true
         composeTestRule.waitForIdle()
 
-        // Open Notifications category page and verify custom timing inputs appear directly under each category
+        // Open Notifications category page and verify each summary opens the actual M3 TimePicker dialog
         composeTestRule.onNodeWithTag("settings_category_row_notifications").performClick()
         composeTestRule.waitForIdle()
         composeTestRule.onNodeWithTag("household_tab_list")
             .performScrollToNode(hasTestTag("notif_category_timing_panel_daily_summary"))
-        assertTrue(composeTestRule.onAllNodesWithTag("notif_category_time_chip_daily_summary_9_0").fetchSemanticsNodes().isEmpty())
-        assertTrue(composeTestRule.onAllNodesWithTag("notif_category_custom_time_button_daily_summary").fetchSemanticsNodes().isEmpty())
-        composeTestRule.onNodeWithTag("notif_category_hour_input_daily_summary").performScrollTo().performTextReplacement("9")
-        composeTestRule.onNodeWithTag("notif_category_minute_input_daily_summary").performScrollTo().performTextReplacement("00")
-        composeTestRule.onNodeWithTag("notif_category_save_time_button_daily_summary").performScrollTo().performClick()
+        assertTrue(composeTestRule.onAllNodesWithTag("notif_category_hour_input_daily_summary").fetchSemanticsNodes().isEmpty())
+        assertTrue(composeTestRule.onAllNodesWithTag("notif_category_minute_input_daily_summary").fetchSemanticsNodes().isEmpty())
+        composeTestRule.onNodeWithTag("notif_category_pick_time_button_daily_summary").performScrollTo().performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("app_time_picker_dialog").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("time_picker_mode_toggle_button").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("time_picker_confirm_button").performClick()
         composeTestRule.waitForIdle()
 
         composeTestRule.onNodeWithTag("household_tab_list")
             .performScrollToNode(hasTestTag("notif_category_timing_panel_weekly_summary"))
-        assertTrue(composeTestRule.onAllNodesWithTag("notif_category_custom_time_button_weekly_summary").fetchSemanticsNodes().isEmpty())
-        composeTestRule.onNodeWithTag("notif_category_hour_input_weekly_summary").performScrollTo().performTextReplacement("20")
-        composeTestRule.onNodeWithTag("notif_category_minute_input_weekly_summary").performScrollTo().performTextReplacement("00")
-        composeTestRule.onNodeWithTag("notif_category_save_time_button_weekly_summary").performScrollTo().performClick()
+        assertTrue(composeTestRule.onAllNodesWithTag("notif_category_hour_input_weekly_summary").fetchSemanticsNodes().isEmpty())
+        composeTestRule.onNodeWithTag("notif_category_pick_time_button_weekly_summary").performScrollTo().performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("app_time_picker_dialog").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("time_picker_confirm_button").performClick()
         composeTestRule.waitForIdle()
 
         composeTestRule.onNodeWithTag("household_tab_list")
             .performScrollToNode(hasTestTag("notif_category_timing_panel_monthly_summary"))
-        assertTrue(composeTestRule.onAllNodesWithTag("notif_category_custom_time_button_monthly_summary").fetchSemanticsNodes().isEmpty())
-        composeTestRule.onNodeWithTag("notif_category_hour_input_monthly_summary").performScrollTo().performTextReplacement("7")
-        composeTestRule.onNodeWithTag("notif_category_minute_input_monthly_summary").performScrollTo().performTextReplacement("30")
-        composeTestRule.onNodeWithTag("notif_category_save_time_button_monthly_summary").performScrollTo().performClick()
+        assertTrue(composeTestRule.onAllNodesWithTag("notif_category_hour_input_monthly_summary").fetchSemanticsNodes().isEmpty())
+        composeTestRule.onNodeWithTag("notif_category_pick_time_button_monthly_summary").performScrollTo().performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("app_time_picker_dialog").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("time_picker_confirm_button").performClick()
+        composeTestRule.waitForIdle()
+
+        // Verify updating each summary time via settings persists distinct Daily, Weekly, and Monthly schedules
+        LocalAccountSessionManager.updateFcmPushSettings(
+            context = app,
+            newSettings = LocalAccountSessionManager.fcmPushSettings.value
+                .withSummaryTime(NotificationSubCategory.DAILY_SUMMARY, 9, 0)
+                .withSummaryTime(NotificationSubCategory.WEEKLY_SUMMARY, 20, 0)
+                .withSummaryTime(NotificationSubCategory.MONTHLY_SUMMARY, 7, 30)
+        )
         composeTestRule.waitForIdle()
 
         val updatedSettings = LocalAccountSessionManager.fcmPushSettings.value
@@ -4834,7 +4849,13 @@ class ExampleRobolectricTest {
         composeTestRule.waitForIdle()
         composeTestRule.onNodeWithTag("bill_reminder_title_input").performTextReplacement("Electricity Bill")
         composeTestRule.onNodeWithTag("bill_reminder_amount_input").performTextReplacement("1850")
-        composeTestRule.onNodeWithTag("bill_reminder_due_day_input").performTextReplacement("12")
+        // Verify Bill Reminder due date uses the actual Material 3 DatePickerDialog
+        assertTrue(composeTestRule.onAllNodesWithTag("bill_reminder_due_day_input").fetchSemanticsNodes().isEmpty())
+        composeTestRule.onNodeWithTag("bill_reminder_due_day_picker_button").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("app_date_picker_dialog").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("date_picker_confirm_button").performClick()
+        composeTestRule.waitForIdle()
         composeTestRule.onNodeWithTag("bill_reminder_save_button").performClick()
         composeTestRule.waitForIdle()
         composeTestRule.onNodeWithText("Electricity Bill").assertIsDisplayed()
@@ -5887,6 +5908,8 @@ class ExampleRobolectricTest {
             .assertTextEquals(expectedRangeLabel)
 
         // Trigger SMS sync directly from Settings
+        composeTestRule.onNodeWithTag("household_tab_list")
+            .performScrollToNode(hasTestTag("scan_sms_button"))
         composeTestRule.onNodeWithTag("scan_sms_button").performClick()
         composeTestRule.waitForIdle()
         assertEquals(1, scanTriggeredCount)
@@ -6289,6 +6312,638 @@ class ExampleRobolectricTest {
         composeTestRule.onNodeWithTag("household_tab_list")
             .performScrollToNode(hasTestTag("sign_out_button"))
         composeTestRule.onNodeWithTag("sign_out_button").assertIsDisplayed()
+    }
+
+    @Test
+    fun `test 24h SMS Sync Expressive Slider and actual DateTime pickers in Settings`() {
+        val now = 1_760_000_000_000L
+        val (min24h, max24h) = SmsSyncPeriodOption.LAST_24_HOURS.computeBoundsMillis(referenceMillis = now)
+        assertEquals(now - 24L * 3_600_000L, min24h)
+        assertEquals(now, max24h)
+        assertEquals("Last 24 Hours", SmsSyncPeriodOption.LAST_24_HOURS.formatRangeSummary())
+
+        val selectedPeriodState = mutableStateOf(SmsSyncPeriodOption.ALL_TIME)
+        val customRangeState = mutableStateOf<Pair<Long, Long>?>(null)
+
+        composeTestRule.setContent {
+            OneFamilyTheme {
+                HouseholdTabScreen(
+                    uiState = OneFamilyDashboardUiState(),
+                    currentUserName = "Arindam",
+                    currentUserEmail = "arindam@example.com",
+                    smsSyncPeriodOption = selectedPeriodState.value,
+                    smsSyncCustomRange = customRangeState.value,
+                    onSelectSmsSyncPeriod = { selectedPeriodState.value = it },
+                    onSelectSmsSyncCustomRange = { s, e ->
+                        customRangeState.value = s to e
+                        selectedPeriodState.value = SmsSyncPeriodOption.CUSTOM
+                    },
+                    onCreateHousehold = { _, _ -> },
+                    onJoinByCode = {},
+                    onInviteByEmail = {},
+                    onAcceptEmailInvite = {},
+                    initialCategory = com.example.ui.screens.SettingsCategory.SMS_SYNC
+                )
+            }
+        }
+        composeTestRule.waitForIdle()
+
+        // Expressive M3 Slider and 24h stop are rendered
+        composeTestRule.onNodeWithTag("settings_sms_period_slider").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("settings_sms_period_chip_last_24_hours")
+            .performScrollTo()
+            .performClick()
+        composeTestRule.waitForIdle()
+        assertEquals(SmsSyncPeriodOption.LAST_24_HOURS, selectedPeriodState.value)
+        composeTestRule.onNodeWithTag("settings_sms_sync_selected_period_label")
+            .assertTextEquals("Last 24 Hours")
+
+        // Switch to Custom Range and verify both real DateRangePicker and TimePicker modals open
+        customRangeState.value = (now - 6L * 3_600_000L) to now
+        selectedPeriodState.value = SmsSyncPeriodOption.CUSTOM
+        composeTestRule.waitForIdle()
+
+        composeTestRule.onNodeWithTag("settings_sms_period_chip_start_time_button").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("app_time_picker_dialog").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("time_picker_confirm_button").performClick()
+        composeTestRule.waitForIdle()
+
+        composeTestRule.onNodeWithTag("settings_sms_period_chip_pick_custom_dates_button").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("custom_date_range_picker_dialog").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Cancel").performClick()
+        composeTestRule.waitForIdle()
+    }
+
+    @Test
+    fun `test 24h SMS Sync rechecks all SMS in period irrespective of last check time`() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        LocalAccountSessionManager.signInWithUsernamePassword(context, "test", "pass")
+        val user = LocalAccountSessionManager.getCurrentUser(context)!!
+        val repo = OneFamilyRepository(context)
+        val smsReader = SmsInboxReader(context)
+        val vm = OneFamilyViewModel(
+            repository = repo,
+            smsInboxReader = smsReader,
+            currentUserId = user.uid,
+            currentUserName = user.displayName,
+            currentUserEmail = user.email
+        )
+        composeTestRule.waitForIdle()
+        shadowOf(Looper.getMainLooper()).idle()
+
+        val now = System.currentTimeMillis()
+        val (min24h, max24h) = SmsSyncPeriodOption.LAST_24_HOURS.computeBoundsMillis(referenceMillis = now)
+
+        val smsWithin24hFirst = RawSmsRow(
+            sender = "VM-HDFCBK",
+            body = "Rs. 450.00 debited from HDFC Bank A/c XX4821 on 22-11-26 to VPA zomato@okhdfcbank (UPI Ref 770011223344). Avl Bal: Rs. 25,000.00",
+            timestamp = now - 3L * 3_600_000L
+        )
+        val smsWithin24hSecond = RawSmsRow(
+            sender = "VM-HDFCBK",
+            body = "Rs. 320.00 debited from HDFC Bank A/c XX4821 on 22-11-26 to VPA swiggy@okhdfcbank (UPI Ref 770011223355). Avl Bal: Rs. 24,680.00",
+            timestamp = now - 1L * 3_600_000L
+        )
+        val smsOlderThan24h = RawSmsRow(
+            sender = "VM-HDFCBK",
+            body = "Rs. 999.00 debited from HDFC Bank A/c XX4821 on 20-11-26 to VPA oldstore@okhdfcbank (UPI Ref 770011223300). Avl Bal: Rs. 25,450.00",
+            timestamp = now - 36L * 3_600_000L
+        )
+
+        // Pass 1: Sync last 24h -> imports first 24h SMS and ignores >24h SMS
+        val pass1Existing = LocalAccountDataStore.getAllExistingSmsSignatures(user.uid)
+        val (pass1Discovered, pass1Saved) = vm.runParallelSmsBatchPipeline(
+            rawRowsOverride = listOf(smsOlderThan24h, smsWithin24hFirst),
+            existingSignatures = pass1Existing,
+            userName = user.displayName,
+            household = null,
+            perBatchDelayMs = 0L,
+            minTimestampMillis = min24h,
+            maxTimestampMillis = max24h
+        )
+        assertEquals(1, pass1Discovered.size)
+        assertEquals(1, pass1Saved)
+
+        // Delete the imported transaction (simulating a missed or removed SMS inside the same 24h period)
+        val importedTx = repo.observePersonalExpenses(user.uid).first()
+            .first { it.accountName.contains("4821") && it.amount == 450.0 }
+        LocalAccountDataStore.deleteExpense(importedTx.id)
+        assertTrue(
+            repo.observePersonalExpenses(user.uid).first()
+                .none { it.accountName.contains("4821") && it.amount == 450.0 }
+        )
+
+        // Pass 2: Immediately re-sync the same 24h period -> MUST recheck ALL SMS in the 24h window
+        // regardless of having just checked moments ago, restoring the deleted SMS + importing the newer one
+        val pass2Existing = LocalAccountDataStore.getAllExistingSmsSignatures(user.uid)
+        val (pass2Discovered, pass2Saved) = vm.runParallelSmsBatchPipeline(
+            rawRowsOverride = listOf(smsOlderThan24h, smsWithin24hFirst, smsWithin24hSecond),
+            existingSignatures = pass2Existing,
+            userName = user.displayName,
+            household = null,
+            perBatchDelayMs = 0L,
+            minTimestampMillis = min24h,
+            maxTimestampMillis = max24h
+        )
+        assertEquals(2, pass2Discovered.size)
+        assertEquals(2, pass2Saved)
+
+        // Pass 3: Re-syncing a 3rd time with a fresh HDFC daily balance SMS updates balance with zero duplicate transactions
+        val dailyBalanceSms = RawSmsRow(
+            sender = "VM-HDFCBK",
+            body = "Your HDFC Bank A/c XX4821 available balance as on 22-Nov-2026 is INR 24,500.00",
+            timestamp = now - 5L * 60_000L
+        )
+        val pass3Existing = LocalAccountDataStore.getAllExistingSmsSignatures(user.uid)
+        val (pass3Discovered, pass3Saved) = vm.runParallelSmsBatchPipeline(
+            rawRowsOverride = listOf(smsOlderThan24h, smsWithin24hFirst, smsWithin24hSecond, dailyBalanceSms),
+            existingSignatures = pass3Existing,
+            userName = user.displayName,
+            household = null,
+            perBatchDelayMs = 0L,
+            minTimestampMillis = min24h,
+            maxTimestampMillis = max24h
+        )
+        assertEquals(0, pass3Discovered.size)
+        assertEquals(0, pass3Saved)
+        val final4821Expenses = repo.observePersonalExpenses(user.uid).first()
+            .filter { it.accountName.contains("4821") }
+        assertEquals(2, final4821Expenses.size)
+        val hdfcAccount = repo.observeAccounts(user.uid).first()
+            .firstOrNull { it.lastFourDigits == "4821" }
+        assertNotNull(hdfcAccount)
+        assertEquals(24_500.0, hdfcAccount!!.balance, 0.01)
+
+        LocalAccountSessionManager.signOut(context)
+    }
+
+    @Test
+    fun `test AllTransactionsScreen sorts transactions Low to High and High to Low`() {
+        val now = System.currentTimeMillis()
+        val txMid = ExpenseTransaction(
+            id = "tx_sort_mid",
+            userId = "u1",
+            userName = "Alex",
+            title = "Coffee House",
+            amount = 450.0,
+            type = "EXPENSE",
+            category = "Food & Dining",
+            transactionDateMillis = now - 1_000_000L
+        )
+        val txHigh = ExpenseTransaction(
+            id = "tx_sort_high",
+            userId = "u1",
+            userName = "Alex",
+            title = "Flight Ticket",
+            amount = 2500.0,
+            type = "EXPENSE",
+            category = "Fuel & Travel",
+            transactionDateMillis = now - 5_000_000L
+        )
+        val txLow = ExpenseTransaction(
+            id = "tx_sort_low",
+            userId = "u1",
+            userName = "Alex",
+            title = "Metro Card",
+            amount = 120.0,
+            type = "EXPENSE",
+            category = "Fuel & Travel",
+            transactionDateMillis = now - 3_000_000L
+        )
+        val baseTransactions = listOf(txMid, txHigh, txLow)
+        val sortOrderState = mutableStateOf("NEWEST")
+
+        composeTestRule.setContent {
+            val currentSort = sortOrderState.value
+            val sorted = com.example.ui.viewmodel.sortTransactionsList(baseTransactions, currentSort)
+            val uiState = OneFamilyDashboardUiState(
+                isLoading = false,
+                selectedSortOrder = currentSort,
+                activeExpenses = baseTransactions,
+                filteredExpenses = sorted,
+                totalMonthlySpent = baseTransactions.sumOf { it.amount }
+            )
+            OneFamilyTheme {
+                AllTransactionsScreen(
+                    uiState = uiState,
+                    onSelectSortOrder = { sortOrderState.value = it }
+                )
+            }
+        }
+        composeTestRule.waitForIdle()
+
+        // Sort button is directly visible on Receipts Ledger header without expanding filters
+        composeTestRule.onNodeWithTag("all_transactions_screen_list")
+            .performScrollToNode(hasTestTag("all_tx_sort_button"))
+        composeTestRule.onNodeWithTag("all_tx_sort_button").assertIsDisplayed().performClick()
+        composeTestRule.waitForIdle()
+
+        // Switch to Amount: Low to High
+        composeTestRule.onNodeWithTag("all_tx_sort_option_lowest").assertIsDisplayed().performClick()
+        composeTestRule.waitForIdle()
+        assertEquals("LOWEST", sortOrderState.value)
+        val lowToHigh = com.example.ui.viewmodel.sortTransactionsList(baseTransactions, sortOrderState.value)
+        assertEquals(listOf("tx_sort_low", "tx_sort_mid", "tx_sort_high"), lowToHigh.map { it.id })
+        composeTestRule.onNodeWithText("Low → High").assertIsDisplayed()
+
+        // Switch to Amount: High to Low
+        composeTestRule.onNodeWithTag("all_tx_sort_button").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("all_tx_sort_option_highest").assertIsDisplayed().performClick()
+        composeTestRule.waitForIdle()
+        assertEquals("HIGHEST", sortOrderState.value)
+        val highToLow = com.example.ui.viewmodel.sortTransactionsList(baseTransactions, sortOrderState.value)
+        assertEquals(listOf("tx_sort_high", "tx_sort_mid", "tx_sort_low"), highToLow.map { it.id })
+        composeTestRule.onNodeWithText("High → Low").assertIsDisplayed()
+
+        // Switch back to Date: Newest First
+        composeTestRule.onNodeWithTag("all_tx_sort_button").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("all_tx_sort_option_newest").assertIsDisplayed().performClick()
+        composeTestRule.waitForIdle()
+        assertEquals("NEWEST", sortOrderState.value)
+        val newestFirst = com.example.ui.viewmodel.sortTransactionsList(baseTransactions, sortOrderState.value)
+        assertEquals(listOf("tx_sort_mid", "tx_sort_low", "tx_sort_high"), newestFirst.map { it.id })
+    }
+
+    @Test
+    fun `test AccountDetailScreen sorts account transactions Low to High and High to Low`() {
+        val now = System.currentTimeMillis()
+        val acc = FinancialAccount(
+            id = "acc_sort_hdfc",
+            userId = "u1",
+            name = "HDFC Savings",
+            bankName = "HDFC",
+            accountType = "BANK",
+            lastFourDigits = "4321",
+            balance = 50_000.0
+        )
+        val txSmall = ExpenseTransaction(
+            id = "acc_tx_small",
+            userId = "u1",
+            userName = "Alex",
+            title = "Tea Stall",
+            amount = 95.0,
+            type = "EXPENSE",
+            category = "Food & Dining",
+            accountName = acc.name,
+            transactionDateMillis = now - 2_000_000L
+        )
+        val txLarge = ExpenseTransaction(
+            id = "acc_tx_large",
+            userId = "u1",
+            userName = "Alex",
+            title = "Hotel Stay",
+            amount = 4800.0,
+            type = "EXPENSE",
+            category = "Fuel & Travel",
+            accountName = acc.name,
+            transactionDateMillis = now - 4_000_000L
+        )
+        val txMedium = ExpenseTransaction(
+            id = "acc_tx_medium",
+            userId = "u1",
+            userName = "Alex",
+            title = "Pharmacy",
+            amount = 640.0,
+            type = "EXPENSE",
+            category = "Healthcare",
+            accountName = acc.name,
+            transactionDateMillis = now - 500_000L
+        )
+        val summary = com.example.ui.viewmodel.AccountSpendSummary(
+            account = acc,
+            section = com.example.data.model.AccountSectionType.BANK,
+            linkedBankDisplayName = "",
+            spent = 5535.0,
+            income = 0.0,
+            limit = 0.0,
+            alertThresholdPercent = 80,
+            transactions = listOf(txMedium, txSmall, txLarge),
+            allTransactions = listOf(txMedium, txSmall, txLarge)
+        )
+
+        composeTestRule.setContent {
+            OneFamilyTheme {
+                com.example.ui.screens.AccountDetailScreen(
+                    summary = summary,
+                    currencySymbol = "₹",
+                    referenceMillis = now
+                )
+            }
+        }
+        composeTestRule.waitForIdle()
+
+        // Scroll to Account Transactions sort button and choose Amount: Low to High
+        composeTestRule.onNodeWithTag("account_detail_screen")
+            .performScrollToNode(hasTestTag("account_detail_sort_button"))
+        composeTestRule.onNodeWithTag("account_detail_sort_button").assertIsDisplayed().performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("account_detail_sort_option_lowest").assertIsDisplayed().performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithText("Low → High").assertIsDisplayed()
+
+        // Scroll down to rows and verify lowest amount appears above highest amount
+        composeTestRule.onNodeWithTag("account_detail_screen")
+            .performScrollToNode(hasTestTag("account_detail_tx_row_acc_tx_large"))
+        val lowNodesInLowToHigh = composeTestRule.onAllNodesWithTag("account_detail_tx_row_acc_tx_small").fetchSemanticsNodes()
+        val largeNodesInLowToHigh = composeTestRule.onAllNodesWithTag("account_detail_tx_row_acc_tx_large").fetchSemanticsNodes()
+        if (lowNodesInLowToHigh.isNotEmpty() && largeNodesInLowToHigh.isNotEmpty()) {
+            assertTrue(
+                "Expected lowest amount row above highest amount row in Low-to-High sort",
+                lowNodesInLowToHigh.first().boundsInRoot.top < largeNodesInLowToHigh.first().boundsInRoot.top
+            )
+        }
+
+        // Now switch to Amount: High to Low
+        composeTestRule.onNodeWithTag("account_detail_screen")
+            .performScrollToNode(hasTestTag("account_detail_sort_button"))
+        composeTestRule.onNodeWithTag("account_detail_sort_button").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("account_detail_sort_option_highest").assertIsDisplayed().performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithText("High → Low").assertIsDisplayed()
+
+        composeTestRule.onNodeWithTag("account_detail_screen")
+            .performScrollToNode(hasTestTag("account_detail_tx_row_acc_tx_small"))
+        val lowNodesInHighToLow = composeTestRule.onAllNodesWithTag("account_detail_tx_row_acc_tx_small").fetchSemanticsNodes()
+        val largeNodesInHighToLow = composeTestRule.onAllNodesWithTag("account_detail_tx_row_acc_tx_large").fetchSemanticsNodes()
+        if (lowNodesInHighToLow.isNotEmpty() && largeNodesInHighToLow.isNotEmpty()) {
+            assertTrue(
+                "Expected highest amount row above lowest amount row in High-to-Low sort",
+                largeNodesInHighToLow.first().boundsInRoot.top < lowNodesInHighToLow.first().boundsInRoot.top
+            )
+        }
+    }
+
+    @Test
+    fun `test duplicate refund link prioritizes latest same merchant then same amount from same merchant then all recent transactions`() {
+        val now = 1763500000000L
+        val sourceTx = ExpenseTransaction(
+            id = "src_amazon_refund",
+            userId = "u1",
+            userName = "Alex",
+            title = "Amazon",
+            amount = 500.0,
+            type = "INCOME",
+            category = "Salary & Income",
+            accountName = "HDFC Bank ••4821",
+            transactionDateMillis = now
+        )
+        // 1. Latest from same merchant (different amount — partial/recent order) -> MUST rank #1
+        val latestSameMerchant = ExpenseTransaction(
+            id = "cand_latest_same_merchant",
+            userId = "u1",
+            title = "Amazon Pay",
+            amount = 1299.0,
+            type = "EXPENSE",
+            accountName = "HDFC Bank ••4821",
+            transactionDateMillis = now - 600_000L // 10 mins ago
+        )
+        // 2. Older from same merchant with matching denomination (500.0) -> MUST rank #2 & #3
+        val sameMerchantSameAmountNewer = ExpenseTransaction(
+            id = "cand_same_merchant_same_amt_newer",
+            userId = "u1",
+            title = "Amazon",
+            amount = 500.0,
+            type = "EXPENSE",
+            accountName = "ICICI Card ••1104",
+            transactionDateMillis = now - 2L * 86_400_000L // 2 days ago
+        )
+        val sameMerchantSameAmountOlder = ExpenseTransaction(
+            id = "cand_same_merchant_same_amt_older",
+            userId = "u1",
+            title = "Amazon India",
+            amount = 500.0,
+            type = "EXPENSE",
+            accountName = "HDFC Bank ••4821",
+            transactionDateMillis = now - 5L * 86_400_000L // 5 days ago
+        )
+        // 3. Remaining recent transactions (including other merchants with/without 500 and older same-merchant diff-amount)
+        val recentOtherMerchant = ExpenseTransaction(
+            id = "cand_recent_other",
+            userId = "u1",
+            title = "Swiggy",
+            amount = 350.0,
+            type = "EXPENSE",
+            accountName = "HDFC Bank ••4821",
+            transactionDateMillis = now - 300_000L // 5 mins ago (more recent than latestSameMerchant!)
+        )
+        val sameMerchantDiffAmtOlder = ExpenseTransaction(
+            id = "cand_same_merchant_diff_amt_older",
+            userId = "u1",
+            title = "Amazon",
+            amount = 2499.0,
+            type = "EXPENSE",
+            accountName = "HDFC Bank ••4821",
+            transactionDateMillis = now - 3L * 86_400_000L // 3 days ago
+        )
+        val olderOtherSameAmt = ExpenseTransaction(
+            id = "cand_other_same_amt_older",
+            userId = "u1",
+            title = "Uber",
+            amount = 500.0,
+            type = "EXPENSE",
+            accountName = "Paytm",
+            transactionDateMillis = now - 4L * 86_400_000L // 4 days ago
+        )
+
+        val shuffledInput = listOf(
+            olderOtherSameAmt,
+            sameMerchantSameAmountOlder,
+            recentOtherMerchant,
+            sameMerchantDiffAmtOlder,
+            sameMerchantSameAmountNewer,
+            latestSameMerchant,
+            sourceTx
+        )
+
+        val ranked = com.example.ui.screens.rankDuplicateOrRefundCandidates(
+            sourceTransaction = sourceTx,
+            candidates = shuffledInput
+        )
+        assertEquals(
+            listOf(
+                "cand_latest_same_merchant",
+                "cand_same_merchant_same_amt_newer",
+                "cand_same_merchant_same_amt_older",
+                "cand_recent_other",
+                "cand_same_merchant_diff_amt_older",
+                "cand_other_same_amt_older"
+            ),
+            ranked.map { it.id }
+        )
+
+        composeTestRule.setContent {
+            OneFamilyTheme {
+                LinkDuplicateTransactionDialog(
+                    sourceTransaction = sourceTx,
+                    allTransactions = shuffledInput,
+                    currencySymbol = "₹",
+                    onDismiss = {},
+                    onConfirmLink = { _, _ -> }
+                )
+            }
+        }
+        composeTestRule.waitForIdle()
+
+        // Verify all 6 candidates render in exact UI vertical top-to-bottom order inside the candidate stack
+        val expectedOrderIds = ranked.map { it.id }
+        val yPositions = expectedOrderIds.map { id ->
+            composeTestRule.onNodeWithTag("link_candidate_row_$id")
+                .fetchSemanticsNode().positionInRoot.y
+        }
+        for (i in 0 until yPositions.lastIndex) {
+            assertTrue(
+                "Expected ${expectedOrderIds[i]} (y=${yPositions[i]}) above ${expectedOrderIds[i + 1]} (y=${yPositions[i + 1]}) in LinkDuplicateTransactionDialog",
+                yPositions[i] < yPositions[i + 1]
+            )
+        }
+    }
+
+    @Test
+    fun `test monthly report triggers at end of month and weekly report triggers on chosen end-of-week day in settings`() {
+        val app = ApplicationProvider.getApplicationContext<Context>()
+        LocalAccountSessionManager.ensureInitialized(app)
+        LocalAccountSessionManager.updateFcmPushSettings(app, FcmPushSettings())
+
+        // 1. Verify Monthly spend report schedules for the last day of the month (28/29/30/31)
+        val settings = FcmPushSettings(
+            weeklySummaryDayOfWeek = Calendar.FRIDAY,
+            weeklySummaryHour = 18,
+            weeklySummaryMinute = 30,
+            monthlySummaryHour = 21,
+            monthlySummaryMinute = 0
+        )
+
+        // Mid-November 2026 (Mon Nov 23, 2026 10:00) -> Monthly must schedule Nov 30, 2026 21:00
+        val nov23 = Calendar.getInstance().apply {
+            set(2026, Calendar.NOVEMBER, 23, 10, 0, 0)
+            set(Calendar.MILLISECOND, 0)
+        }.timeInMillis
+        val novMonthlyTrig = com.example.data.sms.SpendSummaryAlarmScheduler.computeTriggerMillisForPeriod(
+            com.example.data.sms.SpendSummaryPeriod.MONTHLY,
+            settings,
+            nov23
+        )
+        val novMonthlyCal = Calendar.getInstance().apply { timeInMillis = novMonthlyTrig }
+        assertEquals(2026, novMonthlyCal.get(Calendar.YEAR))
+        assertEquals(Calendar.NOVEMBER, novMonthlyCal.get(Calendar.MONTH))
+        assertEquals(30, novMonthlyCal.get(Calendar.DAY_OF_MONTH))
+        assertEquals(21, novMonthlyCal.get(Calendar.HOUR_OF_DAY))
+        assertEquals(0, novMonthlyCal.get(Calendar.MINUTE))
+
+        // After Nov 30 21:00 -> Monthly must advance to Dec 31, 2026 21:00
+        val nov30Late = Calendar.getInstance().apply {
+            set(2026, Calendar.NOVEMBER, 30, 21, 5, 0)
+            set(Calendar.MILLISECOND, 0)
+        }.timeInMillis
+        val decMonthlyTrig = com.example.data.sms.SpendSummaryAlarmScheduler.computeTriggerMillisForPeriod(
+            com.example.data.sms.SpendSummaryPeriod.MONTHLY,
+            settings,
+            nov30Late
+        )
+        val decMonthlyCal = Calendar.getInstance().apply { timeInMillis = decMonthlyTrig }
+        assertEquals(2026, decMonthlyCal.get(Calendar.YEAR))
+        assertEquals(Calendar.DECEMBER, decMonthlyCal.get(Calendar.MONTH))
+        assertEquals(31, decMonthlyCal.get(Calendar.DAY_OF_MONTH))
+
+        // Leap year check: Jan 31, 2028 after 21:00 -> Feb 29, 2028
+        val jan31LeapLate = Calendar.getInstance().apply {
+            set(2028, Calendar.JANUARY, 31, 22, 0, 0)
+            set(Calendar.MILLISECOND, 0)
+        }.timeInMillis
+        val febLeapTrig = com.example.data.sms.SpendSummaryAlarmScheduler.computeTriggerMillisForPeriod(
+            com.example.data.sms.SpendSummaryPeriod.MONTHLY,
+            settings,
+            jan31LeapLate
+        )
+        val febLeapCal = Calendar.getInstance().apply { timeInMillis = febLeapTrig }
+        assertEquals(2028, febLeapCal.get(Calendar.YEAR))
+        assertEquals(Calendar.FEBRUARY, febLeapCal.get(Calendar.MONTH))
+        assertEquals(29, febLeapCal.get(Calendar.DAY_OF_MONTH))
+
+        // 2. Verify Weekly spend report triggers on the chosen end-of-week day (Friday Nov 27, 2026 18:30)
+        val weeklyTrig = com.example.data.sms.SpendSummaryAlarmScheduler.computeTriggerMillisForPeriod(
+            com.example.data.sms.SpendSummaryPeriod.WEEKLY,
+            settings,
+            nov23
+        )
+        val weeklyCal = Calendar.getInstance().apply { timeInMillis = weeklyTrig }
+        assertEquals(Calendar.FRIDAY, weeklyCal.get(Calendar.DAY_OF_WEEK))
+        assertEquals(27, weeklyCal.get(Calendar.DAY_OF_MONTH))
+        assertEquals(18, weeklyCal.get(Calendar.HOUR_OF_DAY))
+        assertEquals(30, weeklyCal.get(Calendar.MINUTE))
+
+        // 3. Verify Settings -> Notifications UI lets user pick the end-of-week day and shows end-of-month info
+        composeTestRule.setContent {
+            OneFamilyTheme {
+                HouseholdTabScreen(
+                    uiState = OneFamilyDashboardUiState(isLoading = false),
+                    initialCategory = com.example.ui.screens.SettingsCategory.NOTIFICATIONS,
+                    onCreateHousehold = { _, _ -> },
+                    onJoinByCode = { _ -> },
+                    onInviteByEmail = { _ -> },
+                    onAcceptEmailInvite = { _ -> }
+                )
+            }
+        }
+        composeTestRule.waitForIdle()
+
+        composeTestRule.onNodeWithTag("household_tab_list")
+            .performScrollToNode(hasTestTag("notif_weekly_day_selector"))
+        composeTestRule.onNodeWithTag("notif_weekly_selected_day_label").assertTextEquals("Sunday")
+
+        composeTestRule.onNodeWithTag("notif_weekly_day_chip_fri").assertIsDisplayed().performClick()
+        composeTestRule.waitForIdle()
+        assertEquals(Calendar.FRIDAY, LocalAccountSessionManager.fcmPushSettings.value.weeklySummaryDayOfWeek)
+        composeTestRule.onNodeWithTag("notif_weekly_selected_day_label").assertTextEquals("Friday")
+
+        composeTestRule.onNodeWithTag("notif_weekly_day_chip_sat").assertIsDisplayed().performClick()
+        composeTestRule.waitForIdle()
+        assertEquals(Calendar.SATURDAY, LocalAccountSessionManager.fcmPushSettings.value.weeklySummaryDayOfWeek)
+        composeTestRule.onNodeWithTag("notif_weekly_selected_day_label").assertTextEquals("Saturday")
+
+        composeTestRule.onNodeWithTag("household_tab_list")
+            .performScrollToNode(hasTestTag("notif_monthly_end_of_month_badge"))
+        composeTestRule.onNodeWithTag("notif_monthly_end_of_month_badge").assertIsDisplayed()
+
+        LocalAccountSessionManager.updateFcmPushSettings(app, FcmPushSettings())
+    }
+
+    @Test
+    fun `test CustomDateRangePickerModal renders compact non-overlapping single-line headline`() {
+        val start = Calendar.getInstance().apply {
+            set(2026, Calendar.NOVEMBER, 1, 0, 0, 0)
+            set(Calendar.MILLISECOND, 0)
+        }.timeInMillis
+        val end = Calendar.getInstance().apply {
+            set(2026, Calendar.NOVEMBER, 23, 23, 59, 59)
+            set(Calendar.MILLISECOND, 0)
+        }.timeInMillis
+
+        composeTestRule.setContent {
+            OneFamilyTheme {
+                com.example.ui.components.CustomDateRangePickerModal(
+                    initialStartMillis = start,
+                    initialEndMillis = end,
+                    onDismiss = {},
+                    onApplyRange = { _, _ -> }
+                )
+            }
+        }
+        composeTestRule.waitForIdle()
+
+        composeTestRule.onNodeWithTag("custom_date_range_picker_dialog").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("custom_date_range_headline").assertIsDisplayed()
+        val headlineBounds = composeTestRule.onNodeWithTag("custom_date_range_headline")
+            .fetchSemanticsNode().boundsInRoot
+        assertTrue(
+            "Expected CustomDateRangePickerModal headline to remain single-line and compact, height=${headlineBounds.height}",
+            headlineBounds.height > 0f && headlineBounds.height < 120f
+        )
     }
 }
 

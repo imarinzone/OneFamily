@@ -86,15 +86,19 @@ enum class DateRangePreset(val label: String) {
     CUSTOM("Custom Range")
 }
 
-enum class SmsSyncPeriodOption(val label: String) {
-    THIS_MONTH("This Month"),
-    LAST_30_DAYS("Last 30 Days"),
-    LAST_90_DAYS("Last 3 Months"),
-    LAST_180_DAYS("Last 6 Months"),
-    CURRENT_FY("This FY"),
-    LAST_365_DAYS("Last 1 Year"),
-    ALL_TIME("All Time"),
-    CUSTOM("Custom Range");
+enum class SmsSyncPeriodOption(
+    val label: String,
+    val shortLabel: String = label
+) {
+    LAST_24_HOURS("Last 24 Hours", "24h"),
+    THIS_MONTH("This Month", "Month"),
+    LAST_30_DAYS("Last 30 Days", "30d"),
+    LAST_90_DAYS("Last 3 Months", "3m"),
+    LAST_180_DAYS("Last 6 Months", "6m"),
+    CURRENT_FY("This FY", "FY"),
+    LAST_365_DAYS("Last 1 Year", "1y"),
+    ALL_TIME("All Time", "All"),
+    CUSTOM("Custom Range", "Custom");
 
     fun computeBoundsMillis(
         customRange: Pair<Long, Long>? = null,
@@ -118,6 +122,7 @@ enum class SmsSyncPeriodOption(val label: String) {
         }
 
         return when (this) {
+            LAST_24_HOURS -> (referenceMillis - 24L * 3_600_000L) to referenceMillis
             ALL_TIME -> null to null
             THIS_MONTH -> dayStart(currentYear, currentMonth, 1) to referenceMillis
             LAST_30_DAYS -> (referenceMillis - 30L * 86_400_000L) to referenceMillis
@@ -140,12 +145,24 @@ enum class SmsSyncPeriodOption(val label: String) {
         referenceMillis: Long = System.currentTimeMillis()
     ): String {
         if (this == ALL_TIME) return "All Time"
+        if (this == LAST_24_HOURS) return "Last 24 Hours"
         val shortFmt = SimpleDateFormat("dd MMM yyyy", Locale.getDefault())
         if (this == CUSTOM) {
             return if (customRange != null) {
                 val lo = minOf(customRange.first, customRange.second)
                 val hi = maxOf(customRange.first, customRange.second)
-                "${shortFmt.format(lo)} – ${shortFmt.format(hi)}"
+                val startCal = Calendar.getInstance().apply { timeInMillis = lo }
+                val endCal = Calendar.getInstance().apply { timeInMillis = hi }
+                val isFullDayRange = startCal.get(Calendar.HOUR_OF_DAY) == 0 &&
+                    startCal.get(Calendar.MINUTE) == 0 &&
+                    endCal.get(Calendar.HOUR_OF_DAY) == 23 &&
+                    endCal.get(Calendar.MINUTE) == 59
+                if (isFullDayRange) {
+                    "${shortFmt.format(lo)} – ${shortFmt.format(hi)}"
+                } else {
+                    val dateTimeFmt = SimpleDateFormat("dd MMM, hh:mm a", Locale.getDefault())
+                    "${dateTimeFmt.format(lo)} – ${dateTimeFmt.format(hi)}"
+                }
             } else {
                 "Pick Dates"
             }
@@ -1567,12 +1584,7 @@ class OneFamilyViewModel(
 
         val filteredUnsorted = periodTransactions.filter(::matchesNonDateFilters)
 
-        val filtered = when (filter.sortOrder) {
-            "OLDEST" -> filteredUnsorted.sortedBy { it.transactionDateMillis }
-            "HIGHEST" -> filteredUnsorted.sortedByDescending { it.amount }
-            "LOWEST" -> filteredUnsorted.sortedBy { it.amount }
-            else -> filteredUnsorted.sortedByDescending { it.transactionDateMillis }
-        }
+        val filtered = sortTransactionsList(filteredUnsorted, filter.sortOrder)
 
         val accountSummaries = buildAccountSpendSummaries(
             savedAccounts = core.accounts,
@@ -1831,23 +1843,51 @@ class OneFamilyViewModel(
         _smsSyncPeriodOption.value = option
     }
 
-    fun selectSmsSyncCustomRange(startMillis: Long, endMillis: Long) {
+    fun selectSmsSyncCustomRange(
+        startMillis: Long,
+        endMillis: Long,
+        preserveExactTime: Boolean = false
+    ) {
         val lo = minOf(startMillis, endMillis)
         val hi = maxOf(startMillis, endMillis)
-        val normalizedStart = Calendar.getInstance().apply {
-            timeInMillis = lo
-            set(Calendar.HOUR_OF_DAY, 0)
-            set(Calendar.MINUTE, 0)
-            set(Calendar.SECOND, 0)
-            set(Calendar.MILLISECOND, 0)
-        }.timeInMillis
-        val normalizedEnd = Calendar.getInstance().apply {
-            timeInMillis = hi
-            set(Calendar.HOUR_OF_DAY, 23)
-            set(Calendar.MINUTE, 59)
-            set(Calendar.SECOND, 59)
-            set(Calendar.MILLISECOND, 999)
-        }.timeInMillis
+        val isRawUtcMidnightPair = (lo % 86_400_000L == 0L) && (hi % 86_400_000L == 0L)
+        val (normalizedStart, normalizedEnd) = if (preserveExactTime || !isRawUtcMidnightPair) {
+            val loCal = Calendar.getInstance().apply { timeInMillis = lo }
+            val hiCal = Calendar.getInstance().apply { timeInMillis = hi }
+            val loHasExplicitTime = loCal.get(Calendar.HOUR_OF_DAY) != 0 || loCal.get(Calendar.MINUTE) != 0
+            val hiHasExplicitTime = hiCal.get(Calendar.HOUR_OF_DAY) != 0 || hiCal.get(Calendar.MINUTE) != 0
+            if (preserveExactTime || loHasExplicitTime || hiHasExplicitTime) {
+                lo to hi
+            } else {
+                val s = Calendar.getInstance().apply {
+                    timeInMillis = lo
+                    set(Calendar.HOUR_OF_DAY, 0)
+                    set(Calendar.MINUTE, 0)
+                    set(Calendar.SECOND, 0)
+                    set(Calendar.MILLISECOND, 0)
+                }.timeInMillis
+                val e = Calendar.getInstance().apply {
+                    timeInMillis = hi
+                    set(Calendar.HOUR_OF_DAY, 23)
+                    set(Calendar.MINUTE, 59)
+                    set(Calendar.SECOND, 59)
+                    set(Calendar.MILLISECOND, 999)
+                }.timeInMillis
+                s to e
+            }
+        } else {
+            val utcStart = Calendar.getInstance(java.util.TimeZone.getTimeZone("UTC")).apply { timeInMillis = lo }
+            val utcEnd = Calendar.getInstance(java.util.TimeZone.getTimeZone("UTC")).apply { timeInMillis = hi }
+            val s = Calendar.getInstance().apply {
+                set(utcStart.get(Calendar.YEAR), utcStart.get(Calendar.MONTH), utcStart.get(Calendar.DAY_OF_MONTH), 0, 0, 0)
+                set(Calendar.MILLISECOND, 0)
+            }.timeInMillis
+            val e = Calendar.getInstance().apply {
+                set(utcEnd.get(Calendar.YEAR), utcEnd.get(Calendar.MONTH), utcEnd.get(Calendar.DAY_OF_MONTH), 23, 59, 59)
+                set(Calendar.MILLISECOND, 999)
+            }.timeInMillis
+            s to e
+        }
         _smsSyncCustomRange.value = normalizedStart to normalizedEnd
         _smsSyncPeriodOption.value = SmsSyncPeriodOption.CUSTOM
     }
@@ -2080,6 +2120,7 @@ class OneFamilyViewModel(
         silentIfEmpty: Boolean = false,
         notifyNewest: Boolean = true,
         overridePeriodOption: SmsSyncPeriodOption? = null,
+        forceRestart: Boolean = false,
         onComplete: (() -> Unit)? = null
     ) {
         if (context != null &&
@@ -2096,9 +2137,23 @@ class OneFamilyViewModel(
             }
             return
         }
-        if (!smsSyncActiveGuard.compareAndSet(false, true)) return
-        smsSyncJob = viewModelScope.launch(Dispatchers.IO) {
+        val previousJobToAwait: Job? = if (forceRestart) {
+            val active = smsSyncJob
+            if (active != null && active.isActive) {
+                active.cancel()
+            }
+            smsSyncActiveGuard.set(true)
+            active
+        } else {
+            if (!smsSyncActiveGuard.compareAndSet(false, true)) return
+            null
+        }
+        val currentRunJob = viewModelScope.launch(Dispatchers.IO) {
             try {
+                if (previousJobToAwait != null) {
+                    runCatching { previousJobToAwait.join() }
+                    smsSyncActiveGuard.set(true)
+                }
                 val configuredReaders = SmsInboxReader.DEFAULT_PARALLEL_READER_THREADS
                 val configuredWriters = SmsInboxReader.DEFAULT_PARALLEL_WRITER_THREADS
                 val configuredBatchSize = SmsInboxReader.DEFAULT_SMS_BATCH_SIZE
@@ -2268,9 +2323,9 @@ class OneFamilyViewModel(
                         readSmsCount = finalTotal.coerceAtLeast(finalRead),
                         savedTransactionsCount = totalImported,
                         statusMessage = if (totalImported > 0) {
-                            "Completed! Read $finalTotal SMS and synced $totalImported transactions."
+                            "Completed! Rechecked $finalTotal SMS (${effectivePeriod.label}) and synced $totalImported transactions."
                         } else {
-                            "Completed! Read $finalTotal SMS messages. All transactions are up to date."
+                            "Completed! Rechecked $finalTotal SMS (${effectivePeriod.label}). All transactions are up to date."
                         }
                     )
                 }
@@ -2305,8 +2360,10 @@ class OneFamilyViewModel(
                     )
                 }
             } finally {
-                smsSyncJob = null
-                smsSyncActiveGuard.set(false)
+                if (smsSyncJob == coroutineContext[Job]) {
+                    smsSyncJob = null
+                    smsSyncActiveGuard.set(false)
+                }
                 if (onComplete != null) {
                     withContext(Dispatchers.Main) {
                         onComplete()
@@ -2314,6 +2371,7 @@ class OneFamilyViewModel(
                 }
             }
         }
+        smsSyncJob = currentRunJob
     }
 
     fun parseCustomOrTemplateSms(
@@ -3238,3 +3296,36 @@ class OneFamilyViewModel(
         _errorMessage.value = rootError.localizedMessage ?: "Sync error occurred."
     }
 }
+
+/**
+ * Deterministic transaction sorting shared across AllTransactionsScreen and AccountDetailScreen.
+ * Supports:
+ * - "LOWEST": Amount Low to High (ties broken by newest date first)
+ * - "HIGHEST": Amount High to Low (ties broken by newest date first)
+ * - "OLDEST": Date Oldest First (ties broken by highest amount first)
+ * - "NEWEST" (default): Date Newest First (ties broken by highest amount first)
+ */
+fun sortTransactionsList(
+    transactions: List<ExpenseTransaction>,
+    sortOrder: String
+): List<ExpenseTransaction> {
+    return when (sortOrder.uppercase()) {
+        "LOWEST" -> transactions.sortedWith(
+            compareBy<ExpenseTransaction> { it.amount }
+                .thenByDescending { it.transactionDateMillis }
+        )
+        "HIGHEST" -> transactions.sortedWith(
+            compareByDescending<ExpenseTransaction> { it.amount }
+                .thenByDescending { it.transactionDateMillis }
+        )
+        "OLDEST" -> transactions.sortedWith(
+            compareBy<ExpenseTransaction> { it.transactionDateMillis }
+                .thenByDescending { it.amount }
+        )
+        else -> transactions.sortedWith(
+            compareByDescending<ExpenseTransaction> { it.transactionDateMillis }
+                .thenByDescending { it.amount }
+        )
+    }
+}
+

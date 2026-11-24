@@ -29,6 +29,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -62,6 +63,7 @@ fun BillingCycleCalendarGrid(
 ) {
     val performHaptic = rememberAppHapticPerformer()
     val clampedSelected = selectedDay.coerceIn(1, 31)
+    var showNativeDatePicker by rememberSaveable { mutableStateOf(false) }
 
     val monthMeta = remember(referenceMillis) {
         val cal = Calendar.getInstance().apply {
@@ -132,6 +134,10 @@ fun BillingCycleCalendarGrid(
                 }
                 Spacer(modifier = Modifier.width(8.dp))
                 Surface(
+                    onClick = {
+                        performHaptic()
+                        showNativeDatePicker = true
+                    },
                     shape = RoundedCornerShape(50),
                     color = MaterialTheme.colorScheme.primaryContainer,
                     modifier = Modifier.testTag("${tagPrefix}_selected_badge")
@@ -142,9 +148,29 @@ fun BillingCycleCalendarGrid(
                         fontWeight = FontWeight.Bold,
                         color = MaterialTheme.colorScheme.onPrimaryContainer,
                         maxLines = 1,
-                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
                     )
                 }
+            }
+
+            if (showNativeDatePicker) {
+                val initialDateMs = remember(clampedSelected, referenceMillis) {
+                    Calendar.getInstance().apply {
+                        timeInMillis = referenceMillis
+                        set(
+                            Calendar.DAY_OF_MONTH,
+                            clampedSelected.coerceAtMost(getActualMaximum(Calendar.DAY_OF_MONTH))
+                        )
+                    }.timeInMillis
+                }
+                AppDatePickerDialog(
+                    initialDateMillis = initialDateMs,
+                    onDismiss = { showNativeDatePicker = false },
+                    onConfirmDate = { _, _, dayOfMonth, _ ->
+                        performHaptic()
+                        onSelectDay(dayOfMonth.coerceIn(1, 31))
+                    }
+                )
             }
 
             // Weekday Headers (S M T W T F S)

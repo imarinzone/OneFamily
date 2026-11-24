@@ -90,6 +90,7 @@ import com.example.ui.components.BillingCycleCalendarGrid
 import com.example.ui.components.CircularTonalIconButton
 import com.example.ui.components.ExpenseTransactionItemCard
 import com.example.ui.components.PerforatedSectionHeader
+import com.example.ui.components.TransactionSortSelectorButton
 import com.example.ui.components.formatCompactCurrency
 import com.example.ui.components.formatCurrency
 import com.example.ui.theme.BudgetDangerCoral
@@ -102,6 +103,7 @@ import com.example.ui.theme.rememberAppHapticPerformer
 import com.example.ui.viewmodel.AccountLimitPeriodUtils
 import com.example.ui.viewmodel.AccountSpendSummary
 import com.example.ui.viewmodel.YearMonthPeriod
+import com.example.ui.viewmodel.sortTransactionsList
 
 enum class AccountDetailPeriodMode {
     MONTHLY,
@@ -158,6 +160,7 @@ fun AccountDetailScreen(
     var selectedMonthOffset by rememberSaveable(account.id) { mutableIntStateOf(0) }
     var selectedCycleOffset by rememberSaveable(account.id) { mutableIntStateOf(0) }
     var selectedTypeFilter by rememberSaveable(account.id) { mutableStateOf("All") }
+    var selectedSortOrder by rememberSaveable(account.id) { mutableStateOf("NEWEST") }
 
     var showCycleCalendarDialog by remember { mutableStateOf(false) }
     var showLimitEditDialog by remember { mutableStateOf(false) }
@@ -230,13 +233,14 @@ fun AccountDetailScreen(
         }
     }
 
-    val filteredPeriodTransactions = remember(periodTransactions, selectedTypeFilter) {
-        when (selectedTypeFilter.uppercase()) {
+    val filteredPeriodTransactions = remember(periodTransactions, selectedTypeFilter, selectedSortOrder) {
+        val typeFiltered = when (selectedTypeFilter.uppercase()) {
             "EXPENSE" -> periodTransactions.filter { !isIncomeTx(it) && !it.isExcludedFromExpense }
             "INCOME" -> periodTransactions.filter { isIncomeTx(it) && !it.isExcludedFromExpense }
             "EXCLUDED" -> periodTransactions.filter { it.isExcludedFromExpense }
             else -> periodTransactions
         }
+        sortTransactionsList(typeFiltered, selectedSortOrder)
     }
 
     val periodSpent = remember(periodTransactions) {
@@ -919,7 +923,14 @@ fun AccountDetailScreen(
                 }
                 PerforatedSectionHeader(
                     title = "Account Transactions",
-                    countBadge = "${filteredPeriodTransactions.size}"
+                    countBadge = "${filteredPeriodTransactions.size}",
+                    trailingContent = {
+                        TransactionSortSelectorButton(
+                            selectedSortOrder = selectedSortOrder,
+                            onSelectSortOrder = { selectedSortOrder = it },
+                            testTagPrefix = "account_detail_sort"
+                        )
+                    }
                 )
             }
         }

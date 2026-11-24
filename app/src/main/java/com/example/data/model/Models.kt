@@ -217,8 +217,8 @@ enum class NotificationSubCategory(
     BUDGET_LIMITS("Budget Alerts", "Category & monthly budget warnings"),
     CREDIT_CARD_LIMIT("Card Limits", "Credit card spend limit threshold warnings"),
     DAILY_SUMMARY("Daily Summary", "Daily total spend recap at your scheduled time"),
-    WEEKLY_SUMMARY("Weekly Summary", "Weekly total spend recap at your scheduled time"),
-    MONTHLY_SUMMARY("Monthly Summary", "Monthly total spend recap at your scheduled time");
+    WEEKLY_SUMMARY("Weekly Summary", "End-of-week spend report on your chosen day"),
+    MONTHLY_SUMMARY("Monthly Summary", "End-of-month spend report on the last day of the month");
 
     fun isSpendSummaryCategory(): Boolean =
         this == DAILY_SUMMARY || this == WEEKLY_SUMMARY || this == MONTHLY_SUMMARY
@@ -238,6 +238,7 @@ data class FcmPushSettings(
     val dailySummaryMinute: Int = 0,
     val weeklySummaryHour: Int = 10,
     val weeklySummaryMinute: Int = 0,
+    val weeklySummaryDayOfWeek: Int = java.util.Calendar.SUNDAY,
     val monthlySummaryHour: Int = 9,
     val monthlySummaryMinute: Int = 0,
     val summaryNotificationHour: Int = dailySummaryHour,
@@ -305,6 +306,17 @@ data class FcmPushSettings(
         }
     }
 
+    fun withWeeklySummaryDayOfWeek(dayOfWeek: Int): FcmPushSettings {
+        val validDay = dayOfWeek.coerceIn(java.util.Calendar.SUNDAY, java.util.Calendar.SATURDAY)
+        return copy(weeklySummaryDayOfWeek = validDay)
+    }
+
+    fun formatWeeklySummaryDayOfWeek(): String =
+        formatDayOfWeekFull(weeklySummaryDayOfWeek)
+
+    fun formatWeeklySummaryDayShort(): String =
+        formatDayOfWeekShort(weeklySummaryDayOfWeek)
+
     fun formatSummaryTime(subCategory: NotificationSubCategory): String {
         val (h, m) = getSummaryTime(subCategory)
         return formatClock12Hour(h, m)
@@ -316,6 +328,36 @@ data class FcmPushSettings(
     )
 
     companion object {
+        val WEEKLY_DAY_OPTIONS: List<Triple<Int, String, String>> = listOf(
+            Triple(java.util.Calendar.MONDAY, "Mon", "Monday"),
+            Triple(java.util.Calendar.TUESDAY, "Tue", "Tuesday"),
+            Triple(java.util.Calendar.WEDNESDAY, "Wed", "Wednesday"),
+            Triple(java.util.Calendar.THURSDAY, "Thu", "Thursday"),
+            Triple(java.util.Calendar.FRIDAY, "Fri", "Friday"),
+            Triple(java.util.Calendar.SATURDAY, "Sat", "Saturday"),
+            Triple(java.util.Calendar.SUNDAY, "Sun", "Sunday")
+        )
+
+        fun formatDayOfWeekFull(dayOfWeek: Int): String = when (dayOfWeek) {
+            java.util.Calendar.MONDAY -> "Monday"
+            java.util.Calendar.TUESDAY -> "Tuesday"
+            java.util.Calendar.WEDNESDAY -> "Wednesday"
+            java.util.Calendar.THURSDAY -> "Thursday"
+            java.util.Calendar.FRIDAY -> "Friday"
+            java.util.Calendar.SATURDAY -> "Saturday"
+            else -> "Sunday"
+        }
+
+        fun formatDayOfWeekShort(dayOfWeek: Int): String = when (dayOfWeek) {
+            java.util.Calendar.MONDAY -> "Mon"
+            java.util.Calendar.TUESDAY -> "Tue"
+            java.util.Calendar.WEDNESDAY -> "Wed"
+            java.util.Calendar.THURSDAY -> "Thu"
+            java.util.Calendar.FRIDAY -> "Fri"
+            java.util.Calendar.SATURDAY -> "Sat"
+            else -> "Sun"
+        }
+
         fun formatClock12Hour(hour: Int, minute: Int): String {
             val h = hour.coerceIn(0, 23)
             val m = minute.coerceIn(0, 59)

@@ -149,6 +149,7 @@ import com.example.data.model.WallpaperDensity
 import com.example.data.model.WallpaperPatternStyle
 import com.example.ui.viewmodel.AccountLimitPeriodUtils
 import com.example.ui.components.AccountsCarouselStrip
+import com.example.ui.components.AppDatePickerDialog
 import com.example.ui.components.AxioMonthlySpendBarStrip
 import com.example.ui.components.CategoryBadgeGlyph
 import com.example.ui.components.CategoryDonutChart
@@ -175,6 +176,7 @@ import com.example.ui.components.TransactionCategoriesSubTabContent
 import com.example.ui.components.TransactionMerchantsSubTabContent
 import com.example.ui.components.TransactionPageSubTab
 import com.example.ui.components.TransactionPageSubTabBar
+import com.example.ui.components.TransactionSortSelectorButton
 import com.example.ui.components.categoryIcon
 import com.example.ui.components.categoryWheelLongPressGesture
 import com.example.ui.components.formatCurrency
@@ -1359,7 +1361,16 @@ fun HomeTabScreen(
     if (showAddBillReminderDialog) {
         var billTitle by rememberSaveable { mutableStateOf("") }
         var billAmount by rememberSaveable { mutableStateOf("") }
-        var billDueDay by rememberSaveable { mutableStateOf("5") }
+        var billDueDay by rememberSaveable { mutableStateOf(5) }
+        var billDueDateMillis by rememberSaveable {
+            mutableStateOf(
+                java.util.Calendar.getInstance().apply {
+                    set(java.util.Calendar.DAY_OF_MONTH, 5.coerceAtMost(getActualMaximum(java.util.Calendar.DAY_OF_MONTH)))
+                }.timeInMillis
+            )
+        }
+        var showBillDueDatePicker by rememberSaveable { mutableStateOf(false) }
+
         AlertDialog(
             onDismissRequest = { showAddBillReminderDialog = false },
             title = { Text("Add Bill Reminder", fontWeight = FontWeight.Bold) },
@@ -1381,25 +1392,68 @@ fun HomeTabScreen(
                         singleLine = true,
                         keyboardOptions = KeyboardOptions(
                             keyboardType = KeyboardType.Number,
-                            imeAction = ImeAction.Next
+                            imeAction = ImeAction.Done
                         ),
                         modifier = Modifier
                             .fillMaxWidth()
                             .testTag("bill_reminder_amount_input")
                     )
-                    OutlinedTextField(
-                        value = billDueDay,
-                        onValueChange = { billDueDay = it.filter { ch -> ch.isDigit() }.take(2) },
-                        label = { Text("Due Day of Month (1 - 31)") },
-                        singleLine = true,
-                        keyboardOptions = KeyboardOptions(
-                            keyboardType = KeyboardType.Number,
-                            imeAction = ImeAction.Done
-                        ),
+                    Surface(
+                        onClick = { showBillDueDatePicker = true },
+                        shape = RoundedCornerShape(14.dp),
+                        color = MaterialTheme.colorScheme.surfaceContainerHigh,
                         modifier = Modifier
                             .fillMaxWidth()
-                            .testTag("bill_reminder_due_day_input")
-                    )
+                            .heightIn(min = 52.dp)
+                            .testTag("bill_reminder_due_day_picker_button")
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 14.dp, vertical = 12.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.CalendarMonth,
+                                    contentDescription = "Pick due date",
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                                Column {
+                                    Text(
+                                        text = "Monthly Due Date",
+                                        style = MaterialTheme.typography.labelMedium,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                    Text(
+                                        text = "Day $billDueDay of every month",
+                                        style = MaterialTheme.typography.titleSmall,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = MaterialTheme.colorScheme.onSurface,
+                                        modifier = Modifier.testTag("bill_reminder_due_day_value")
+                                    )
+                                }
+                            }
+                            Surface(
+                                shape = RoundedCornerShape(50),
+                                color = MaterialTheme.colorScheme.primaryContainer
+                            ) {
+                                Text(
+                                    text = "Pick Date",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
+                                )
+                            }
+                        }
+                    }
                 }
             },
             confirmButton = {
@@ -1412,7 +1466,7 @@ fun HomeTabScreen(
                                 reminder = BillReminder(
                                     title = titleClean,
                                     amount = billAmount.toDoubleOrNull() ?: 0.0,
-                                    dueDayOfMonth = (billDueDay.toIntOrNull() ?: 1).coerceIn(1, 31)
+                                    dueDayOfMonth = billDueDay.coerceIn(1, 31)
                                 )
                             )
                             showAddBillReminderDialog = false
@@ -1429,6 +1483,17 @@ fun HomeTabScreen(
                 }
             }
         )
+
+        if (showBillDueDatePicker) {
+            AppDatePickerDialog(
+                initialDateMillis = billDueDateMillis,
+                onDismiss = { showBillDueDatePicker = false },
+                onConfirmDate = { _, _, dayOfMonth, localStartMillis ->
+                    billDueDay = dayOfMonth.coerceIn(1, 31)
+                    billDueDateMillis = localStartMillis
+                }
+            )
+        }
     }
 
     if (editingBudgetForCategory != null) {
@@ -1794,13 +1859,16 @@ fun AllTransactionsScreen(
                                             },
                                             label = {
                                                 Text(
-                                                    if (preset == DateRangePreset.CUSTOM &&
+                                                    text = if (preset == DateRangePreset.CUSTOM &&
                                                         uiState.selectedDateRangePreset == DateRangePreset.CUSTOM
                                                     ) {
                                                         uiState.periodLabel
                                                     } else {
                                                         preset.label
-                                                    }
+                                                    },
+                                                    maxLines = 1,
+                                                    softWrap = false,
+                                                    overflow = TextOverflow.Ellipsis
                                                 )
                                             },
                                             modifier = Modifier.testTag("all_tx_date_chip_${preset.name.lowercase()}")
@@ -1842,11 +1910,19 @@ fun AllTransactionsScreen(
                                             label = { Text(if (mode == "All") "All Modes" else mode) }
                                         )
                                     }
+                                }
+
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .horizontalScroll(rememberScrollState()),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
                                     listOf(
+                                        "LOWEST" to "Low → High",
+                                        "HIGHEST" to "High → Low",
                                         "NEWEST" to "Newest",
-                                        "OLDEST" to "Oldest",
-                                        "HIGHEST" to "Highest $currency",
-                                        "LOWEST" to "Lowest $currency"
+                                        "OLDEST" to "Oldest"
                                     ).forEach { (sortKey, sortLabel) ->
                                         FilterChip(
                                             selected = uiState.selectedSortOrder == sortKey,
@@ -1854,7 +1930,8 @@ fun AllTransactionsScreen(
                                                 performHaptic()
                                                 onSelectSortOrder(sortKey)
                                             },
-                                            label = { Text(sortLabel) }
+                                            label = { Text(sortLabel) },
+                                            modifier = Modifier.testTag("all_tx_sort_chip_${sortKey.lowercase()}")
                                         )
                                     }
                                 }
@@ -1948,6 +2025,13 @@ fun AllTransactionsScreen(
                         PerforatedSectionHeader(
                             title = "${uiState.selectedCategoryFilter} Transactions",
                             countBadge = "${uiState.filteredExpenses.size}",
+                            trailingContent = {
+                                TransactionSortSelectorButton(
+                                    selectedSortOrder = uiState.selectedSortOrder,
+                                    onSelectSortOrder = onSelectSortOrder,
+                                    testTagPrefix = "cat_tx_sort"
+                                )
+                            },
                             modifier = Modifier.padding(top = 4.dp, bottom = 4.dp)
                         )
                     }
@@ -2035,6 +2119,13 @@ fun AllTransactionsScreen(
                         PerforatedSectionHeader(
                             title = "${uiState.selectedMerchantFilter} Transactions",
                             countBadge = "${uiState.filteredExpenses.size}",
+                            trailingContent = {
+                                TransactionSortSelectorButton(
+                                    selectedSortOrder = uiState.selectedSortOrder,
+                                    onSelectSortOrder = onSelectSortOrder,
+                                    testTagPrefix = "merchant_tx_sort"
+                                )
+                            },
                             modifier = Modifier.padding(top = 4.dp, bottom = 4.dp)
                         )
                     }
@@ -2199,6 +2290,13 @@ fun AllTransactionsScreen(
                             "Receipts Ledger"
                         },
                         countBadge = "${uiState.filteredExpenses.size}",
+                        trailingContent = {
+                            TransactionSortSelectorButton(
+                                selectedSortOrder = uiState.selectedSortOrder,
+                                onSelectSortOrder = onSelectSortOrder,
+                                testTagPrefix = "all_tx_sort"
+                            )
+                        },
                         modifier = Modifier.padding(bottom = 4.dp)
                     )
                 }
@@ -2505,6 +2603,7 @@ fun HouseholdTabScreen(
                 smsSyncPeriodOption = smsSyncPeriodOption,
                 smsSyncCustomRange = smsSyncCustomRange,
                 onSelectSmsSyncPeriod = onSelectSmsSyncPeriod,
+                onSelectSmsSyncCustomRange = onSelectSmsSyncCustomRange,
                 onOpenCustomRangePicker = { showSmsCustomRangePicker = true },
                 onScanSmsClick = onScanSmsClick,
                 onBackClick = { selectedCategory = null }

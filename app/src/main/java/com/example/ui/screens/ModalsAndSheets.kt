@@ -156,16 +156,19 @@ import com.example.data.model.ExpenseCategories
 import com.example.data.model.ExpenseTransaction
 import com.example.data.model.FinancialAccount
 import com.example.data.sms.SmsInboxReader
+import com.example.ui.components.AppTimePickerDialog
 import com.example.ui.components.CategoryBadgeGlyph
 import com.example.ui.components.CircularTonalIconButton
 import com.example.ui.components.CustomDateRangePickerModal
 import com.example.ui.components.M3CheckmarkSwitch
 import com.example.ui.components.ReceiptDashedDividerLine
 import com.example.ui.components.ReceiptTicketCard
+import com.example.ui.components.SmsSyncPeriodExpressiveSlider
 import com.example.ui.components.SquircleIconBadge
 import com.example.ui.components.ThemeModeSelectorBar
 import com.example.ui.components.categoryIcon
 import com.example.ui.components.formatCurrency
+import com.example.ui.components.localMillisToUtcPickerDateMillis
 import com.example.ui.components.rememberCustomCategoryEmojis
 import com.example.ui.theme.AppThemeMode
 import com.example.ui.theme.BudgetSafeGreen
@@ -1883,10 +1886,13 @@ private fun InteractiveReceiptSheet(
     }
 
     if (showDatePickerModal) {
-        val datePickerState = rememberDatePickerState(initialSelectedDateMillis = txDateMillis)
+        val datePickerState = rememberDatePickerState(
+            initialSelectedDateMillis = localMillisToUtcPickerDateMillis(txDateMillis)
+        )
         DatePickerDialog(
             onDismissRequest = { showDatePickerModal = false },
             shape = RoundedCornerShape(28.dp),
+            modifier = Modifier.testTag("app_date_picker_dialog"),
             confirmButton = {
                 Button(
                     onClick = {
@@ -1899,13 +1905,17 @@ private fun InteractiveReceiptSheet(
                         }
                         showDatePickerModal = false
                     },
-                    shape = RoundedCornerShape(50)
+                    shape = RoundedCornerShape(50),
+                    modifier = Modifier.testTag("date_picker_confirm_button")
                 ) {
                     Text("Apply")
                 }
             },
             dismissButton = {
-                TextButton(onClick = { showDatePickerModal = false }) {
+                TextButton(
+                    onClick = { showDatePickerModal = false },
+                    modifier = Modifier.testTag("date_picker_dismiss_button")
+                ) {
                     Text("Cancel")
                 }
             }
@@ -1918,42 +1928,18 @@ private fun InteractiveReceiptSheet(
         val cal = remember(txDateMillis) {
             Calendar.getInstance().apply { timeInMillis = txDateMillis }
         }
-        val timePickerState = rememberTimePickerState(
+        AppTimePickerDialog(
             initialHour = cal.get(Calendar.HOUR_OF_DAY),
             initialMinute = cal.get(Calendar.MINUTE),
-            is24Hour = false
-        )
-        AlertDialog(
-            onDismissRequest = { showTimePickerModal = false },
-            shape = RoundedCornerShape(28.dp),
-            containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
-            confirmButton = {
-                Button(
-                    onClick = {
-                        txDateMillis = mergeSelectedTimePreservingDate(
-                            hourOfDay = timePickerState.hour,
-                            minute = timePickerState.minute,
-                            currentTimestampMillis = txDateMillis
-                        )
-                        showTimePickerModal = false
-                    },
-                    shape = RoundedCornerShape(50)
-                ) {
-                    Text("Apply")
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { showTimePickerModal = false }) {
-                    Text("Cancel")
-                }
-            },
-            text = {
-                Box(
-                    modifier = Modifier.fillMaxWidth(),
-                    contentAlignment = Alignment.Center
-                ) {
-                    TimePicker(state = timePickerState)
-                }
+            title = "Transaction Time",
+            is24Hour = false,
+            onDismiss = { showTimePickerModal = false },
+            onConfirmTime = { hour, minute ->
+                txDateMillis = mergeSelectedTimePreservingDate(
+                    hourOfDay = hour,
+                    minute = minute,
+                    currentTimestampMillis = txDateMillis
+                )
             }
         )
     }
@@ -3846,10 +3832,17 @@ fun FirstTimeSmsSyncScreen(
                 (viewportHeight * 0.62f).coerceAtLeast(minScannerHeight)
             }
 
+            val contentScrollState = rememberScrollState()
+            LaunchedEffect(hasStartedOrFinished) {
+                if (hasStartedOrFinished) {
+                    contentScrollState.scrollTo(0)
+                }
+            }
+
             Column(
                 modifier = Modifier
                     .fillMaxSize()
-                    .verticalScroll(rememberScrollState())
+                    .verticalScroll(contentScrollState)
                     .padding(
                         horizontal = dimens.horizontalPadding * 1.15f,
                         vertical = outerVerticalPad
@@ -3982,105 +3975,18 @@ fun FirstTimeSmsSyncScreen(
 
                                 ReceiptDashedDividerLine()
 
-                                // SMS Fetch Period Selector
-                                Column(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .testTag("sms_sync_period_selector"),
-                                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                                ) {
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.SpaceBetween,
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        Row(
-                                            verticalAlignment = Alignment.CenterVertically,
-                                            horizontalArrangement = Arrangement.spacedBy(6.dp)
-                                        ) {
-                                            Icon(
-                                                imageVector = Icons.Default.CalendarMonth,
-                                                contentDescription = "Fetch SMS Period",
-                                                tint = MaterialTheme.colorScheme.primary,
-                                                modifier = Modifier.size(16.dp)
-                                            )
-                                            Text(
-                                                text = "Fetch SMS From",
-                                                style = MaterialTheme.typography.labelLarge,
-                                                fontWeight = FontWeight.Bold,
-                                                color = MaterialTheme.colorScheme.onSurface
-                                            )
-                                        }
-                                        Surface(
-                                            shape = RoundedCornerShape(50),
-                                            color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.72f)
-                                        ) {
-                                            Text(
-                                                text = selectedPeriodOption.formatRangeSummary(customDateRange),
-                                                style = MaterialTheme.typography.labelSmall.copy(fontFamily = ReceiptMonoFontFamily),
-                                                fontWeight = FontWeight.Bold,
-                                                color = MaterialTheme.colorScheme.onPrimaryContainer,
-                                                modifier = Modifier
-                                                    .padding(horizontal = 10.dp, vertical = 4.dp)
-                                                    .testTag("sms_sync_selected_period_label")
-                                            )
-                                        }
-                                    }
-
-                                    Row(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .horizontalScroll(rememberScrollState()),
-                                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        SmsSyncPeriodOption.entries.forEach { option ->
-                                            val isSelected = selectedPeriodOption == option
-                                            FilterChip(
-                                                selected = isSelected,
-                                                onClick = {
-                                                    performHaptic()
-                                                    if (option == SmsSyncPeriodOption.CUSTOM) {
-                                                        showCustomRangePicker = true
-                                                    } else {
-                                                        onSelectPeriodOption(option)
-                                                    }
-                                                },
-                                                label = {
-                                                    Text(
-                                                        text = if (option == SmsSyncPeriodOption.CUSTOM && customDateRange != null) {
-                                                            option.formatRangeSummary(customDateRange)
-                                                        } else {
-                                                            option.label
-                                                        },
-                                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
-                                                    )
-                                                },
-                                                leadingIcon = if (isSelected) {
-                                                    {
-                                                        Icon(
-                                                            imageVector = Icons.Default.Check,
-                                                            contentDescription = null,
-                                                            modifier = Modifier.size(FilterChipDefaults.IconSize)
-                                                        )
-                                                    }
-                                                } else if (option == SmsSyncPeriodOption.CUSTOM) {
-                                                    {
-                                                        Icon(
-                                                            imageVector = Icons.Default.CalendarMonth,
-                                                            contentDescription = null,
-                                                            modifier = Modifier.size(FilterChipDefaults.IconSize)
-                                                        )
-                                                    }
-                                                } else {
-                                                    null
-                                                },
-                                                shape = RoundedCornerShape(50),
-                                                modifier = Modifier.testTag("sms_period_chip_${option.name.lowercase()}")
-                                            )
-                                        }
-                                    }
-                                }
+                                // Material 3 Expressive SMS Fetch Period Slider
+                                SmsSyncPeriodExpressiveSlider(
+                                    selectedPeriod = selectedPeriodOption,
+                                    customRange = customDateRange,
+                                    onSelectPeriod = onSelectPeriodOption,
+                                    onOpenCustomRangePicker = { showCustomRangePicker = true },
+                                    onUpdateCustomRange = onSelectCustomDateRange,
+                                    containerTag = "sms_sync_period_selector",
+                                    selectedLabelTag = "sms_sync_selected_period_label",
+                                    sliderTag = "sms_period_slider",
+                                    chipTagPrefix = "sms_period_chip"
+                                )
                             }
                         }
                     }
@@ -4821,9 +4727,78 @@ private fun TransactionReadingAnimationCard(
     }
 }
 
+private val DUPLICATE_LINK_STOP_WORDS = setOf(
+    "unknown", "expense", "income", "transaction", "transfer", "payment", "payments",
+    "upi", "bank", "card", "wallet", "cash", "pay", "online", "store", "shop", "mart",
+    "india", "private", "limited", "pvt", "ltd", "bill", "recharge", "merchant", "pos"
+)
+
+private fun normalizeMerchantForDuplicateLink(rawTitle: String): String =
+    rawTitle.trim()
+        .replace(Regex("[^a-zA-Z0-9\\s]"), " ")
+        .replace(Regex("\\s+"), " ")
+        .trim()
+        .lowercase(Locale.US)
+
+internal fun isSameMerchantForDuplicateLink(
+    firstTitle: String,
+    secondTitle: String
+): Boolean {
+    val normA = normalizeMerchantForDuplicateLink(firstTitle)
+    val normB = normalizeMerchantForDuplicateLink(secondTitle)
+    if (normA.isBlank() || normB.isBlank()) return false
+    if (normA in DUPLICATE_LINK_STOP_WORDS || normB in DUPLICATE_LINK_STOP_WORDS) return false
+    if (normA == normB) return true
+    if (normA.length >= 3 && normB.startsWith("$normA ")) return true
+    if (normB.length >= 3 && normA.startsWith("$normB ")) return true
+    val firstTokenA = normA.substringBefore(' ')
+    val firstTokenB = normB.substringBefore(' ')
+    return firstTokenA.length >= 4 &&
+        firstTokenA == firstTokenB &&
+        firstTokenA !in DUPLICATE_LINK_STOP_WORDS
+}
+
 /**
- * Link Duplicate SMS / Transaction Dialog (`LinkDuplicateTransactionDialog`):
+ * Ranks duplicate/refund candidate transactions for [sourceTransaction] in strict priority:
+ * 1. Latest transaction from the same merchant first.
+ * 2. Transactions of that same denomination/amount from the same merchant (newest first).
+ * 3. All remaining recent transactions ordered by newest date/time first.
+ */
+internal fun rankDuplicateOrRefundCandidates(
+    sourceTransaction: ExpenseTransaction,
+    candidates: List<ExpenseTransaction>
+): List<ExpenseTransaction> {
+    val eligible = candidates.filter { it.id != sourceTransaction.id }
+    if (eligible.isEmpty()) return emptyList()
+
+    val sameMerchantList = eligible.filter {
+        isSameMerchantForDuplicateLink(it.title, sourceTransaction.title)
+    }
+    val latestSameMerchantTx = sameMerchantList.maxWithOrNull(
+        compareBy<ExpenseTransaction> { it.transactionDateMillis }
+            .thenBy { kotlin.math.abs(it.amount - sourceTransaction.amount) < 0.01 }
+            .thenBy { -kotlin.math.abs(it.amount - sourceTransaction.amount) }
+    )
+    val latestSameMerchantId = latestSameMerchantTx?.id
+
+    return eligible.sortedWith(
+        compareBy<ExpenseTransaction> { tx ->
+            val isSameMerchant = isSameMerchantForDuplicateLink(tx.title, sourceTransaction.title)
+            val isSameAmount = kotlin.math.abs(tx.amount - sourceTransaction.amount) < 0.01
+            when {
+                tx.id == latestSameMerchantId -> 0
+                isSameMerchant && isSameAmount -> 1
+                else -> 2
+            }
+        }.thenByDescending { it.transactionDateMillis }
+            .thenBy { kotlin.math.abs(it.amount - sourceTransaction.amount) }
+    )
+}
+
+/**
+ * Link Duplicate / Refund SMS & Transaction Dialog (`LinkDuplicateTransactionDialog`):
  * - Displays BOTH full untruncated Original SMS and Selected Target SMS on top in monospace receipt font.
+ * - Prioritizes: (1) Latest same-merchant tx, (2) Same denomination amount from same merchant, (3) All recent txs.
  * - Candidate rows below show ONLY Merchant, DateTime, Account, and Amount in a connected M3 card stack.
  */
 @Composable
@@ -4837,6 +4812,7 @@ fun LinkDuplicateTransactionDialog(
     val dimens = LocalAppDimens.current
     val performHaptic = rememberAppHapticPerformer()
     var searchQuery by remember { mutableStateOf("") }
+    var showAllRecent by remember { mutableStateOf(false) }
 
     val candidates = remember(sourceTransaction.id, allTransactions, searchQuery) {
         val others = allTransactions.filter { it.id != sourceTransaction.id }
@@ -4850,17 +4826,10 @@ fun LinkDuplicateTransactionDialog(
                     tx.amount.toLong().toString().contains(q)
             }
         }
-        filtered.sortedWith(
-            compareByDescending<ExpenseTransaction> {
-                kotlin.math.abs(it.amount - sourceTransaction.amount) < 0.01
-            }.thenByDescending {
-                kotlin.math.abs(it.transactionDateMillis - sourceTransaction.transactionDateMillis) <= 48L * 3_600_000L
-            }.thenBy {
-                kotlin.math.abs(it.amount - sourceTransaction.amount)
-            }.thenBy {
-                kotlin.math.abs(it.transactionDateMillis - sourceTransaction.transactionDateMillis)
-            }
-        ).take(25)
+        rankDuplicateOrRefundCandidates(
+            sourceTransaction = sourceTransaction,
+            candidates = filtered
+        )
     }
 
     var selectedTargetId by remember(candidates) {
@@ -4932,12 +4901,12 @@ fun LinkDuplicateTransactionDialog(
                                 Spacer(modifier = Modifier.width(12.dp))
                                 Column {
                                     Text(
-                                        text = "Link Duplicate SMS / Tx",
+                                        text = "Link Duplicate / Refund",
                                         style = MaterialTheme.typography.titleLarge,
                                         fontWeight = FontWeight.Bold
                                     )
                                     Text(
-                                        text = "Verify both raw SMS messages before linking",
+                                        text = "Same merchant latest, matching amount, then recent",
                                         style = MaterialTheme.typography.labelSmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
@@ -5183,7 +5152,11 @@ fun LinkDuplicateTransactionDialog(
                                 fontWeight = FontWeight.Bold
                             )
 
-                            val visibleCandidates = candidates.take(8)
+                            val visibleCandidates = if (showAllRecent || searchQuery.isNotBlank()) {
+                                candidates.take(60)
+                            } else {
+                                candidates.take(20)
+                            }
                             Column(
                                 modifier = Modifier.fillMaxWidth(),
                                 verticalArrangement = Arrangement.spacedBy(3.dp)
@@ -5245,6 +5218,21 @@ fun LinkDuplicateTransactionDialog(
                                             )
                                         }
                                     }
+                                }
+                            }
+
+                            if (!showAllRecent && searchQuery.isBlank() && candidates.size > visibleCandidates.size) {
+                                OutlinedButton(
+                                    onClick = {
+                                        performHaptic()
+                                        showAllRecent = true
+                                    },
+                                    shape = RoundedCornerShape(50),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .testTag("link_show_all_recent_button")
+                                ) {
+                                    Text("Show All Recent (${candidates.size})")
                                 }
                             }
 

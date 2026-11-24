@@ -429,6 +429,10 @@ object LocalAccountSessionManager {
             dailySummaryMinute = dailyM,
             weeklySummaryHour = settings.weeklySummaryHour.coerceIn(0, 23),
             weeklySummaryMinute = settings.weeklySummaryMinute.coerceIn(0, 59),
+            weeklySummaryDayOfWeek = settings.weeklySummaryDayOfWeek.coerceIn(
+                java.util.Calendar.SUNDAY,
+                java.util.Calendar.SATURDAY
+            ),
             monthlySummaryHour = settings.monthlySummaryHour.coerceIn(0, 23),
             monthlySummaryMinute = settings.monthlySummaryMinute.coerceIn(0, 59),
             summaryNotificationHour = dailyH,
@@ -449,6 +453,7 @@ object LocalAccountSessionManager {
             put("dailySummaryMinute", clamped.dailySummaryMinute)
             put("weeklySummaryHour", clamped.weeklySummaryHour)
             put("weeklySummaryMinute", clamped.weeklySummaryMinute)
+            put("weeklySummaryDayOfWeek", clamped.weeklySummaryDayOfWeek)
             put("monthlySummaryHour", clamped.monthlySummaryHour)
             put("monthlySummaryMinute", clamped.monthlySummaryMinute)
             put("summaryNotificationHour", clamped.summaryNotificationHour)
@@ -583,6 +588,10 @@ object LocalAccountSessionManager {
                     "weeklySummaryMinute",
                     if (o.has("summaryNotificationMinute")) legacyMinute else 0
                 ).coerceIn(0, 59),
+                weeklySummaryDayOfWeek = o.optInt(
+                    "weeklySummaryDayOfWeek",
+                    java.util.Calendar.SUNDAY
+                ).coerceIn(java.util.Calendar.SUNDAY, java.util.Calendar.SATURDAY),
                 monthlySummaryHour = o.optInt(
                     "monthlySummaryHour",
                     if (o.has("summaryNotificationHour")) legacyHour else 9

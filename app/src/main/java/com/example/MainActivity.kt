@@ -502,7 +502,12 @@ fun OneFamilyMainShell(
         hasReadSmsPermission = hasReadSms
         if (hasReadSms) {
             smsPermissionWarning = null
-            viewModel.scanDeviceSmsInbox(context = context, silentIfEmpty = false, notifyNewest = true)
+            viewModel.scanDeviceSmsInbox(
+                context = context,
+                silentIfEmpty = false,
+                notifyNewest = true,
+                forceRestart = true
+            )
         } else {
             val perms = buildList {
                 add(Manifest.permission.READ_SMS)

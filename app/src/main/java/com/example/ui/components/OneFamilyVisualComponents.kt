@@ -39,6 +39,7 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.GenericShape
@@ -79,12 +80,22 @@ import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material.icons.filled.Payments
 import androidx.compose.material.icons.filled.QrCode2
 import androidx.compose.material.icons.filled.ShoppingBag
+import androidx.compose.material.icons.filled.AccessTime
+import androidx.compose.material.icons.filled.ArrowDownward
+import androidx.compose.material.icons.filled.ArrowUpward
+import androidx.compose.material.icons.filled.Keyboard
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Schedule
+import androidx.compose.material.icons.filled.SwapVert
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.DatePicker
 import androidx.compose.material3.DatePickerDialog
 import androidx.compose.material3.DateRangePicker
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FilterChip
@@ -103,8 +114,12 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.TimeInput
+import androidx.compose.material3.TimePicker
 import androidx.compose.material3.minimumInteractiveComponentSize
+import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.material3.rememberDateRangePickerState
+import androidx.compose.material3.rememberTimePickerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -148,6 +163,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.data.local.LocalAccountSessionManager
 import com.example.data.model.BudgetScope
@@ -171,11 +187,14 @@ import com.example.ui.theme.categoryAccentColor
 import com.example.ui.theme.rememberAppHapticPerformer
 import com.example.ui.viewmodel.DateRangePreset
 import com.example.ui.viewmodel.MonthlySpendBar
+import com.example.ui.viewmodel.SmsSyncPeriodOption
 import com.example.ui.viewmodel.YearMonthPeriod
 import java.text.NumberFormat
 import java.text.SimpleDateFormat
+import java.util.Calendar
 import java.util.Date
 import java.util.Locale
+import java.util.TimeZone
 import kotlin.math.atan2
 import kotlin.math.hypot
 import kotlin.math.roundToInt
@@ -409,7 +428,8 @@ fun EditorialScreenHeader(
 fun PerforatedSectionHeader(
     title: String,
     modifier: Modifier = Modifier,
-    countBadge: String? = null
+    countBadge: String? = null,
+    trailingContent: (@Composable () -> Unit)? = null
 ) {
     val dimens = LocalAppDimens.current
     val dotColor = MaterialTheme.colorScheme.outlineVariant
@@ -418,28 +438,39 @@ fun PerforatedSectionHeader(
             .fillMaxWidth()
             .padding(horizontal = dimens.horizontalPadding, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(10.dp)
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        Text(
-            text = title.uppercase(Locale.getDefault()),
-            style = MaterialTheme.typography.labelMedium,
-            fontWeight = FontWeight.Bold,
-            letterSpacing = 1.1.sp,
-            color = MaterialTheme.colorScheme.primary
-        )
-        Canvas(
-            modifier = Modifier
-                .weight(1f)
-                .height(2.dp)
+        Row(
+            modifier = Modifier.weight(1f),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            drawLine(
-                color = dotColor,
-                start = Offset(0f, size.height / 2f),
-                end = Offset(size.width, size.height / 2f),
-                strokeWidth = 2.dp.toPx(),
-                cap = StrokeCap.Round,
-                pathEffect = PathEffect.dashPathEffect(floatArrayOf(5f, 9f), 0f)
+            Text(
+                text = title.uppercase(Locale.getDefault()),
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = FontWeight.Bold,
+                letterSpacing = 1.1.sp,
+                color = MaterialTheme.colorScheme.primary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f, fill = false)
             )
+            Canvas(
+                modifier = Modifier
+                    .weight(1f)
+                    .height(2.dp)
+            ) {
+                if (size.width > 8f) {
+                    drawLine(
+                        color = dotColor,
+                        start = Offset(0f, size.height / 2f),
+                        end = Offset(size.width, size.height / 2f),
+                        strokeWidth = 2.dp.toPx(),
+                        cap = StrokeCap.Round,
+                        pathEffect = PathEffect.dashPathEffect(floatArrayOf(5f, 9f), 0f)
+                    )
+                }
+            }
         }
         if (!countBadge.isNullOrBlank()) {
             Surface(
@@ -452,6 +483,153 @@ fun PerforatedSectionHeader(
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(horizontal = 10.dp, vertical = 3.dp)
+                )
+            }
+        }
+        if (trailingContent != null) {
+            trailingContent()
+        }
+    }
+}
+
+/**
+ * Compact Material 3 Expressive Sort Selector Pill + Dropdown Menu for Transaction Lists.
+ * Supports sorting by Amount (Low to High / High to Low) and Date (Newest / Oldest).
+ */
+@Composable
+fun TransactionSortSelectorButton(
+    selectedSortOrder: String,
+    onSelectSortOrder: (String) -> Unit,
+    modifier: Modifier = Modifier,
+    testTagPrefix: String = "tx_sort"
+) {
+    val performHaptic = rememberAppHapticPerformer()
+    var menuExpanded by remember { mutableStateOf(false) }
+
+    val normalizedSort = selectedSortOrder.uppercase(Locale.US)
+    val isAmountSort = normalizedSort == "LOWEST" || normalizedSort == "HIGHEST"
+    val isCustomSort = normalizedSort != "NEWEST"
+
+    val pillLabel = when (normalizedSort) {
+        "LOWEST" -> "Low → High"
+        "HIGHEST" -> "High → Low"
+        "OLDEST" -> "Oldest"
+        else -> "Sort"
+    }
+    val pillIcon = when (normalizedSort) {
+        "LOWEST" -> Icons.Default.ArrowUpward
+        "HIGHEST" -> Icons.Default.ArrowDownward
+        "OLDEST" -> Icons.Default.Schedule
+        else -> Icons.Default.SwapVert
+    }
+    val containerColor = when {
+        isAmountSort -> MaterialTheme.colorScheme.primaryContainer
+        isCustomSort -> MaterialTheme.colorScheme.secondaryContainer
+        else -> MaterialTheme.colorScheme.surfaceContainerHigh
+    }
+    val contentColor = when {
+        isAmountSort -> MaterialTheme.colorScheme.onPrimaryContainer
+        isCustomSort -> MaterialTheme.colorScheme.onSecondaryContainer
+        else -> MaterialTheme.colorScheme.onSurfaceVariant
+    }
+
+    Box(modifier = modifier) {
+        Surface(
+            onClick = {
+                performHaptic()
+                menuExpanded = true
+            },
+            shape = RoundedCornerShape(50),
+            color = containerColor,
+            contentColor = contentColor,
+            border = if (isAmountSort) {
+                BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.35f))
+            } else {
+                null
+            },
+            modifier = Modifier
+                .minimumInteractiveComponentSize()
+                .testTag("${testTagPrefix}_button")
+        ) {
+            Row(
+                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                Icon(
+                    imageVector = pillIcon,
+                    contentDescription = "Sort transactions",
+                    tint = contentColor,
+                    modifier = Modifier.size(15.dp)
+                )
+                Text(
+                    text = pillLabel,
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = contentColor,
+                    maxLines = 1
+                )
+            }
+        }
+
+        DropdownMenu(
+            expanded = menuExpanded,
+            onDismissRequest = { menuExpanded = false },
+            shape = RoundedCornerShape(18.dp),
+            containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+            modifier = Modifier.testTag("${testTagPrefix}_menu")
+        ) {
+            val options = listOf(
+                Triple("LOWEST", "Amount: Low to High", Icons.Default.ArrowUpward),
+                Triple("HIGHEST", "Amount: High to Low", Icons.Default.ArrowDownward),
+                Triple("NEWEST", "Date: Newest First", Icons.Default.Schedule),
+                Triple("OLDEST", "Date: Oldest First", Icons.Default.Schedule)
+            )
+            options.forEach { (key, label, icon) ->
+                val isSelected = normalizedSort == key
+                DropdownMenuItem(
+                    text = {
+                        Text(
+                            text = label,
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                            color = if (isSelected) {
+                                MaterialTheme.colorScheme.primary
+                            } else {
+                                MaterialTheme.colorScheme.onSurface
+                            }
+                        )
+                    },
+                    leadingIcon = {
+                        Icon(
+                            imageVector = icon,
+                            contentDescription = null,
+                            tint = if (isSelected) {
+                                MaterialTheme.colorScheme.primary
+                            } else {
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                            },
+                            modifier = Modifier.size(18.dp)
+                        )
+                    },
+                    trailingIcon = if (isSelected) {
+                        {
+                            Icon(
+                                imageVector = Icons.Default.Check,
+                                contentDescription = "Selected",
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
+                    } else {
+                        null
+                    },
+                    onClick = {
+                        performHaptic()
+                        menuExpanded = false
+                        onSelectSortOrder(key)
+                    },
+                    modifier = Modifier.testTag("${testTagPrefix}_option_${key.lowercase(Locale.US)}")
                 )
             }
         }
@@ -779,6 +957,181 @@ fun ScopeSwitcherBar(
     }
 }
 
+/**
+ * Converts a local timestamp to UTC midnight millis matching the same local calendar date,
+ * as expected by Material 3 `rememberDatePickerState` and `rememberDateRangePickerState`.
+ */
+fun localMillisToUtcPickerDateMillis(localMillis: Long): Long {
+    val localCal = Calendar.getInstance().apply { timeInMillis = localMillis }
+    return Calendar.getInstance(TimeZone.getTimeZone("UTC")).apply {
+        clear()
+        set(
+            localCal.get(Calendar.YEAR),
+            localCal.get(Calendar.MONTH),
+            localCal.get(Calendar.DAY_OF_MONTH),
+            0,
+            0,
+            0
+        )
+        set(Calendar.MILLISECOND, 0)
+    }.timeInMillis
+}
+
+/**
+ * Converts a Material 3 UTC midnight `selectedDateMillis` into local start-of-day (`00:00:00.000`)
+ * or end-of-day (`23:59:59.999`) preserving the exact calendar date chosen by the user.
+ */
+fun utcPickerDateMillisToLocalDayMillis(utcDateMillis: Long, endOfDay: Boolean = false): Long {
+    val utcCal = Calendar.getInstance(TimeZone.getTimeZone("UTC")).apply { timeInMillis = utcDateMillis }
+    return Calendar.getInstance().apply {
+        set(Calendar.YEAR, utcCal.get(Calendar.YEAR))
+        set(Calendar.MONTH, utcCal.get(Calendar.MONTH))
+        set(Calendar.DAY_OF_MONTH, utcCal.get(Calendar.DAY_OF_MONTH))
+        if (endOfDay) {
+            set(Calendar.HOUR_OF_DAY, 23)
+            set(Calendar.MINUTE, 59)
+            set(Calendar.SECOND, 59)
+            set(Calendar.MILLISECOND, 999)
+        } else {
+            set(Calendar.HOUR_OF_DAY, 0)
+            set(Calendar.MINUTE, 0)
+            set(Calendar.SECOND, 0)
+            set(Calendar.MILLISECOND, 0)
+        }
+    }.timeInMillis
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun AppDatePickerDialog(
+    initialDateMillis: Long = System.currentTimeMillis(),
+    onDismiss: () -> Unit,
+    onConfirmDate: (year: Int, monthZeroBased: Int, dayOfMonth: Int, localStartOfDayMillis: Long) -> Unit,
+    confirmLabel: String = "Apply"
+) {
+    val initialUtcMillis = remember(initialDateMillis) {
+        localMillisToUtcPickerDateMillis(initialDateMillis)
+    }
+    val datePickerState = rememberDatePickerState(initialSelectedDateMillis = initialUtcMillis)
+
+    DatePickerDialog(
+        onDismissRequest = onDismiss,
+        shape = RoundedCornerShape(28.dp),
+        modifier = Modifier.testTag("app_date_picker_dialog"),
+        confirmButton = {
+            Button(
+                onClick = {
+                    val selectedUtc = datePickerState.selectedDateMillis ?: initialUtcMillis
+                    val utcCal = Calendar.getInstance(TimeZone.getTimeZone("UTC")).apply {
+                        timeInMillis = selectedUtc
+                    }
+                    val year = utcCal.get(Calendar.YEAR)
+                    val month = utcCal.get(Calendar.MONTH)
+                    val day = utcCal.get(Calendar.DAY_OF_MONTH)
+                    val localStart = utcPickerDateMillisToLocalDayMillis(selectedUtc, endOfDay = false)
+                    onConfirmDate(year, month, day, localStart)
+                    onDismiss()
+                },
+                shape = RoundedCornerShape(50),
+                modifier = Modifier.testTag("date_picker_confirm_button")
+            ) {
+                Text(confirmLabel)
+            }
+        },
+        dismissButton = {
+            TextButton(
+                onClick = onDismiss,
+                modifier = Modifier.testTag("date_picker_dismiss_button")
+            ) {
+                Text("Cancel")
+            }
+        }
+    ) {
+        DatePicker(state = datePickerState)
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun AppTimePickerDialog(
+    initialHour: Int,
+    initialMinute: Int,
+    title: String = "Select Time",
+    is24Hour: Boolean = false,
+    onDismiss: () -> Unit,
+    onConfirmTime: (hourOfDay: Int, minute: Int) -> Unit,
+    confirmLabel: String = "Apply"
+) {
+    val timePickerState = rememberTimePickerState(
+        initialHour = initialHour.coerceIn(0, 23),
+        initialMinute = initialMinute.coerceIn(0, 59),
+        is24Hour = is24Hour
+    )
+    var useKeyboardInput by rememberSaveable { mutableStateOf(false) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        shape = RoundedCornerShape(28.dp),
+        containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+        modifier = Modifier.testTag("app_time_picker_dialog"),
+        title = {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold
+                )
+                IconButton(
+                    onClick = { useKeyboardInput = !useKeyboardInput },
+                    modifier = Modifier.testTag("time_picker_mode_toggle_button")
+                ) {
+                    Icon(
+                        imageVector = if (useKeyboardInput) Icons.Default.Schedule else Icons.Default.Keyboard,
+                        contentDescription = if (useKeyboardInput) "Switch to clock dial" else "Switch to keyboard input",
+                        tint = MaterialTheme.colorScheme.primary
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    onConfirmTime(timePickerState.hour, timePickerState.minute)
+                    onDismiss()
+                },
+                shape = RoundedCornerShape(50),
+                modifier = Modifier.testTag("time_picker_confirm_button")
+            ) {
+                Text(confirmLabel)
+            }
+        },
+        dismissButton = {
+            TextButton(
+                onClick = onDismiss,
+                modifier = Modifier.testTag("time_picker_dismiss_button")
+            ) {
+                Text("Cancel")
+            }
+        },
+        text = {
+            Box(
+                modifier = Modifier.fillMaxWidth(),
+                contentAlignment = Alignment.Center
+            ) {
+                if (useKeyboardInput) {
+                    TimeInput(state = timePickerState)
+                } else {
+                    TimePicker(state = timePickerState)
+                }
+            }
+        }
+    )
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun CustomDateRangePickerModal(
@@ -788,20 +1141,60 @@ fun CustomDateRangePickerModal(
     onApplyRange: (Long, Long) -> Unit
 ) {
     val pickerState = rememberDateRangePickerState(
-        initialSelectedStartDateMillis = initialStartMillis,
-        initialSelectedEndDateMillis = initialEndMillis
+        initialSelectedStartDateMillis = initialStartMillis?.let { localMillisToUtcPickerDateMillis(it) },
+        initialSelectedEndDateMillis = initialEndMillis?.let { localMillisToUtcPickerDateMillis(it) }
     )
+    val shortDateFmt = remember {
+        SimpleDateFormat("MMM d, yyyy", Locale.getDefault()).apply {
+            timeZone = TimeZone.getTimeZone("UTC")
+        }
+    }
+    val compactMonthDayFmt = remember {
+        SimpleDateFormat("MMM d", Locale.getDefault()).apply {
+            timeZone = TimeZone.getTimeZone("UTC")
+        }
+    }
+
+    val startUtc = pickerState.selectedStartDateMillis
+    val endUtc = pickerState.selectedEndDateMillis
+    val headlineText = remember(startUtc, endUtc) {
+        when {
+            startUtc != null && endUtc != null -> {
+                val lo = minOf(startUtc, endUtc)
+                val hi = maxOf(startUtc, endUtc)
+                val startCal = Calendar.getInstance(TimeZone.getTimeZone("UTC")).apply { timeInMillis = lo }
+                val endCal = Calendar.getInstance(TimeZone.getTimeZone("UTC")).apply { timeInMillis = hi }
+                if (startCal.get(Calendar.YEAR) == endCal.get(Calendar.YEAR)) {
+                    "${compactMonthDayFmt.format(Date(lo))} – ${shortDateFmt.format(Date(hi))}"
+                } else {
+                    "${shortDateFmt.format(Date(lo))} – ${shortDateFmt.format(Date(hi))}"
+                }
+            }
+            startUtc != null -> "${shortDateFmt.format(Date(startUtc))} – End date"
+            else -> "Start date – End date"
+        }
+    }
 
     DatePickerDialog(
         onDismissRequest = onDismiss,
         shape = RoundedCornerShape(28.dp),
+        properties = DialogProperties(usePlatformDefaultWidth = false),
+        modifier = Modifier
+            .padding(horizontal = 16.dp)
+            .fillMaxWidth()
+            .widthIn(max = 420.dp)
+            .testTag("custom_date_range_picker_dialog"),
         confirmButton = {
             Button(
                 onClick = {
-                    val start = pickerState.selectedStartDateMillis
-                    val end = pickerState.selectedEndDateMillis ?: start
-                    if (start != null && end != null) {
-                        onApplyRange(start, end)
+                    val chosenStartUtc = pickerState.selectedStartDateMillis
+                    val chosenEndUtc = pickerState.selectedEndDateMillis ?: chosenStartUtc
+                    if (chosenStartUtc != null && chosenEndUtc != null) {
+                        val loUtc = minOf(chosenStartUtc, chosenEndUtc)
+                        val hiUtc = maxOf(chosenStartUtc, chosenEndUtc)
+                        val localStart = utcPickerDateMillisToLocalDayMillis(loUtc, endOfDay = false)
+                        val localEnd = utcPickerDateMillisToLocalDayMillis(hiUtc, endOfDay = true)
+                        onApplyRange(localStart, localEnd)
                     }
                     onDismiss()
                 },
@@ -819,12 +1212,469 @@ fun CustomDateRangePickerModal(
     ) {
         DateRangePicker(
             state = pickerState,
-            title = null,
+            title = {
+                Text(
+                    text = "Select date range",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.padding(start = 20.dp, end = 16.dp, top = 16.dp, bottom = 2.dp)
+                )
+            },
+            headline = {
+                Text(
+                    text = headlineText,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                    softWrap = false,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier
+                        .padding(start = 20.dp, end = 8.dp, top = 2.dp, bottom = 10.dp)
+                        .testTag("custom_date_range_headline")
+                )
+            },
             showModeToggle = true,
             modifier = Modifier
                 .fillMaxWidth()
-                .fillMaxHeight(0.68f)
+                .heightIn(min = 380.dp, max = 500.dp)
         )
+    }
+}
+
+/**
+ * Material 3 Expressive Slider for choosing the SMS Sync fetch window
+ * (`24h`, `This Month`, `30d`, `3m`, `6m`, `FY`, `1y`, `All`, `Custom`).
+ * Features a thick segmented expressive track with inner stop ticks, a bold vertical
+ * pill handle, direct stop pills, and native M3 Date Range + Time pickers for Custom Range.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun SmsSyncPeriodExpressiveSlider(
+    selectedPeriod: SmsSyncPeriodOption,
+    customRange: Pair<Long, Long>?,
+    onSelectPeriod: (SmsSyncPeriodOption) -> Unit,
+    onOpenCustomRangePicker: () -> Unit,
+    onUpdateCustomRange: ((Long, Long) -> Unit)? = null,
+    containerTag: String = "sms_sync_period_selector",
+    selectedLabelTag: String = "sms_sync_selected_period_label",
+    sliderTag: String = "sms_period_slider",
+    chipTagPrefix: String = "sms_period_chip"
+) {
+    val performHaptic = rememberAppHapticPerformer()
+    val options = SmsSyncPeriodOption.entries
+    val selectedIndex = options.indexOf(selectedPeriod).coerceAtLeast(0)
+
+    var showStartTimePicker by rememberSaveable { mutableStateOf(false) }
+    var showEndTimePicker by rememberSaveable { mutableStateOf(false) }
+
+    val primaryColor = MaterialTheme.colorScheme.primary
+    val onPrimaryColor = MaterialTheme.colorScheme.onPrimary
+    val inactiveTrackColor = MaterialTheme.colorScheme.secondaryContainer
+    val inactiveTickColor = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.45f)
+    val haloColor = MaterialTheme.colorScheme.surfaceContainerLow
+
+    val animatedFraction by animateFloatAsState(
+        targetValue = if (options.size > 1) selectedIndex.toFloat() / options.lastIndex.toFloat() else 0f,
+        animationSpec = spring(
+            dampingRatio = Spring.DampingRatioMediumBouncy,
+            stiffness = Spring.StiffnessMediumLow
+        ),
+        label = "sms_period_slider_fraction"
+    )
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag(containerTag),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        // Header row + expressive tonal readout pill
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                modifier = Modifier.weight(1f)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.CalendarMonth,
+                    contentDescription = "Fetch SMS From",
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(16.dp)
+                )
+                Text(
+                    text = "Fetch SMS From",
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+            Spacer(modifier = Modifier.width(8.dp))
+            Surface(
+                shape = RoundedCornerShape(50),
+                color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.85f),
+                modifier = Modifier
+                    .clip(RoundedCornerShape(50))
+                    .clickable {
+                        if (selectedPeriod == SmsSyncPeriodOption.CUSTOM) {
+                            performHaptic()
+                            onOpenCustomRangePicker()
+                        }
+                    }
+                    .testTag(selectedLabelTag)
+            ) {
+                Text(
+                    text = selectedPeriod.formatRangeSummary(customRange),
+                    style = MaterialTheme.typography.labelSmall.copy(fontFamily = ReceiptMonoFontFamily),
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                )
+            }
+        }
+
+        // Material 3 Expressive Thick Segmented Track + Vertical Pill Handle Slider
+        Slider(
+            value = selectedIndex.toFloat(),
+            onValueChange = { raw ->
+                val snappedIdx = raw.roundToInt().coerceIn(0, options.lastIndex)
+                val targetOption = options[snappedIdx]
+                if (targetOption != selectedPeriod) {
+                    performHaptic()
+                    onSelectPeriod(targetOption)
+                }
+            },
+            onValueChangeFinished = {
+                if (selectedPeriod == SmsSyncPeriodOption.CUSTOM && customRange == null) {
+                    onOpenCustomRangePicker()
+                }
+            },
+            valueRange = 0f..options.lastIndex.toFloat(),
+            steps = (options.size - 2).coerceAtLeast(0),
+            thumb = {
+                Box(
+                    modifier = Modifier
+                        .size(width = 14.dp, height = 34.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(width = 12.dp, height = 34.dp)
+                            .clip(RoundedCornerShape(50))
+                            .background(haloColor)
+                    )
+                    Box(
+                        modifier = Modifier
+                            .size(width = 5.dp, height = 30.dp)
+                            .clip(RoundedCornerShape(50))
+                            .background(primaryColor)
+                    )
+                }
+            },
+            track = { _ ->
+                Canvas(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(18.dp)
+                ) {
+                    val trackHeightPx = 16.dp.toPx()
+                    val topY = (size.height - trackHeightPx) / 2f
+                    val outerRadius = trackHeightPx / 2f
+                    val thumbGapPx = 7.dp.toPx()
+                    val frac = animatedFraction.coerceIn(0f, 1f)
+                    val splitX = (size.width * frac).coerceIn(0f, size.width)
+
+                    val activeRight = (splitX - thumbGapPx).coerceAtLeast(0f)
+                    if (activeRight > 2f) {
+                        drawRoundRect(
+                            color = primaryColor,
+                            topLeft = Offset(0f, topY),
+                            size = Size(activeRight, trackHeightPx),
+                            cornerRadius = CornerRadius(outerRadius, outerRadius)
+                        )
+                    }
+
+                    val inactiveLeft = (splitX + thumbGapPx).coerceAtMost(size.width)
+                    val inactiveWidth = (size.width - inactiveLeft).coerceAtLeast(0f)
+                    if (inactiveWidth > 2f) {
+                        drawRoundRect(
+                            color = inactiveTrackColor,
+                            topLeft = Offset(inactiveLeft, topY),
+                            size = Size(inactiveWidth, trackHeightPx),
+                            cornerRadius = CornerRadius(outerRadius, outerRadius)
+                        )
+                    }
+
+                    // Expressive discrete stop dots inside the thick track
+                    val stopCount = options.size
+                    val dotRadius = 2.2.dp.toPx()
+                    val insetX = outerRadius * 0.85f
+                    val usableWidth = (size.width - insetX * 2f).coerceAtLeast(1f)
+                    for (i in 0 until stopCount) {
+                        val stopFrac = if (stopCount > 1) i.toFloat() / (stopCount - 1).toFloat() else 0f
+                        val cx = insetX + usableWidth * stopFrac
+                        if (kotlin.math.abs(cx - splitX) > thumbGapPx + dotRadius) {
+                            drawCircle(
+                                color = if (cx < splitX) onPrimaryColor.copy(alpha = 0.5f) else inactiveTickColor,
+                                radius = dotRadius,
+                                center = Offset(cx, size.height / 2f)
+                            )
+                        }
+                    }
+                }
+            },
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(min = 42.dp)
+                .testTag(sliderTag)
+        )
+
+        // Expressive stop selector pills for instant 1-tap selection & clear stop labels
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            options.forEach { option ->
+                val isSelected = selectedPeriod == option
+                val containerColor by animateColorAsState(
+                    targetValue = if (isSelected) {
+                        MaterialTheme.colorScheme.primary
+                    } else {
+                        MaterialTheme.colorScheme.surfaceContainerHigh
+                    },
+                    animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
+                    label = "sms_stop_pill_bg_${option.name}"
+                )
+                val contentColor by animateColorAsState(
+                    targetValue = if (isSelected) {
+                        MaterialTheme.colorScheme.onPrimary
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    },
+                    animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
+                    label = "sms_stop_pill_fg_${option.name}"
+                )
+                Surface(
+                    onClick = {
+                        performHaptic()
+                        if (option == SmsSyncPeriodOption.CUSTOM) {
+                            onOpenCustomRangePicker()
+                        } else {
+                            onSelectPeriod(option)
+                        }
+                    },
+                    shape = RoundedCornerShape(50),
+                    color = containerColor,
+                    contentColor = contentColor,
+                    modifier = Modifier
+                        .heightIn(min = 36.dp)
+                        .testTag("${chipTagPrefix}_${option.name.lowercase()}")
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        if (option == SmsSyncPeriodOption.CUSTOM) {
+                            Icon(
+                                imageVector = Icons.Default.CalendarMonth,
+                                contentDescription = null,
+                                modifier = Modifier.size(14.dp)
+                            )
+                        }
+                        Text(
+                            text = option.shortLabel,
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
+            }
+        }
+
+        // Custom Date & Time Picker Controls when Custom Range is active
+        if (selectedPeriod == SmsSyncPeriodOption.CUSTOM) {
+            val activeStart = customRange?.first ?: (System.currentTimeMillis() - 24L * 3_600_000L)
+            val activeEnd = customRange?.second ?: System.currentTimeMillis()
+            val timeFmt = remember { SimpleDateFormat("hh:mm a", Locale.getDefault()) }
+
+            Surface(
+                shape = RoundedCornerShape(16.dp),
+                color = MaterialTheme.colorScheme.surfaceContainer,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("${chipTagPrefix}_custom_datetime_bar")
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(10.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    FilledTonalButton(
+                        onClick = {
+                            performHaptic()
+                            onOpenCustomRangePicker()
+                        },
+                        shape = RoundedCornerShape(14.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = 48.dp)
+                            .testTag("${chipTagPrefix}_pick_custom_dates_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.DateRange,
+                            contentDescription = "Pick custom date range",
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = if (customRange != null) {
+                                "Change Dates • ${selectedPeriod.formatRangeSummary(customRange)}"
+                            } else {
+                                "Pick Custom Date Range"
+                            },
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+
+                    if (onUpdateCustomRange != null) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            OutlinedButton(
+                                onClick = {
+                                    performHaptic()
+                                    showStartTimePicker = true
+                                },
+                                shape = RoundedCornerShape(14.dp),
+                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp),
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .heightIn(min = 48.dp)
+                                    .testTag("${chipTagPrefix}_start_time_button")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.AccessTime,
+                                    contentDescription = "Select start time",
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text(
+                                    text = "From ${timeFmt.format(Date(activeStart))}",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                            OutlinedButton(
+                                onClick = {
+                                    performHaptic()
+                                    showEndTimePicker = true
+                                },
+                                shape = RoundedCornerShape(14.dp),
+                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp),
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .heightIn(min = 48.dp)
+                                    .testTag("${chipTagPrefix}_end_time_button")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.AccessTime,
+                                    contentDescription = "Select end time",
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text(
+                                    text = "To ${timeFmt.format(Date(activeEnd))}",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (showStartTimePicker && onUpdateCustomRange != null) {
+                val cal = remember(activeStart) { Calendar.getInstance().apply { timeInMillis = activeStart } }
+                AppTimePickerDialog(
+                    initialHour = cal.get(Calendar.HOUR_OF_DAY),
+                    initialMinute = cal.get(Calendar.MINUTE),
+                    title = "Select Start Time",
+                    onDismiss = { showStartTimePicker = false },
+                    onConfirmTime = { hour, minute ->
+                        val updatedStart = Calendar.getInstance().apply {
+                            timeInMillis = activeStart
+                            set(Calendar.HOUR_OF_DAY, hour)
+                            set(Calendar.MINUTE, minute)
+                            set(Calendar.SECOND, 0)
+                            set(Calendar.MILLISECOND, 0)
+                        }.timeInMillis
+                        onUpdateCustomRange(updatedStart, activeEnd.coerceAtLeast(updatedStart))
+                    }
+                )
+            }
+
+            if (showEndTimePicker && onUpdateCustomRange != null) {
+                val cal = remember(activeEnd) { Calendar.getInstance().apply { timeInMillis = activeEnd } }
+                AppTimePickerDialog(
+                    initialHour = cal.get(Calendar.HOUR_OF_DAY),
+                    initialMinute = cal.get(Calendar.MINUTE),
+                    title = "Select End Time",
+                    onDismiss = { showEndTimePicker = false },
+                    onConfirmTime = { hour, minute ->
+                        val updatedEnd = Calendar.getInstance().apply {
+                            timeInMillis = activeEnd
+                            set(Calendar.HOUR_OF_DAY, hour)
+                            set(Calendar.MINUTE, minute)
+                            set(Calendar.SECOND, 59)
+                            set(Calendar.MILLISECOND, 999)
+                        }.timeInMillis
+                        onUpdateCustomRange(activeStart.coerceAtMost(updatedEnd), updatedEnd)
+                    }
+                )
+            }
+        }
+
+        // Clear assurance note that rechecking ignores previous check time
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            modifier = Modifier.padding(horizontal = 2.dp)
+        ) {
+            Icon(
+                imageVector = Icons.Default.Refresh,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(14.dp)
+            )
+            Text(
+                text = "Rechecks all SMS in this period regardless of when last checked.",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
     }
 }
 
@@ -1158,7 +2008,14 @@ fun MonthPeriodSelectorBar(
                             modifier = Modifier.size(FilterChipDefaults.IconSize)
                         )
                     },
-                    label = { Text(customChipLabel) },
+                    label = {
+                        Text(
+                            text = customChipLabel,
+                            maxLines = 1,
+                            softWrap = false,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    },
                     modifier = Modifier.testTag("date_range_chip_custom")
                 )
 

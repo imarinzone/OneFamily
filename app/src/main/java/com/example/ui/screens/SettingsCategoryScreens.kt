@@ -108,6 +108,7 @@ import com.example.data.model.WallpaperColorAccent
 import com.example.data.model.WallpaperDensity
 import com.example.data.model.WallpaperPatternStyle
 import com.example.data.model.WallpaperSettings
+import com.example.ui.components.AppTimePickerDialog
 import com.example.ui.components.ExpressiveCutoutAppearanceHeroCard
 import com.example.ui.components.FinanceWallpaperPreviewBanner
 import com.example.ui.components.M3CheckmarkSwitch
@@ -115,6 +116,7 @@ import com.example.ui.components.MasterFeatureToggleBanner
 import com.example.ui.components.PrimaryColorSelectorBar
 import com.example.ui.components.ReceiptDashedDividerLine
 import com.example.ui.components.ReceiptTicketCard
+import com.example.ui.components.SmsSyncPeriodExpressiveSlider
 import com.example.ui.components.SquircleIconBadge
 import com.example.ui.components.ThemeModeSelectorBar
 import com.example.ui.components.formatCurrency
@@ -1404,14 +1406,14 @@ internal fun NotificationsSettingsPage(
             contentPadding = PaddingValues(top = 6.dp, bottom = 36.dp),
             verticalArrangement = Arrangement.spacedBy(0.dp)
         ) {
-            // Card 1 of 2: Notifications & Summary Timings
+            // Card 1 of 6: Instant Transaction & Limit Alerts
             item {
                 Card(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(horizontal = dimens.horizontalPadding, vertical = 1.5.dp)
                         .testTag("notification_preferences_card"),
-                    shape = groupedCardShape(index = 0, count = 2),
+                    shape = groupedCardShape(index = 0, count = 6),
                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
                     elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
                 ) {
@@ -1437,7 +1439,7 @@ internal fun NotificationsSettingsPage(
                                     fontWeight = FontWeight.Bold
                                 )
                                 Text(
-                                    text = "Alerts, custom summary timings & push sync",
+                                    text = "Alerts, spend report schedules & push sync",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     maxLines = 2,
@@ -1446,308 +1448,454 @@ internal fun NotificationsSettingsPage(
                             }
                         }
 
-                        val standardNotifCategories = listOf(
+                        val instantAlertCategories = listOf(
                             NotificationSubCategory.EXPENSES,
                             NotificationSubCategory.INCOME,
-                            NotificationSubCategory.CREDIT_CARD_LIMIT,
-                            NotificationSubCategory.DAILY_SUMMARY,
-                            NotificationSubCategory.WEEKLY_SUMMARY,
-                            NotificationSubCategory.MONTHLY_SUMMARY
+                            NotificationSubCategory.CREDIT_CARD_LIMIT
                         )
-                        val fcmPushNotifCategories = listOf(
-                            NotificationSubCategory.FAMILY_SYNC,
-                            NotificationSubCategory.BUDGET_LIMITS
-                        )
-
-                        standardNotifCategories.forEach { subCategory ->
+                        instantAlertCategories.forEach { subCategory ->
                             val isEnabled = fcmPushSettings.isSubCategoryEnabled(subCategory)
                             val subTag = subCategory.name.lowercase()
-                            Column(
-                                modifier = Modifier.fillMaxWidth(),
-                                verticalArrangement = Arrangement.spacedBy(4.dp)
-                            ) {
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .clip(RoundedCornerShape(14.dp))
-                                        .clickable {
-                                            performHaptic()
-                                            LocalAccountSessionManager.updateFcmPushSettings(
-                                                context = context,
-                                                newSettings = fcmPushSettings.withSubCategoryEnabled(subCategory, !isEnabled)
-                                            )
-                                        }
-                                        .padding(horizontal = 4.dp, vertical = 4.dp)
-                                        .testTag("notif_subcategory_row_$subTag"),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.SpaceBetween
-                                ) {
-                                    Column(
-                                        modifier = Modifier
-                                            .weight(1f)
-                                            .padding(end = 8.dp),
-                                        verticalArrangement = Arrangement.spacedBy(1.dp)
-                                    ) {
-                                        Text(
-                                            text = subCategory.shortName,
-                                            style = MaterialTheme.typography.titleSmall,
-                                            fontWeight = FontWeight.SemiBold,
-                                            color = MaterialTheme.colorScheme.onSurface
-                                        )
-                                        Text(
-                                            text = subCategory.description,
-                                            style = MaterialTheme.typography.labelSmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
-                                    }
-                                    M3CheckmarkSwitch(
-                                        checked = isEnabled,
-                                        onCheckedChange = { checked ->
-                                            performHaptic()
-                                            LocalAccountSessionManager.updateFcmPushSettings(
-                                                context = context,
-                                                newSettings = fcmPushSettings.withSubCategoryEnabled(subCategory, checked)
-                                            )
-                                        },
-                                        modifier = Modifier.testTag("notif_subcategory_switch_$subTag")
-                                    )
-                                }
-
-                                if (subCategory.isSpendSummaryCategory()) {
-                                    val (curHour, curMinute) = fcmPushSettings.getSummaryTime(subCategory)
-                                    var customHourInput by remember(subCategory, curHour) {
-                                        mutableStateOf(curHour.toString())
-                                    }
-                                    var customMinuteInput by remember(subCategory, curMinute) {
-                                        mutableStateOf(String.format(java.util.Locale.US, "%02d", curMinute))
-                                    }
-
-                                    Surface(
-                                        shape = RoundedCornerShape(16.dp),
-                                        color = MaterialTheme.colorScheme.surfaceContainer,
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .padding(start = 6.dp, end = 4.dp, bottom = 4.dp)
-                                            .testTag("notif_category_timing_panel_$subTag")
-                                    ) {
-                                        BoxWithConstraints(
-                                            modifier = Modifier
-                                                .fillMaxWidth()
-                                                .padding(horizontal = 12.dp, vertical = 10.dp)
-                                        ) {
-                                            val isCompactWidth = maxWidth < 300.dp
-                                            val commitTimeSave = {
-                                                performHaptic()
-                                                val hr = (customHourInput.toIntOrNull() ?: curHour).coerceIn(0, 23)
-                                                val min = (customMinuteInput.toIntOrNull() ?: curMinute).coerceIn(0, 59)
-                                                LocalAccountSessionManager.updateFcmPushSettings(
-                                                    context = context,
-                                                    newSettings = fcmPushSettings.withSummaryTime(
-                                                        subCategory = subCategory,
-                                                        hour = hr,
-                                                        minute = min
-                                                    )
-                                                )
-                                            }
-                                            Column(
-                                                modifier = Modifier.fillMaxWidth(),
-                                                verticalArrangement = Arrangement.spacedBy(8.dp)
-                                            ) {
-                                                @OptIn(ExperimentalLayoutApi::class)
-                                                FlowRow(
-                                                    modifier = Modifier.fillMaxWidth(),
-                                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                                                    verticalArrangement = Arrangement.spacedBy(4.dp)
-                                                ) {
-                                                    Icon(
-                                                        imageVector = Icons.Default.Schedule,
-                                                        contentDescription = "Scheduled notification time",
-                                                        tint = MaterialTheme.colorScheme.primary,
-                                                        modifier = Modifier.size(16.dp)
-                                                    )
-                                                    Text(
-                                                        text = "Scheduled Time:",
-                                                        style = MaterialTheme.typography.labelMedium,
-                                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                                    )
-                                                    Surface(
-                                                        shape = RoundedCornerShape(50),
-                                                        color = MaterialTheme.colorScheme.primaryContainer
-                                                    ) {
-                                                        Text(
-                                                            text = fcmPushSettings.formatSummaryTime(subCategory),
-                                                            style = MaterialTheme.typography.labelSmall.copy(
-                                                                fontFamily = ReceiptMonoFontFamily
-                                                            ),
-                                                            fontWeight = FontWeight.Bold,
-                                                            color = MaterialTheme.colorScheme.onPrimaryContainer,
-                                                            modifier = Modifier
-                                                                .padding(horizontal = 8.dp, vertical = 3.dp)
-                                                                .testTag("notif_category_time_value_$subTag")
-                                                        )
-                                                    }
-                                                }
-
-                                                Row(
-                                                    modifier = Modifier.fillMaxWidth(),
-                                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                                    verticalAlignment = Alignment.CenterVertically
-                                                ) {
-                                                    OutlinedTextField(
-                                                        value = customHourInput,
-                                                        onValueChange = { raw: String ->
-                                                            val digits = raw.filter { it.isDigit() }.take(2)
-                                                            val num = digits.toIntOrNull()
-                                                            if (digits.isEmpty() || (num != null && num in 0..23)) {
-                                                                customHourInput = digits
-                                                            }
-                                                        },
-                                                        label = { Text("Hour", maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                                                        singleLine = true,
-                                                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                                                        shape = RoundedCornerShape(12.dp),
-                                                        modifier = Modifier
-                                                            .weight(1f)
-                                                            .testTag("notif_category_hour_input_$subTag")
-                                                    )
-                                                    OutlinedTextField(
-                                                        value = customMinuteInput,
-                                                        onValueChange = { raw: String ->
-                                                            val digits = raw.filter { it.isDigit() }.take(2)
-                                                            val num = digits.toIntOrNull()
-                                                            if (digits.isEmpty() || (num != null && num in 0..59)) {
-                                                                customMinuteInput = digits
-                                                            }
-                                                        },
-                                                        label = { Text("Min", maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                                                        singleLine = true,
-                                                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                                                        shape = RoundedCornerShape(12.dp),
-                                                        modifier = Modifier
-                                                            .weight(1f)
-                                                            .testTag("notif_category_minute_input_$subTag")
-                                                    )
-                                                    if (!isCompactWidth) {
-                                                        Button(
-                                                            onClick = commitTimeSave,
-                                                            shape = RoundedCornerShape(12.dp),
-                                                            modifier = Modifier
-                                                                .heightIn(min = 48.dp)
-                                                                .testTag("notif_category_save_time_button_$subTag")
-                                                        ) {
-                                                            Text("Save", maxLines = 1)
-                                                        }
-                                                    }
-                                                }
-                                                if (isCompactWidth) {
-                                                    Button(
-                                                        onClick = commitTimeSave,
-                                                        shape = RoundedCornerShape(12.dp),
-                                                        modifier = Modifier
-                                                            .fillMaxWidth()
-                                                            .heightIn(min = 48.dp)
-                                                            .testTag("notif_category_save_time_button_$subTag")
-                                                    ) {
-                                                        Text("Save Time", maxLines = 1)
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-
-                        ReceiptDashedDividerLine()
-
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .testTag("fcm_push_settings_card"),
-                            verticalArrangement = Arrangement.spacedBy(6.dp)
-                        ) {
                             Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                                modifier = Modifier.padding(horizontal = 4.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.NotificationsActive,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.size(16.dp)
-                                )
-                                Text(
-                                    text = "FCM Push Notifications",
-                                    style = MaterialTheme.typography.labelLarge,
-                                    fontWeight = FontWeight.Bold,
-                                    color = MaterialTheme.colorScheme.primary
-                                )
-                            }
-
-                            fcmPushNotifCategories.forEach { subCategory ->
-                                val isEnabled = fcmPushSettings.isSubCategoryEnabled(subCategory)
-                                val subTag = subCategory.name.lowercase()
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .clip(RoundedCornerShape(14.dp))
-                                        .clickable {
-                                            performHaptic()
-                                            LocalAccountSessionManager.updateFcmPushSettings(
-                                                context = context,
-                                                newSettings = fcmPushSettings.withSubCategoryEnabled(subCategory, !isEnabled)
-                                            )
-                                        }
-                                        .padding(horizontal = 4.dp, vertical = 4.dp)
-                                        .testTag("notif_subcategory_row_$subTag"),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.SpaceBetween
-                                ) {
-                                    Column(
-                                        modifier = Modifier
-                                            .weight(1f)
-                                            .padding(end = 8.dp),
-                                        verticalArrangement = Arrangement.spacedBy(1.dp)
-                                    ) {
-                                        Text(
-                                            text = subCategory.shortName,
-                                            style = MaterialTheme.typography.titleSmall,
-                                            fontWeight = FontWeight.SemiBold,
-                                            color = MaterialTheme.colorScheme.onSurface
-                                        )
-                                        Text(
-                                            text = subCategory.description,
-                                            style = MaterialTheme.typography.labelSmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(14.dp))
+                                    .clickable {
+                                        performHaptic()
+                                        LocalAccountSessionManager.updateFcmPushSettings(
+                                            context = context,
+                                            newSettings = fcmPushSettings.withSubCategoryEnabled(subCategory, !isEnabled)
                                         )
                                     }
-                                    M3CheckmarkSwitch(
-                                        checked = isEnabled,
-                                        onCheckedChange = { checked ->
-                                            performHaptic()
-                                            LocalAccountSessionManager.updateFcmPushSettings(
-                                                context = context,
-                                                newSettings = fcmPushSettings.withSubCategoryEnabled(subCategory, checked)
-                                            )
-                                        },
-                                        modifier = Modifier.testTag("notif_subcategory_switch_$subTag")
+                                    .padding(horizontal = 4.dp, vertical = 4.dp)
+                                    .testTag("notif_subcategory_row_$subTag"),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Column(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .padding(end = 8.dp),
+                                    verticalArrangement = Arrangement.spacedBy(1.dp)
+                                ) {
+                                    Text(
+                                        text = subCategory.shortName,
+                                        style = MaterialTheme.typography.titleSmall,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = MaterialTheme.colorScheme.onSurface
+                                    )
+                                    Text(
+                                        text = subCategory.description,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
                                 }
+                                M3CheckmarkSwitch(
+                                    checked = isEnabled,
+                                    onCheckedChange = { checked ->
+                                        performHaptic()
+                                        LocalAccountSessionManager.updateFcmPushSettings(
+                                            context = context,
+                                            newSettings = fcmPushSettings.withSubCategoryEnabled(subCategory, checked)
+                                        )
+                                    },
+                                    modifier = Modifier.testTag("notif_subcategory_switch_$subTag")
+                                )
                             }
                         }
                     }
                 }
             }
 
-            // Card 2 of 2: Card Limit Alert Threshold
+            // Cards 2–4 of 6: Daily, Weekly (with End-of-Week Day), and Monthly (End-of-Month) Spend Reports
+            val summaryCategories = listOf(
+                NotificationSubCategory.DAILY_SUMMARY,
+                NotificationSubCategory.WEEKLY_SUMMARY,
+                NotificationSubCategory.MONTHLY_SUMMARY
+            )
+            summaryCategories.forEachIndexed { summaryIdx, subCategory ->
+                item(key = "notif_summary_${subCategory.name}") {
+                    val isEnabled = fcmPushSettings.isSubCategoryEnabled(subCategory)
+                    val subTag = subCategory.name.lowercase()
+                    val (curHour, curMinute) = fcmPushSettings.getSummaryTime(subCategory)
+                    var showSummaryTimePicker by remember(subCategory) { mutableStateOf(false) }
+                    val scheduleSubtitle = when (subCategory) {
+                        NotificationSubCategory.WEEKLY_SUMMARY ->
+                            "Every ${fcmPushSettings.formatWeeklySummaryDayOfWeek()} (end of week)"
+                        NotificationSubCategory.MONTHLY_SUMMARY ->
+                            "End of every month (last calendar day)"
+                        else -> "Daily • Tap to open time picker"
+                    }
+
+                    Card(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = dimens.horizontalPadding, vertical = 1.5.dp),
+                        shape = groupedCardShape(index = summaryIdx + 1, count = 6),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+                        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(dimens.cardPadding),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(14.dp))
+                                    .clickable {
+                                        performHaptic()
+                                        LocalAccountSessionManager.updateFcmPushSettings(
+                                            context = context,
+                                            newSettings = fcmPushSettings.withSubCategoryEnabled(subCategory, !isEnabled)
+                                        )
+                                    }
+                                    .padding(horizontal = 4.dp, vertical = 4.dp)
+                                    .testTag("notif_subcategory_row_$subTag"),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Column(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .padding(end = 8.dp),
+                                    verticalArrangement = Arrangement.spacedBy(1.dp)
+                                ) {
+                                    Text(
+                                        text = subCategory.shortName,
+                                        style = MaterialTheme.typography.titleSmall,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = MaterialTheme.colorScheme.onSurface
+                                    )
+                                    Text(
+                                        text = subCategory.description,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                                M3CheckmarkSwitch(
+                                    checked = isEnabled,
+                                    onCheckedChange = { checked ->
+                                        performHaptic()
+                                        LocalAccountSessionManager.updateFcmPushSettings(
+                                            context = context,
+                                            newSettings = fcmPushSettings.withSubCategoryEnabled(subCategory, checked)
+                                        )
+                                    },
+                                    modifier = Modifier.testTag("notif_subcategory_switch_$subTag")
+                                )
+                            }
+
+                            Surface(
+                                shape = RoundedCornerShape(16.dp),
+                                color = MaterialTheme.colorScheme.surfaceContainer,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .heightIn(min = 52.dp)
+                                    .testTag("notif_category_timing_panel_$subTag")
+                            ) {
+                                Column(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                                ) {
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clip(RoundedCornerShape(16.dp))
+                                            .clickable {
+                                                performHaptic()
+                                                showSummaryTimePicker = true
+                                            }
+                                            .padding(horizontal = 12.dp, vertical = 10.dp)
+                                            .testTag("notif_category_pick_time_button_$subTag"),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                            modifier = Modifier.weight(1f)
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.Schedule,
+                                                contentDescription = "Scheduled notification time",
+                                                tint = MaterialTheme.colorScheme.primary,
+                                                modifier = Modifier.size(18.dp)
+                                            )
+                                            Column(verticalArrangement = Arrangement.spacedBy(1.dp)) {
+                                                Text(
+                                                    text = "Scheduled Time",
+                                                    style = MaterialTheme.typography.labelMedium,
+                                                    fontWeight = FontWeight.SemiBold,
+                                                    color = MaterialTheme.colorScheme.onSurface
+                                                )
+                                                Text(
+                                                    text = scheduleSubtitle,
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                    maxLines = 2,
+                                                    overflow = TextOverflow.Ellipsis
+                                                )
+                                            }
+                                        }
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Surface(
+                                            shape = RoundedCornerShape(50),
+                                            color = MaterialTheme.colorScheme.primaryContainer
+                                        ) {
+                                            Row(
+                                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                            ) {
+                                                Text(
+                                                    text = fcmPushSettings.formatSummaryTime(subCategory),
+                                                    style = MaterialTheme.typography.labelSmall.copy(
+                                                        fontFamily = ReceiptMonoFontFamily
+                                                    ),
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                                    modifier = Modifier.testTag("notif_category_time_value_$subTag")
+                                                )
+                                                Icon(
+                                                    imageVector = Icons.Default.Edit,
+                                                    contentDescription = "Change scheduled time",
+                                                    tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                                                    modifier = Modifier.size(13.dp)
+                                                )
+                                            }
+                                        }
+                                    }
+
+                                    if (subCategory == NotificationSubCategory.WEEKLY_SUMMARY) {
+                                        Column(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(start = 12.dp, end = 12.dp, bottom = 10.dp)
+                                                .testTag("notif_weekly_day_selector"),
+                                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                                        ) {
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                horizontalArrangement = Arrangement.SpaceBetween,
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                Text(
+                                                    text = "End-of-Week Day",
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    fontWeight = FontWeight.SemiBold,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                )
+                                                Text(
+                                                    text = fcmPushSettings.formatWeeklySummaryDayOfWeek(),
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = MaterialTheme.colorScheme.primary,
+                                                    modifier = Modifier.testTag("notif_weekly_selected_day_label")
+                                                )
+                                            }
+                                            @OptIn(ExperimentalLayoutApi::class)
+                                            FlowRow(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                                verticalArrangement = Arrangement.spacedBy(6.dp)
+                                            ) {
+                                                FcmPushSettings.WEEKLY_DAY_OPTIONS.forEach { (calDay, shortLabel, _) ->
+                                                    val selectedDay = fcmPushSettings.weeklySummaryDayOfWeek == calDay
+                                                    Surface(
+                                                        onClick = {
+                                                            performHaptic()
+                                                            LocalAccountSessionManager.updateFcmPushSettings(
+                                                                context = context,
+                                                                newSettings = fcmPushSettings.withWeeklySummaryDayOfWeek(calDay)
+                                                            )
+                                                        },
+                                                        shape = RoundedCornerShape(50),
+                                                        color = if (selectedDay) {
+                                                            MaterialTheme.colorScheme.primary
+                                                        } else {
+                                                            MaterialTheme.colorScheme.surfaceContainerHigh
+                                                        },
+                                                        contentColor = if (selectedDay) {
+                                                            MaterialTheme.colorScheme.onPrimary
+                                                        } else {
+                                                            MaterialTheme.colorScheme.onSurfaceVariant
+                                                        },
+                                                        modifier = Modifier
+                                                            .heightIn(min = 38.dp)
+                                                            .testTag("notif_weekly_day_chip_${shortLabel.lowercase()}")
+                                                    ) {
+                                                        Box(
+                                                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                                                            contentAlignment = Alignment.Center
+                                                        ) {
+                                                            Text(
+                                                                text = shortLabel,
+                                                                style = MaterialTheme.typography.labelSmall,
+                                                                fontWeight = if (selectedDay) FontWeight.Bold else FontWeight.Medium,
+                                                                maxLines = 1
+                                                            )
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    if (subCategory == NotificationSubCategory.MONTHLY_SUMMARY) {
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(start = 12.dp, end = 12.dp, bottom = 10.dp)
+                                                .testTag("notif_monthly_end_of_month_badge"),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.CalendarMonth,
+                                                contentDescription = null,
+                                                tint = MaterialTheme.colorScheme.primary,
+                                                modifier = Modifier.size(14.dp)
+                                            )
+                                            Text(
+                                                text = "Auto-adjusts for 28, 29, 30, or 31-day months",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+
+                            if (showSummaryTimePicker) {
+                                AppTimePickerDialog(
+                                    initialHour = curHour,
+                                    initialMinute = curMinute,
+                                    title = "${subCategory.shortName} Time",
+                                    is24Hour = false,
+                                    onDismiss = { showSummaryTimePicker = false },
+                                    onConfirmTime = { pickedHour, pickedMinute ->
+                                        performHaptic()
+                                        LocalAccountSessionManager.updateFcmPushSettings(
+                                            context = context,
+                                            newSettings = fcmPushSettings.withSummaryTime(
+                                                subCategory = subCategory,
+                                                hour = pickedHour,
+                                                minute = pickedMinute
+                                            )
+                                        )
+                                    }
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Card 5 of 6: FCM Push Notifications
+            item {
+                val fcmPushNotifCategories = listOf(
+                    NotificationSubCategory.FAMILY_SYNC,
+                    NotificationSubCategory.BUDGET_LIMITS
+                )
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = dimens.horizontalPadding, vertical = 1.5.dp)
+                        .testTag("fcm_push_settings_card"),
+                    shape = groupedCardShape(index = 4, count = 6),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(dimens.cardPadding),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            modifier = Modifier.padding(horizontal = 4.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.NotificationsActive,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Text(
+                                text = "FCM Push Notifications",
+                                style = MaterialTheme.typography.labelLarge,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                        }
+
+                        fcmPushNotifCategories.forEach { subCategory ->
+                            val isEnabled = fcmPushSettings.isSubCategoryEnabled(subCategory)
+                            val subTag = subCategory.name.lowercase()
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(14.dp))
+                                    .clickable {
+                                        performHaptic()
+                                        LocalAccountSessionManager.updateFcmPushSettings(
+                                            context = context,
+                                            newSettings = fcmPushSettings.withSubCategoryEnabled(subCategory, !isEnabled)
+                                        )
+                                    }
+                                    .padding(horizontal = 4.dp, vertical = 4.dp)
+                                    .testTag("notif_subcategory_row_$subTag"),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Column(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .padding(end = 8.dp),
+                                    verticalArrangement = Arrangement.spacedBy(1.dp)
+                                ) {
+                                    Text(
+                                        text = subCategory.shortName,
+                                        style = MaterialTheme.typography.titleSmall,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = MaterialTheme.colorScheme.onSurface
+                                    )
+                                    Text(
+                                        text = subCategory.description,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                                M3CheckmarkSwitch(
+                                    checked = isEnabled,
+                                    onCheckedChange = { checked ->
+                                        performHaptic()
+                                        LocalAccountSessionManager.updateFcmPushSettings(
+                                            context = context,
+                                            newSettings = fcmPushSettings.withSubCategoryEnabled(subCategory, checked)
+                                        )
+                                    },
+                                    modifier = Modifier.testTag("notif_subcategory_switch_$subTag")
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Card 6 of 6: Card Limit Alert Threshold
             item {
                 Card(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(horizontal = dimens.horizontalPadding, vertical = 1.5.dp)
                         .testTag("notif_credit_threshold_card"),
-                    shape = groupedCardShape(index = 1, count = 2),
+                    shape = groupedCardShape(index = 5, count = 6),
                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
                     elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
                 ) {
@@ -1818,6 +1966,7 @@ internal fun SmsSyncSettingsPage(
     smsSyncPeriodOption: SmsSyncPeriodOption,
     smsSyncCustomRange: Pair<Long, Long>?,
     onSelectSmsSyncPeriod: (SmsSyncPeriodOption) -> Unit,
+    onSelectSmsSyncCustomRange: ((Long, Long) -> Unit)? = null,
     onOpenCustomRangePicker: () -> Unit,
     onScanSmsClick: () -> Unit,
     onBackClick: () -> Unit
@@ -1890,120 +2039,35 @@ internal fun SmsSyncSettingsPage(
                             }
                         }
 
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .testTag("settings_sms_sync_period_selector"),
-                            verticalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                                    modifier = Modifier.weight(1f)
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Default.CalendarMonth,
-                                        contentDescription = "Fetch SMS From",
-                                        tint = MaterialTheme.colorScheme.primary,
-                                        modifier = Modifier.size(16.dp)
-                                    )
-                                    Text(
-                                        text = "Fetch SMS From",
-                                        style = MaterialTheme.typography.labelLarge,
-                                        fontWeight = FontWeight.Bold,
-                                        color = MaterialTheme.colorScheme.onSurface,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
-                                }
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Surface(
-                                    shape = RoundedCornerShape(50),
-                                    color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.78f),
-                                    modifier = Modifier
-                                        .clip(RoundedCornerShape(50))
-                                        .clickable {
-                                            if (smsSyncPeriodOption == SmsSyncPeriodOption.CUSTOM) {
-                                                performHaptic()
-                                                onOpenCustomRangePicker()
-                                            }
-                                        }
-                                        .testTag("settings_sms_sync_selected_period_label")
-                                ) {
-                                    Text(
-                                        text = smsSyncPeriodOption.formatRangeSummary(smsSyncCustomRange),
-                                        style = MaterialTheme.typography.labelSmall.copy(fontFamily = ReceiptMonoFontFamily),
-                                        fontWeight = FontWeight.Bold,
-                                        color = MaterialTheme.colorScheme.onPrimaryContainer,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis,
-                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
-                                    )
-                                }
-                            }
+                        SmsSyncPeriodExpressiveSlider(
+                            selectedPeriod = smsSyncPeriodOption,
+                            customRange = smsSyncCustomRange,
+                            onSelectPeriod = onSelectSmsSyncPeriod,
+                            onOpenCustomRangePicker = onOpenCustomRangePicker,
+                            onUpdateCustomRange = onSelectSmsSyncCustomRange,
+                            containerTag = "settings_sms_sync_period_selector",
+                            selectedLabelTag = "settings_sms_sync_selected_period_label",
+                            sliderTag = "settings_sms_period_slider",
+                            chipTagPrefix = "settings_sms_period_chip"
+                        )
+                    }
+                }
+            }
 
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .horizontalScroll(rememberScrollState()),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                SmsSyncPeriodOption.entries.forEach { option ->
-                                    val isSelected = smsSyncPeriodOption == option
-                                    FilterChip(
-                                        selected = isSelected,
-                                        onClick = {
-                                            performHaptic()
-                                            if (option == SmsSyncPeriodOption.CUSTOM) {
-                                                onOpenCustomRangePicker()
-                                            } else {
-                                                onSelectSmsSyncPeriod(option)
-                                            }
-                                        },
-                                        label = {
-                                            Text(
-                                                text = if (option == SmsSyncPeriodOption.CUSTOM && smsSyncCustomRange != null) {
-                                                    option.formatRangeSummary(smsSyncCustomRange)
-                                                } else {
-                                                    option.label
-                                                },
-                                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-                                                maxLines = 1,
-                                                overflow = TextOverflow.Ellipsis
-                                            )
-                                        },
-                                        leadingIcon = if (isSelected) {
-                                            {
-                                                Icon(
-                                                    imageVector = Icons.Default.Check,
-                                                    contentDescription = null,
-                                                    modifier = Modifier.size(FilterChipDefaults.IconSize)
-                                                )
-                                            }
-                                        } else if (option == SmsSyncPeriodOption.CUSTOM) {
-                                            {
-                                                Icon(
-                                                    imageVector = Icons.Default.CalendarMonth,
-                                                    contentDescription = null,
-                                                    modifier = Modifier.size(FilterChipDefaults.IconSize)
-                                                )
-                                            }
-                                        } else {
-                                            null
-                                        },
-                                        shape = RoundedCornerShape(50),
-                                        modifier = Modifier.testTag("settings_sms_period_chip_${option.name.lowercase()}")
-                                    )
-                                }
-                            }
-                        }
-
+            item {
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = dimens.horizontalPadding),
+                    shape = RoundedCornerShape(24.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(dimens.cardPadding)
+                    ) {
                         FilledTonalButton(
                             onClick = {
                                 performHaptic()

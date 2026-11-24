@@ -1583,17 +1583,75 @@ object SpendSummaryAlarmScheduler {
         return cal.timeInMillis
     }
 
+    fun computeNextWeeklyTriggerMillis(
+        dayOfWeek: Int,
+        hourOfDay: Int,
+        minute: Int,
+        nowMillis: Long = System.currentTimeMillis()
+    ): Long {
+        val targetDow = dayOfWeek.coerceIn(Calendar.SUNDAY, Calendar.SATURDAY)
+        val cal = Calendar.getInstance().apply {
+            timeInMillis = nowMillis
+            set(Calendar.HOUR_OF_DAY, hourOfDay.coerceIn(0, 23))
+            set(Calendar.MINUTE, minute.coerceIn(0, 59))
+            set(Calendar.SECOND, 0)
+            set(Calendar.MILLISECOND, 0)
+        }
+        val currentDow = cal.get(Calendar.DAY_OF_WEEK)
+        var daysUntil = (targetDow - currentDow + 7) % 7
+        if (daysUntil == 0 && cal.timeInMillis <= nowMillis) {
+            daysUntil = 7
+        }
+        cal.add(Calendar.DAY_OF_YEAR, daysUntil)
+        return cal.timeInMillis
+    }
+
+    fun computeNextEndOfMonthTriggerMillis(
+        hourOfDay: Int,
+        minute: Int,
+        nowMillis: Long = System.currentTimeMillis()
+    ): Long {
+        val cal = Calendar.getInstance().apply {
+            timeInMillis = nowMillis
+            set(Calendar.DAY_OF_MONTH, 1)
+            set(Calendar.DAY_OF_MONTH, getActualMaximum(Calendar.DAY_OF_MONTH))
+            set(Calendar.HOUR_OF_DAY, hourOfDay.coerceIn(0, 23))
+            set(Calendar.MINUTE, minute.coerceIn(0, 59))
+            set(Calendar.SECOND, 0)
+            set(Calendar.MILLISECOND, 0)
+        }
+        if (cal.timeInMillis <= nowMillis) {
+            cal.set(Calendar.DAY_OF_MONTH, 1)
+            cal.add(Calendar.MONTH, 1)
+            cal.set(Calendar.DAY_OF_MONTH, cal.getActualMaximum(Calendar.DAY_OF_MONTH))
+        }
+        return cal.timeInMillis
+    }
+
     fun computeTriggerMillisForPeriod(
         period: SpendSummaryPeriod,
         settings: com.example.data.model.FcmPushSettings,
         nowMillis: Long = System.currentTimeMillis()
     ): Long {
         val (hour, minute) = settings.getSummaryTime(period.subCategory)
-        return computeNextTriggerMillis(
-            hourOfDay = hour,
-            minute = minute,
-            nowMillis = nowMillis
-        )
+        return when (period) {
+            SpendSummaryPeriod.DAILY -> computeNextTriggerMillis(
+                hourOfDay = hour,
+                minute = minute,
+                nowMillis = nowMillis
+            )
+            SpendSummaryPeriod.WEEKLY -> computeNextWeeklyTriggerMillis(
+                dayOfWeek = settings.weeklySummaryDayOfWeek,
+                hourOfDay = hour,
+                minute = minute,
+                nowMillis = nowMillis
+            )
+            SpendSummaryPeriod.MONTHLY -> computeNextEndOfMonthTriggerMillis(
+                hourOfDay = hour,
+                minute = minute,
+                nowMillis = nowMillis
+            )
+        }
     }
 
     fun scheduleNextSummaryAlarms(context: Context, nowMillis: Long = System.currentTimeMillis()) {
