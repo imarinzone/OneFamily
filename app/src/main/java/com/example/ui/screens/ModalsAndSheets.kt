@@ -3792,11 +3792,6 @@ fun FirstTimeSmsSyncScreen(
         backPressBlockedWarning = true
     }
 
-    androidx.activity.compose.BackHandler(enabled = isFromSettings && !syncState.isSyncing) {
-        performHaptic()
-        onSkipClick()
-    }
-
     if (showCustomRangePicker) {
         CustomDateRangePickerModal(
             initialStartMillis = customDateRange?.first,
@@ -3809,12 +3804,20 @@ fun FirstTimeSmsSyncScreen(
         )
     }
 
-    Surface(
-        modifier = Modifier
-            .fillMaxSize()
-            .testTag("first_time_sms_sync_screen"),
-        color = MaterialTheme.colorScheme.background
+    com.example.ui.components.PredictiveBackSurface(
+        enabled = isFromSettings && !syncState.isSyncing,
+        onBack = {
+            performHaptic()
+            onSkipClick()
+        },
+        modifier = Modifier.fillMaxSize()
     ) {
+        Surface(
+            modifier = Modifier
+                .fillMaxSize()
+                .testTag("first_time_sms_sync_screen"),
+            color = MaterialTheme.colorScheme.background
+        ) {
         BoxWithConstraints(
             modifier = Modifier
                 .fillMaxSize()
@@ -4384,6 +4387,7 @@ fun FirstTimeSmsSyncScreen(
                     )
                 }
             }
+        }
         }
     }
 }

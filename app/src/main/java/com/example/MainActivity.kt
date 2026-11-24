@@ -9,7 +9,6 @@ import android.os.Bundle
 import android.provider.Settings
 import android.provider.Telephony
 import androidx.activity.ComponentActivity
-import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -112,6 +111,8 @@ import com.example.ui.auth.signOut
 import com.example.ui.components.AppDecoratedBackground
 import com.example.ui.components.CategoryWheelOverlayHost
 import com.example.ui.components.MonthPeriodSelectorBar
+import com.example.ui.components.PredictiveBackSurface
+import com.example.ui.components.predictiveBackContentTransform
 import com.example.ui.screens.AccountDetailScreen
 import com.example.ui.screens.AccountsTabScreen
 import com.example.ui.screens.AddAccountDialog
@@ -243,20 +244,7 @@ fun AppNavigation(
     AnimatedContent(
         targetState = activeUid,
         transitionSpec = {
-            val spatialSpring = spring<androidx.compose.ui.unit.IntOffset>(
-                dampingRatio = Spring.DampingRatioNoBouncy,
-                stiffness = Spring.StiffnessMediumLow
-            )
-            val alphaSpring = spring<Float>(stiffness = Spring.StiffnessMedium)
-            if (targetState != null && initialState == null) {
-                (slideInVertically(spatialSpring) { it / 6 } + fadeIn(alphaSpring))
-                    .togetherWith(slideOutVertically(spatialSpring) { -it / 8 } + fadeOut(alphaSpring))
-            } else if (targetState == null && initialState != null) {
-                (slideInVertically(spatialSpring) { -it / 6 } + fadeIn(alphaSpring))
-                    .togetherWith(slideOutVertically(spatialSpring) { it / 6 } + fadeOut(alphaSpring))
-            } else {
-                fadeIn(alphaSpring).togetherWith(fadeOut(alphaSpring))
-            }
+            predictiveBackContentTransform(isPop = targetState == null && initialState != null)
         },
         label = "app_auth_shell_transition"
     ) { resolvedUid ->
@@ -291,6 +279,12 @@ enum class OneFamilyNavTab(
 
     val icon: ImageVector
         get() = selectedIcon
+}
+
+private sealed interface ShellOverlayRoute {
+    data object MainPager : ShellOverlayRoute
+    data object AllTransactionsOverlay : ShellOverlayRoute
+    data class AccountDetail(val accountId: String) : ShellOverlayRoute
 }
 
 @Composable
@@ -549,18 +543,7 @@ fun OneFamilyMainShell(
     AnimatedContent(
         targetState = showSmsSyncScreen,
         transitionSpec = {
-            val spatialSpring = spring<androidx.compose.ui.unit.IntOffset>(
-                dampingRatio = Spring.DampingRatioNoBouncy,
-                stiffness = Spring.StiffnessMediumLow
-            )
-            val alphaSpring = spring<Float>(stiffness = Spring.StiffnessMedium)
-            if (targetState) {
-                (slideInVertically(spatialSpring) { it / 5 } + fadeIn(alphaSpring))
-                    .togetherWith(slideOutVertically(spatialSpring) { -it / 8 } + fadeOut(alphaSpring))
-            } else {
-                (slideInVertically(spatialSpring) { -it / 8 } + fadeIn(alphaSpring))
-                    .togetherWith(slideOutVertically(spatialSpring) { it / 5 } + fadeOut(alphaSpring))
-            }
+            predictiveBackContentTransform(isPop = !targetState)
         },
         label = "sms_sync_dashboard_transition"
     ) { isSyncScreenVisible ->
@@ -605,20 +588,6 @@ fun OneFamilyMainShell(
                 }
             )
         } else {
-            if (selectedAccountDetailId != null) {
-                BackHandler {
-                    selectedAccountDetailId = null
-                }
-            } else if (showAllTransactionsPage) {
-                BackHandler {
-                    showAllTransactionsPage = false
-                }
-            } else if (currentTab != OneFamilyNavTab.HOME) {
-                BackHandler {
-                    navigateToTab(OneFamilyNavTab.HOME)
-                }
-            }
-
             CategoryWheelOverlayHost(
                 availableCategories = uiState.availableCategories,
                 onCommitCategory = { tx, newCategory ->
@@ -684,83 +653,121 @@ fun OneFamilyMainShell(
                     }
                 }
 
+                val activeOverlayRoute: ShellOverlayRoute = when {
+                    activeDetailAccount != null -> ShellOverlayRoute.AccountDetail(activeDetailAccount.account.id)
+                    showAllTransactionsPage -> ShellOverlayRoute.AllTransactionsOverlay
+                    else -> ShellOverlayRoute.MainPager
+                }
+
                 val pagerContent: @Composable (Modifier) -> Unit = { pagerModifier ->
-                    if (activeDetailAccount != null) {
-                        Box(modifier = pagerModifier) {
-                            AccountDetailScreen(
-                                summary = activeDetailAccount,
-                                currencySymbol = uiState.activeCurrencySymbol,
-                                availableCategories = uiState.availableCategories,
-                                onBackClick = { selectedAccountDetailId = null },
-                                onSaveSpendLimitAndCycle = { account, monthlyLimit, billingCycleDay ->
-                                    viewModel.updateAccountSpendLimit(
-                                        account = account,
-                                        monthlySpendLimit = monthlyLimit,
-                                        billingCycleDay = billingCycleDay
+                    AnimatedContent(
+                        targetState = activeOverlayRoute,
+                        transitionSpec = {
+                            val isPop = targetState == ShellOverlayRoute.MainPager ||
+                                (initialState is ShellOverlayRoute.AccountDetail && targetState == ShellOverlayRoute.AllTransactionsOverlay)
+                            predictiveBackContentTransform(isPop = isPop)
+                        },
+                        modifier = pagerModifier,
+                        label = "shell_predictive_back_navigation"
+                    ) { route ->
+                        when (route) {
+                            is ShellOverlayRoute.AccountDetail -> {
+                                val detailSummary = uiState.accountSummaries.firstOrNull { it.account.id == route.accountId }
+                                    ?: activeDetailAccount
+                                if (detailSummary != null) {
+                                    PredictiveBackSurface(
+                                        enabled = true,
+                                        onBack = { selectedAccountDetailId = null },
+                                        modifier = Modifier.fillMaxSize()
+                                    ) {
+                                        AccountDetailScreen(
+                                            summary = detailSummary,
+                                            currencySymbol = uiState.activeCurrencySymbol,
+                                            availableCategories = uiState.availableCategories,
+                                            onBackClick = { selectedAccountDetailId = null },
+                                            onSaveSpendLimitAndCycle = { account, monthlyLimit, billingCycleDay ->
+                                                viewModel.updateAccountSpendLimit(
+                                                    account = account,
+                                                    monthlySpendLimit = monthlyLimit,
+                                                    billingCycleDay = billingCycleDay
+                                                )
+                                            },
+                                            onToggleAccountHidden = { summary, hidden ->
+                                                viewModel.setAccountHidden(context, summary, hidden)
+                                            },
+                                            onDeleteOrUntrackAccount = { summary ->
+                                                viewModel.deleteOrUntrackAccount(context, summary)
+                                                selectedAccountDetailId = null
+                                            },
+                                            onEditTransaction = { editingTransaction = it },
+                                            onQuickChangeCategory = { quickCategoryTransaction = it },
+                                            onToggleExcludeTransaction = { viewModel.toggleTransactionExcluded(it) },
+                                            onDeleteTransaction = { viewModel.deleteTransaction(it) }
+                                        )
+                                    }
+                                }
+                            }
+
+                            ShellOverlayRoute.AllTransactionsOverlay -> {
+                                PredictiveBackSurface(
+                                    enabled = true,
+                                    onBack = { showAllTransactionsPage = false },
+                                    modifier = Modifier.fillMaxSize()
+                                ) {
+                                    AllTransactionsScreen(
+                                        uiState = uiState,
+                                        onBackClick = { showAllTransactionsPage = false },
+                                        onScopeSelected = { viewModel.selectScope(it) },
+                                        onSelectPeriod = { viewModel.selectPeriod(it) },
+                                        onSelectDateRangePreset = { viewModel.selectDateRangePreset(it) },
+                                        onSelectCustomDateRange = { s, e -> viewModel.selectCustomDateRange(s, e) },
+                                        onSearchQueryChange = { viewModel.updateSearchQuery(it) },
+                                        onSelectType = { viewModel.selectTypeFilter(it) },
+                                        onSelectCategory = { viewModel.selectCategoryFilter(it) },
+                                        onSelectPaymentMode = { viewModel.selectPaymentModeFilter(it) },
+                                        onSelectAccount = { viewModel.selectAccountFilter(it) },
+                                        onSelectTag = { viewModel.selectTagFilter(it) },
+                                        onSelectMerchant = { viewModel.selectMerchantFilter(it) },
+                                        onSelectSortOrder = { viewModel.selectSortOrder(it) },
+                                        onClearFilters = { viewModel.clearFilters() },
+                                        onExportCsvClick = { showExportCsvDialog = true },
+                                        onAddTransactionClick = { showAddTransactionDialog = true },
+                                        onEditMonthlyBudget = { showEditOverallBudgetDialog = true },
+                                        onAddCustomCategoryClick = { showAddCustomCategoryDialog = true },
+                                        onSaveCategoryBudgetInline = { category, limit ->
+                                            viewModel.saveCategoryBudget(
+                                                category = category,
+                                                monthlyLimit = limit,
+                                                alertThresholdPercent = 80,
+                                                isShared = uiState.householdFeatureEnabled &&
+                                                    uiState.selectedScope == BudgetScope.HOUSEHOLD_SHARED &&
+                                                    uiState.household != null
+                                            )
+                                        },
+                                        onEditTransaction = { editingTransaction = it },
+                                        onQuickChangeCategory = { quickCategoryTransaction = it },
+                                        onToggleTransactionPrivacy = { viewModel.toggleTransactionPrivacy(it) },
+                                        onToggleExcludeTransaction = { viewModel.toggleTransactionExcluded(it) },
+                                        onLinkDuplicateTransaction = { linkingDuplicateTransaction = it },
+                                        onDeleteTransaction = { viewModel.deleteTransaction(it) },
+                                        onUndoLastSwipeAction = { viewModel.undoLastSwipeAction() }
                                     )
-                                },
-                                onToggleAccountHidden = { summary, hidden ->
-                                    viewModel.setAccountHidden(context, summary, hidden)
-                                },
-                                onDeleteOrUntrackAccount = { summary ->
-                                    viewModel.deleteOrUntrackAccount(context, summary)
-                                    selectedAccountDetailId = null
-                                },
-                                onEditTransaction = { editingTransaction = it },
-                                onQuickChangeCategory = { quickCategoryTransaction = it },
-                                onToggleExcludeTransaction = { viewModel.toggleTransactionExcluded(it) },
-                                onDeleteTransaction = { viewModel.deleteTransaction(it) }
-                            )
-                        }
-                    } else if (showAllTransactionsPage) {
-                        Box(modifier = pagerModifier) {
-                            AllTransactionsScreen(
-                                uiState = uiState,
-                                onBackClick = { showAllTransactionsPage = false },
-                                onScopeSelected = { viewModel.selectScope(it) },
-                                onSelectPeriod = { viewModel.selectPeriod(it) },
-                                onSelectDateRangePreset = { viewModel.selectDateRangePreset(it) },
-                                onSelectCustomDateRange = { s, e -> viewModel.selectCustomDateRange(s, e) },
-                                onSearchQueryChange = { viewModel.updateSearchQuery(it) },
-                                onSelectType = { viewModel.selectTypeFilter(it) },
-                                onSelectCategory = { viewModel.selectCategoryFilter(it) },
-                                onSelectPaymentMode = { viewModel.selectPaymentModeFilter(it) },
-                                onSelectAccount = { viewModel.selectAccountFilter(it) },
-                                onSelectTag = { viewModel.selectTagFilter(it) },
-                                onSelectMerchant = { viewModel.selectMerchantFilter(it) },
-                                onSelectSortOrder = { viewModel.selectSortOrder(it) },
-                                onClearFilters = { viewModel.clearFilters() },
-                                onExportCsvClick = { showExportCsvDialog = true },
-                                onAddTransactionClick = { showAddTransactionDialog = true },
-                                onEditMonthlyBudget = { showEditOverallBudgetDialog = true },
-                                onAddCustomCategoryClick = { showAddCustomCategoryDialog = true },
-                                onSaveCategoryBudgetInline = { category, limit ->
-                                    viewModel.saveCategoryBudget(
-                                        category = category,
-                                        monthlyLimit = limit,
-                                        alertThresholdPercent = 80,
-                                        isShared = uiState.householdFeatureEnabled &&
-                                            uiState.selectedScope == BudgetScope.HOUSEHOLD_SHARED &&
-                                            uiState.household != null
-                                    )
-                                },
-                                onEditTransaction = { editingTransaction = it },
-                                onQuickChangeCategory = { quickCategoryTransaction = it },
-                                onToggleTransactionPrivacy = { viewModel.toggleTransactionPrivacy(it) },
-                                onToggleExcludeTransaction = { viewModel.toggleTransactionExcluded(it) },
-                                onLinkDuplicateTransaction = { linkingDuplicateTransaction = it },
-                                onDeleteTransaction = { viewModel.deleteTransaction(it) },
-                                onUndoLastSwipeAction = { viewModel.undoLastSwipeAction() }
-                            )
-                        }
-                    } else {
-                        HorizontalPager(
-                            state = pagerState,
-                            modifier = pagerModifier
-                        ) { pageIndex ->
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxSize()
+                                }
+                            }
+
+                            ShellOverlayRoute.MainPager -> {
+                                PredictiveBackSurface(
+                                    enabled = currentTab != OneFamilyNavTab.HOME,
+                                    onBack = { navigateToTab(OneFamilyNavTab.HOME) },
+                                    modifier = Modifier.fillMaxSize()
+                                ) {
+                                    HorizontalPager(
+                                        state = pagerState,
+                                        modifier = Modifier.fillMaxSize()
+                                    ) { pageIndex ->
+                                        Box(
+                                            modifier = Modifier
+                                                .fillMaxSize()
                                     .graphicsLayer {
                                         val pageOffset = ((pagerState.currentPage - pageIndex) + pagerState.currentPageOffsetFraction)
                                         val absOffset = kotlin.math.abs(pageOffset).coerceIn(0f, 1f)
@@ -959,6 +966,9 @@ fun OneFamilyMainShell(
                                             viewModel.acceptEmailInvitation(household)
                                         }
                                     )
+                                }
+                            }
+                        }
                                 }
                             }
                         }

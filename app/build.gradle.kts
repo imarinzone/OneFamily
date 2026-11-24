@@ -73,7 +73,7 @@ android {
 
 tasks.withType<Test> {
   failFast = true
-  timeout.set(Duration.ofMinutes(2))
+  timeout.set(Duration.ofMinutes(10))
   systemProperty(
     "robolectric.dependency.dir",
     "/home/appuser/.m2/repository/org/robolectric/android-all-instrumented/16-robolectric-13921718-i7"

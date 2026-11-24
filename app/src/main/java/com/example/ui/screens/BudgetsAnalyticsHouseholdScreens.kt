@@ -1,16 +1,12 @@
 package com.example.ui.screens
 
-import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.spring
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.slideInHorizontally
-import androidx.compose.animation.slideOutHorizontally
-import androidx.compose.animation.togetherWith
+import com.example.ui.components.PredictiveBackSurface
+import com.example.ui.components.predictiveBackContentTransform
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -2457,10 +2453,6 @@ fun HouseholdTabScreen(
     var showDeleteAccountConfirmDialog by rememberSaveable { mutableStateOf(false) }
     var showSmsCustomRangePicker by rememberSaveable { mutableStateOf(false) }
 
-    BackHandler(enabled = selectedCategory != null) {
-        selectedCategory = null
-    }
-
     if (showSmsCustomRangePicker) {
         CustomDateRangePickerModal(
             initialStartMillis = smsSyncCustomRange?.first,
@@ -2537,18 +2529,12 @@ fun HouseholdTabScreen(
     AnimatedContent(
         targetState = selectedCategory,
         transitionSpec = {
-            if (targetState != null) {
-                (slideInHorizontally { it / 3 } + fadeIn()) togetherWith
-                    (slideOutHorizontally { -it / 4 } + fadeOut())
-            } else {
-                (slideInHorizontally { -it / 3 } + fadeIn()) togetherWith
-                    (slideOutHorizontally { it / 4 } + fadeOut())
-            }
+            predictiveBackContentTransform(isPop = targetState == null)
         },
         label = "settings_category_navigation"
     ) { activeCategory ->
-        when (activeCategory) {
-            null -> SettingsCategoryListPage(
+        if (activeCategory == null) {
+            SettingsCategoryListPage(
                 displayName = displayName,
                 currentUserEmail = currentUserEmail,
                 isDarkActive = isDarkActive,
@@ -2560,6 +2546,13 @@ fun HouseholdTabScreen(
                 expertModeEnabled = expertFeatureFlags.expertModeEnabled,
                 onSelectCategory = { selectedCategory = it }
             )
+        } else {
+            PredictiveBackSurface(
+                enabled = true,
+                onBack = { selectedCategory = null },
+                modifier = Modifier.fillMaxSize()
+            ) {
+                when (activeCategory) {
 
             SettingsCategory.ACCOUNT -> AccountSettingsPage(
                 displayName = displayName,
@@ -2621,6 +2614,8 @@ fun HouseholdTabScreen(
                 crashlyticsSettings = crashlyticsSettings,
                 onBackClick = { selectedCategory = null }
             )
+                }
+            }
         }
     }
 }
