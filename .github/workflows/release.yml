@@ -2,6 +2,9 @@ name: Release One Family APK
 
 on:
   push:
+    branches:
+      - main
+      - master
     tags:
       - 'v*.*.*'
       - 'v*'
@@ -34,6 +37,7 @@ env:
 jobs:
   test:
     name: Release Verification Tests
+    if: github.ref_type == 'tag' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
 
     steps:
@@ -163,6 +167,7 @@ jobs:
   release:
     name: Build & Sign Release APK
     needs: test
+    if: always() && !cancelled() && (needs.test.result == 'success' || needs.test.result == 'skipped')
     runs-on: ubuntu-latest
 
     steps:
