@@ -21,6 +21,9 @@ android {
     versionName = "1.0"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+    val hideMockUserLogin = System.getenv("HIDE_MOCK_USER_LOGIN").equals("true", ignoreCase = true)
+    buildConfigField("boolean", "SHOW_MOCK_USER_LOGIN", (!hideMockUserLogin).toString())
   }
 
   // Do not remove or modify these signingConfigs. They are necessary for building, installing,
@@ -46,6 +49,7 @@ android {
       isCrunchPngs = false
       isMinifyEnabled = false
       proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+      buildConfigField("boolean", "SHOW_MOCK_USER_LOGIN", "false")
       // Do not remove or modify this signingConfig assignment. It is necessary for Android apps in
       // AI Studio.
       signingConfig = signingConfigs.getByName("release")

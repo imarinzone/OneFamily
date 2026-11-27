@@ -1034,7 +1034,7 @@ class OneFamilyRepository(
                             "accountName" to candidate.suggestedAccountName.ifBlank { parsed.bankName }.take(100),
                             "paymentMode" to paymentMode,
                             "tags" to tags,
-                            "notes" to "[${parsed.sender}] ${parsed.smsBody}".take(500),
+                            "notes" to "",
                             "visibility" to if (effectiveShared) "SHARED" else "PERSONAL",
                             "smsSignature" to candidate.id.take(200),
                             "linkedSmsSignatures" to emptyList<String>(),

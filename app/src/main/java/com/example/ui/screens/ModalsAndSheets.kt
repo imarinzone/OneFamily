@@ -146,6 +146,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.data.export.CsvExportScope
 import com.example.data.export.CsvTransactionExporter
 import com.example.data.local.LocalAccountDataStore
@@ -2052,11 +2053,31 @@ fun EditTransactionDialog(
     } else {
         transaction.amount.toString()
     }
-    val rawSmsRecord = remember(transaction.id, transaction.smsSignature, transaction.notes) {
+    val context = LocalContext.current
+    val smsRawMap by LocalAccountDataStore.smsRawMessages.collectAsStateWithLifecycle()
+    val rawSmsRecord = remember(transaction.id, transaction.smsSignature, transaction.notes, smsRawMap) {
+        LocalAccountDataStore.ensureInitialized(context)
         LocalAccountDataStore.getSmsMessageForTransaction(transaction)
     }
-    val linkedSmsRecords = remember(transaction.id, transaction.smsSignature, transaction.linkedSmsSignatures, transaction.notes) {
+    val linkedSmsRecords = remember(transaction.id, transaction.smsSignature, transaction.linkedSmsSignatures, transaction.notes, smsRawMap) {
+        LocalAccountDataStore.ensureInitialized(context)
         LocalAccountDataStore.getLinkedSmsMessagesForTransaction(transaction)
+    }
+    LaunchedEffect(transaction.id, rawSmsRecord) {
+        val rec = rawSmsRecord ?: return@LaunchedEffect
+        val cacheKey = rec.signature.ifBlank {
+            transaction.smsSignature.ifBlank { transaction.id }
+        }
+        if (cacheKey.isNotBlank() && smsRawMap[cacheKey] == null) {
+            LocalAccountDataStore.ensureInitialized(context)
+            LocalAccountDataStore.cacheSmsMessage(
+                signature = cacheKey,
+                sender = rec.sender,
+                body = rec.body,
+                timestamp = rec.timestamp,
+                persistImmediately = true
+            )
+        }
     }
 
     InteractiveReceiptSheet(
@@ -2067,7 +2088,7 @@ fun EditTransactionDialog(
         initialPaymentMode = transaction.paymentMode,
         initialAccountName = transaction.accountName,
         initialTagsInput = transaction.tags.joinToString(", "),
-        initialNotes = SmsInboxReader.stripSyntheticAutoParsedNote(transaction.notes),
+        initialNotes = SmsInboxReader.stripEmbeddedSmsFromNotes(transaction.notes),
         initialIsShared = transaction.visibility == "SHARED" && hasHousehold,
         initialIsExcludedFromExpense = transaction.isExcludedFromExpense,
         initialDateMillis = transaction.transactionDateMillis,

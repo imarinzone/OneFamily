@@ -278,7 +278,18 @@ object DateRangeFilterUtils {
             DateRangePreset.ALL_TIME -> "All Time"
             DateRangePreset.CUSTOM -> {
                 if (customRange != null) {
-                    "${shortFmt.format(customRange.first)} - ${shortFmt.format(customRange.second)}"
+                    val startLabel = shortFmt.format(customRange.first)
+                    val endLabel = shortFmt.format(customRange.second)
+                    if (startLabel == endLabel) {
+                        if (startLabel == shortFmt.format(referenceMillis)) {
+                            val dayMonthFmt = SimpleDateFormat("d MMM", Locale.getDefault())
+                            "Today · ${dayMonthFmt.format(customRange.first)}"
+                        } else {
+                            startLabel
+                        }
+                    } else {
+                        "$startLabel - $endLabel"
+                    }
                 } else {
                     "Custom Range"
                 }
@@ -1086,7 +1097,9 @@ class OneFamilyViewModel(
             if (savedAccounts.isEmpty()) return null
             val txAcc = tx.accountName.trim()
             val txMode = tx.paymentMode.trim().uppercase()
-            val txNotesLower = tx.notes.lowercase()
+            val linkedSmsBody = LocalAccountDataStore.getSmsMessageForTransaction(tx)?.body.orEmpty()
+            val txNotesRaw = if (linkedSmsBody.isNotBlank()) "${tx.notes} $linkedSmsBody" else tx.notes
+            val txNotesLower = txNotesRaw.lowercase()
             val txAccLower = txAcc.lowercase()
             val isCardTx = txMode == "CARD" ||
                 txAccLower.contains("card") ||
@@ -1115,7 +1128,7 @@ class OneFamilyViewModel(
             // 2. Last 4 digits match + optional bank overlap
             val digitsMatches = savedAccounts.filter { acc ->
                 acc.lastFourDigits.isNotBlank() &&
-                    (txAcc.contains(acc.lastFourDigits) || tx.notes.contains(acc.lastFourDigits))
+                    (txAcc.contains(acc.lastFourDigits) || txNotesRaw.contains(acc.lastFourDigits))
             }
             if (digitsMatches.isNotEmpty()) {
                 return digitsMatches.maxByOrNull { acc ->
@@ -1698,6 +1711,50 @@ class OneFamilyViewModel(
         }
         _customDateRange.value = startCal.timeInMillis to endCal.timeInMillis
         _dateRangePreset.value = DateRangePreset.CUSTOM
+    }
+
+    /**
+     * Configures the Transactions page filter to show the exact transactions belonging to a
+     * Daily, Weekly, or Monthly spend report (either from tapping a report notification or
+     * opening a report directly from Settings).
+     */
+    fun applySpendReportFilter(
+        period: com.example.data.sms.SpendSummaryPeriod,
+        startMillis: Long? = null,
+        endMillis: Long? = null
+    ) {
+        _searchQuery.value = ""
+        _categoryFilter.value = "All"
+        _paymentModeFilter.value = "All"
+        _accountFilter.value = "All"
+        _tagFilter.value = "All"
+        _merchantFilter.value = "All"
+        _memberFilter.value = "All"
+        _typeFilter.value = "EXPENSE"
+
+        val (resolvedStart, resolvedEnd) = if (startMillis != null && endMillis != null) {
+            minOf(startMillis, endMillis) to maxOf(startMillis, endMillis)
+        } else {
+            TransactionNotificationHelper.computeSummaryWindowMillis(period)
+        }
+
+        when (period) {
+            com.example.data.sms.SpendSummaryPeriod.DAILY,
+            com.example.data.sms.SpendSummaryPeriod.WEEKLY -> {
+                selectCustomDateRange(resolvedStart, resolvedEnd)
+            }
+            com.example.data.sms.SpendSummaryPeriod.MONTHLY -> {
+                _selectedPeriod.value = YearMonthPeriod.fromMillis(resolvedEnd)
+                _dateRangePreset.value = DateRangePreset.MONTH
+            }
+        }
+
+        val periodDisplay = DateRangeFilterUtils.formatPeriodLabel(
+            preset = _dateRangePreset.value,
+            selectedPeriod = _selectedPeriod.value,
+            customRange = _customDateRange.value
+        )
+        _statusBanner.value = "${period.label} • $periodDisplay"
     }
 
     fun stepMonth(delta: Int) {
@@ -2414,6 +2471,13 @@ class OneFamilyViewModel(
                 ?: "${parsed.bankName} ${parsed.type.name.lowercase().replaceFirstChar { it.uppercase() }}"
             val shareFlag = asShared && state.household != null
 
+            LocalAccountDataStore.cacheSmsMessage(
+                signature = candidate.id,
+                sender = parsed.sender,
+                body = parsed.smsBody,
+                timestamp = parsed.timestamp
+            )
+
             val result = repository.addExpense(
                 userName = currentUserName.ifBlank { state.userProfile?.displayName ?: "Me" },
                 household = state.household,
@@ -2424,7 +2488,7 @@ class OneFamilyViewModel(
                 accountName = candidate.suggestedAccountName,
                 paymentMode = candidate.suggestedPaymentMode,
                 tags = (customTags + listOf("sms-auto", parsed.bankName.lowercase().replace(" ", "-"))).distinct(),
-                notes = "[${parsed.sender}] ${parsed.smsBody}".take(500),
+                notes = "",
                 isShared = shareFlag,
                 smsSignature = candidate.id,
                 referenceNumber = parsed.reference.orEmpty(),

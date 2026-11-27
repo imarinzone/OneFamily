@@ -61,7 +61,6 @@ import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -93,6 +92,7 @@ import com.example.data.model.FinancialAccount
 import com.example.ui.components.BillingCycleCalendarGrid
 import com.example.ui.components.CircularTonalIconButton
 import com.example.ui.components.CustomDateRangePickerModal
+import com.example.ui.components.LiquidTankCardOverlay
 import com.example.ui.components.PerforatedSectionHeader
 import com.example.ui.components.ReceiptDashedDividerLine
 import com.example.ui.components.ReceiptTicketCard
@@ -906,6 +906,16 @@ private fun AccountCardWithTransactions(
         elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
     ) {
         Box(modifier = Modifier.fillMaxWidth()) {
+            if (summary.limit > 0.0) {
+                LiquidTankCardOverlay(
+                    fillFraction = summary.progressFraction,
+                    isOverLimit = summary.isOverLimit,
+                    isNearAlert = summary.isNearAlert,
+                    modifier = Modifier
+                        .matchParentSize()
+                        .testTag("account_limit_liquid_tank_$safeTag")
+                )
+            }
             Box(
                 modifier = Modifier
                     .matchParentSize()
@@ -1273,19 +1283,9 @@ private fun AccountCardWithTransactions(
                 }
             }
 
-            // Spend Limit Progress Tracker (scoped to account's configured Billing Cycle / Monthly period)
+            // Spend Limit Status Readout (visualized across the full card by LiquidTankCardOverlay)
             if (summary.limit > 0.0) {
                 Spacer(modifier = Modifier.height(10.dp))
-                LinearProgressIndicator(
-                    progress = { summary.progressFraction.coerceIn(0f, 1f) },
-                    color = barColor,
-                    trackColor = MaterialTheme.colorScheme.surfaceContainerHighest,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(8.dp)
-                        .clip(RoundedCornerShape(50))
-                )
-                Spacer(modifier = Modifier.height(5.dp))
                 FlowRow(
                     modifier = Modifier
                         .fillMaxWidth()

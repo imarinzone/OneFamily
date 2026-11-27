@@ -64,12 +64,16 @@ object TransactionNotificationHelper {
     const val CHANNEL_ID_CREDIT_LIMIT = "onefamily_credit_card_limit_alerts"
     const val CHANNEL_ID_SPEND_SUMMARY = "onefamily_spend_summary_alerts"
     const val ACTION_OPEN_EDIT_TRANSACTION = "com.example.action.OPEN_EDIT_TRANSACTION"
+    const val ACTION_OPEN_SPEND_REPORT = "com.example.action.OPEN_SPEND_REPORT"
     const val EXTRA_EDIT_EXPENSE_ID = "extra_edit_expense_id"
     const val EXTRA_EDIT_HOUSEHOLD_ID = "extra_edit_household_id"
     const val EXTRA_EDIT_VISIBILITY = "extra_edit_visibility"
     const val EXTRA_EDIT_CURRENT_CATEGORY = "extra_edit_current_category"
     const val EXTRA_NEW_CATEGORY = "extra_new_category"
     const val EXTRA_NOTIFICATION_ID = "extra_notification_id"
+    const val EXTRA_REPORT_PERIOD = "extra_report_period"
+    const val EXTRA_REPORT_START_MILLIS = "extra_report_start_millis"
+    const val EXTRA_REPORT_END_MILLIS = "extra_report_end_millis"
     const val extraTitle = "extra_tx_title"
     const val extraAmount = "extra_tx_amount"
 
@@ -852,7 +856,9 @@ object TransactionNotificationHelper {
         transactionCount: Int,
         topCategory: String? = null,
         currencySymbol: String = "₹",
-        forceNotify: Boolean = false
+        forceNotify: Boolean = false,
+        startMillis: Long? = null,
+        endMillis: Long? = null
     ) {
         LocalAccountSessionManager.ensureInitialized(context.applicationContext)
         val fcmSettings = LocalAccountSessionManager.fcmPushSettings.value
@@ -880,15 +886,26 @@ object TransactionNotificationHelper {
                 if (!cleanTopCat.isNullOrBlank()) {
                     append(" • Top: $cleanTopCat")
                 }
-                append(" • Total spent: $spentStr")
+                append(" • Tap to view report")
             }
         } else {
-            "No expenses logged in this period • Total spent: $spentStr"
+            "No expenses logged in this period • Tap to view report"
+        }
+
+        val (resolvedStart, resolvedEnd) = if (startMillis != null && endMillis != null) {
+            startMillis to endMillis
+        } else {
+            computeSummaryWindowMillis(period)
         }
 
         val iconCat = cleanTopCat ?: "Bills & Utilities"
         val openAppIntent = Intent(context, MainActivity::class.java).apply {
+            action = ACTION_OPEN_SPEND_REPORT
+            data = Uri.parse("onefamily://spend-report/${period.name.lowercase(Locale.US)}")
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
+            putExtra(EXTRA_REPORT_PERIOD, period.name)
+            putExtra(EXTRA_REPORT_START_MILLIS, resolvedStart)
+            putExtra(EXTRA_REPORT_END_MILLIS, resolvedEnd)
         }
         val notificationId = ("spend_summary_${period.name.lowercase()}").hashCode()
         val contentPendingIntent = PendingIntent.getActivity(
@@ -961,7 +978,9 @@ object TransactionNotificationHelper {
             transactionCount = matchingExpenses.size,
             topCategory = topCategory,
             currencySymbol = currencySymbol,
-            forceNotify = forceNotify
+            forceNotify = forceNotify,
+            startMillis = startMillis,
+            endMillis = endMillis
         )
     }
 
@@ -1093,7 +1112,7 @@ object TransactionNotificationHelper {
                 ?: "Member"
             val currencySymbol = cachedProfile?.currencySymbol?.takeIf { it.isNotBlank() } ?: "₹"
             val txTags = listOf("sms-auto", parsed.bankName.lowercase().replace(" ", "-"))
-            val txNotes = "[${parsed.sender}] ${parsed.smsBody}".take(500)
+            val txNotes = ""
 
             // 3. Persist immediately to local store so the transaction is never lost even if process is killed
             LocalAccountDataStore.cacheSmsMessage(

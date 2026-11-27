@@ -1,10 +1,17 @@
 package com.example.ui.components
 
+import android.os.Build
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
@@ -87,6 +94,7 @@ import androidx.compose.material.icons.filled.Keyboard
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.SwapVert
+import androidx.compose.material.icons.filled.Today
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -107,7 +115,6 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
@@ -149,6 +156,7 @@ import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.rotate
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
@@ -195,9 +203,11 @@ import java.util.Calendar
 import java.util.Date
 import java.util.Locale
 import java.util.TimeZone
+import kotlin.math.PI
 import kotlin.math.atan2
 import kotlin.math.hypot
 import kotlin.math.roundToInt
+import kotlin.math.sin
 
 fun formatCurrency(amount: Double, symbol: String = "₹"): String {
     val formatter = NumberFormat.getNumberInstance(Locale.forLanguageTag("en-IN")).apply {
@@ -1213,14 +1223,60 @@ fun CustomDateRangePickerModal(
         DateRangePicker(
             state = pickerState,
             title = {
-                Text(
-                    text = "Select date range",
-                    style = MaterialTheme.typography.labelLarge,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.padding(start = 20.dp, end = 16.dp, top = 16.dp, bottom = 2.dp)
-                )
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(start = 20.dp, end = 16.dp, top = 12.dp, bottom = 2.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Select date range",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    FilledTonalButton(
+                        onClick = {
+                            val nowCal = Calendar.getInstance()
+                            val todayStart = (nowCal.clone() as Calendar).apply {
+                                set(Calendar.HOUR_OF_DAY, 0)
+                                set(Calendar.MINUTE, 0)
+                                set(Calendar.SECOND, 0)
+                                set(Calendar.MILLISECOND, 0)
+                            }.timeInMillis
+                            val todayEnd = (nowCal.clone() as Calendar).apply {
+                                set(Calendar.HOUR_OF_DAY, 23)
+                                set(Calendar.MINUTE, 59)
+                                set(Calendar.SECOND, 59)
+                                set(Calendar.MILLISECOND, 999)
+                            }.timeInMillis
+                            onApplyRange(todayStart, todayEnd)
+                            onDismiss()
+                        },
+                        shape = RoundedCornerShape(50),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                        modifier = Modifier
+                            .heightIn(min = 36.dp)
+                            .testTag("custom_date_range_today_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Today,
+                            contentDescription = "Select Today",
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(5.dp))
+                        Text(
+                            text = "Today",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 1
+                        )
+                    }
+                }
             },
             headline = {
                 Text(
@@ -2106,21 +2162,11 @@ fun MonthlyBudgetPulseCard(
     val performHaptic = rememberAppHapticPerformer()
     val hasAssignedBudget = monthlyBudget > 0.0
     val rawProgress = if (hasAssignedBudget) (totalSpent / monthlyBudget).toFloat().coerceIn(0f, 1f) else 0f
-    val animatedProgress by animateFloatAsState(
-        targetValue = rawProgress,
-        animationSpec = spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessLow),
-        label = "budget_bar_progress"
-    )
     val isAboveBudget = hasAssignedBudget && totalSpent > monthlyBudget
     val diffAmount = kotlin.math.abs(monthlyBudget - totalSpent)
     val heroBgStart = MaterialTheme.colorScheme.primaryContainer
     val heroBgEnd = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.72f)
     val heroInk = MaterialTheme.colorScheme.onPrimaryContainer
-    val statusColor = when {
-        isAboveBudget -> BudgetDangerCoral
-        hasAssignedBudget && rawProgress >= 0.8f -> BudgetWarnAmber
-        else -> heroInk
-    }
 
     Surface(
         modifier = Modifier
@@ -2131,7 +2177,7 @@ fun MonthlyBudgetPulseCard(
         color = heroBgStart,
         contentColor = heroInk
     ) {
-        Column(
+        Box(
             modifier = Modifier
                 .fillMaxWidth()
                 .background(
@@ -2139,9 +2185,24 @@ fun MonthlyBudgetPulseCard(
                         colors = listOf(heroBgStart, heroBgEnd)
                     )
                 )
-                .padding(horizontal = 20.dp, vertical = 22.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
         ) {
+            if (hasAssignedBudget) {
+                LiquidTankCardOverlay(
+                    fillFraction = rawProgress,
+                    isOverLimit = isAboveBudget,
+                    isNearAlert = rawProgress >= 0.8f,
+                    onPrimaryContainerSurface = true,
+                    modifier = Modifier
+                        .matchParentSize()
+                        .testTag("home_hero_liquid_tank")
+                )
+            }
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 20.dp, vertical = 22.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
             // Centered Editorial Eyebrow & Hero Amount (Rhythm-inspired calm minimalism)
             Text(
                 text = "Monthly spend",
@@ -2168,17 +2229,7 @@ fun MonthlyBudgetPulseCard(
             )
 
             if (hasAssignedBudget) {
-                Spacer(modifier = Modifier.height(10.dp))
-                LinearProgressIndicator(
-                    progress = { animatedProgress },
-                    color = statusColor,
-                    trackColor = heroInk.copy(alpha = 0.14f),
-                    modifier = Modifier
-                        .fillMaxWidth(0.58f)
-                        .height(5.dp)
-                        .clip(RoundedCornerShape(50))
-                )
-                Spacer(modifier = Modifier.height(6.dp))
+                Spacer(modifier = Modifier.height(8.dp))
                 val statusLabel = if (isAboveBudget) {
                     "${formatCurrency(diffAmount, currencySymbol)} over ${formatCurrency(monthlyBudget, currencySymbol)}"
                 } else {
@@ -2292,6 +2343,7 @@ fun MonthlyBudgetPulseCard(
                     }
                 }
             }
+        }
         }
     }
 }
@@ -4430,6 +4482,28 @@ fun AppDecoratedBackground(
     val wallpaperTintColor = palette.firstOrNull()?.copy(alpha = if (isDark) effectiveAlpha * 0.16f else effectiveAlpha * 0.12f)
         ?: Color.Transparent
 
+    val isRobolectric = remember {
+        Build.FINGERPRINT.equals("robolectric", ignoreCase = true)
+    }
+    val diagonalProgress = if (settings.enabled && !isRobolectric) {
+        val infiniteTransition = rememberInfiniteTransition(label = "wallpaper_diagonal_drift")
+        val progress by infiniteTransition.animateFloat(
+            initialValue = 0f,
+            targetValue = 1f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(durationMillis = 28_000, easing = LinearEasing),
+                repeatMode = RepeatMode.Restart
+            ),
+            label = "wallpaper_diagonal_progress"
+        )
+        progress
+    } else {
+        0f
+    }
+
+    // 4-cell repeating block guarantees identical emoji/doodle/stagger/parity when progress wraps 1f -> 0f
+    val repeatCells = 4
+
     Box(
         modifier = modifier
             .fillMaxSize()
@@ -4451,32 +4525,38 @@ fun AppDecoratedBackground(
                     )
             )
 
-            // 2. Vector Doodle & Micro-Sparkle Tiled Canvas Layer
+            // 2. Vector Doodle & Micro-Sparkle Tiled Canvas Layer (gliding smoothly diagonally left-to-right)
             Canvas(
                 modifier = Modifier
                     .fillMaxSize()
+                    .clipToBounds()
                     .testTag("whatsapp_finance_wallpaper_canvas")
             ) {
                 val stepPx = cellSpacingDp.toPx().coerceAtLeast(48f)
+                val periodPx = stepPx * repeatCells
+                val driftX = diagonalProgress * periodPx
+                val driftY = -diagonalProgress * periodPx
                 val cols = (size.width / stepPx).toInt() + 2
                 val rows = (size.height / stepPx).toInt() + 2
                 val iconRadius = stepPx * 0.22f
                 val strokeWidth = (stepPx * 0.024f).coerceIn(1.6f, 3.4f)
 
-                for (row in 0 until rows) {
-                    val staggerX = if (row % 2 == 1) stepPx * 0.5f else 0f
-                    for (col in 0 until cols) {
-                        val hash = (row * 31 + col * 17).let { if (it < 0) -it else it }
-                        val cx = col * stepPx + staggerX + (stepPx * 0.25f)
-                        val cy = row * stepPx + (stepPx * 0.25f)
-                        if (cx > size.width + stepPx || cy > size.height + stepPx) continue
+                for (row in -1 until rows + repeatCells) {
+                    val rowMod = ((row % repeatCells) + repeatCells) % repeatCells
+                    val staggerX = if (rowMod % 2 == 1) stepPx * 0.5f else 0f
+                    for (col in -repeatCells until cols + 1) {
+                        val colMod = ((col % repeatCells) + repeatCells) % repeatCells
+                        val cx = col * stepPx + staggerX + (stepPx * 0.25f) + driftX
+                        val cy = row * stepPx + (stepPx * 0.25f) + driftY
+                        if (cx < -stepPx || cx > size.width + stepPx || cy < -stepPx || cy > size.height + stepPx) continue
 
+                        val hash = rowMod * 31 + colMod * 17
                         val tileColor = palette[hash % palette.size].copy(alpha = effectiveAlpha)
                         val angle = ((hash % 5) - 2) * 11f
 
                         // In FINANCE_ICONS_AND_EMOJIS mode, odd cells are drawn as emojis in the overlay below
                         val skipVectorForEmoji = settings.style == WallpaperPatternStyle.FINANCE_ICONS_AND_EMOJIS &&
-                            ((row + col) % 2 == 1)
+                            ((rowMod + colMod) % 2 == 1)
 
                         if (!skipVectorForEmoji) {
                             rotate(degrees = angle, pivot = Offset(cx, cy)) {
@@ -4502,7 +4582,9 @@ fun AppDecoratedBackground(
 
                         // WhatsApp-style micro-dots & tiny stars between primary tiles
                         val dotCenter = Offset(cx + stepPx * 0.48f, cy + stepPx * 0.46f)
-                        if (dotCenter.x < size.width && dotCenter.y < size.height) {
+                        if (dotCenter.x >= -12f && dotCenter.x <= size.width + 12f &&
+                            dotCenter.y >= -12f && dotCenter.y <= size.height + 12f
+                        ) {
                             val dotColor = palette[(hash + 1) % palette.size].copy(alpha = effectiveAlpha * 0.55f)
                             if (hash % 3 == 0) {
                                 val arm = iconRadius * 0.22f
@@ -4532,9 +4614,15 @@ fun AppDecoratedBackground(
                 }
             }
 
-            // 3. Tiled Finance Emojis Layer (when FINANCE_ICONS_AND_EMOJIS is selected)
+            // 3. Tiled Finance Emojis Layer (gliding smoothly diagonally left-to-right via GPU graphicsLayer)
             if (settings.style == WallpaperPatternStyle.FINANCE_ICONS_AND_EMOJIS) {
-                BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+                val density = LocalDensity.current
+                val periodPx = with(density) { (cellSpacingDp * repeatCells).toPx() }
+                BoxWithConstraints(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .clipToBounds()
+                ) {
                     val cols = (maxWidth / cellSpacingDp).toInt().coerceIn(2, 10) + 1
                     val rows = (maxHeight / cellSpacingDp).toInt().coerceIn(3, 18) + 1
                     val emojiFontSize = when (settings.density) {
@@ -4542,23 +4630,35 @@ fun AppDecoratedBackground(
                         WallpaperDensity.BALANCED -> 19.sp
                         WallpaperDensity.AIRY -> 22.sp
                     }
-                    for (r in 0 until rows) {
-                        val staggerDp = if (r % 2 == 1) cellSpacingDp * 0.5f else 0.dp
-                        for (c in 0 until cols) {
-                            if ((r + c) % 2 == 1) {
-                                val idx = (r * 7 + c * 13) % FINANCE_WALLPAPER_EMOJIS.size
-                                val rot = (((r * 11 + c * 5) % 5) - 2) * 10f
-                                Text(
-                                    text = FINANCE_WALLPAPER_EMOJIS[idx],
-                                    fontSize = emojiFontSize,
-                                    modifier = Modifier
-                                        .offset(
-                                            x = cellSpacingDp * c + staggerDp + cellSpacingDp * 0.14f,
-                                            y = cellSpacingDp * r + cellSpacingDp * 0.14f
-                                        )
-                                        .rotate(rot)
-                                        .alpha((effectiveAlpha * 1.15f).coerceIn(0.04f, 0.34f))
-                                )
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .graphicsLayer {
+                                translationX = diagonalProgress * periodPx
+                                translationY = -diagonalProgress * periodPx
+                            }
+                            .testTag("wallpaper_animated_emoji_layer")
+                    ) {
+                        for (r in -1 until rows + repeatCells) {
+                            val rowMod = ((r % repeatCells) + repeatCells) % repeatCells
+                            val staggerDp = if (rowMod % 2 == 1) cellSpacingDp * 0.5f else 0.dp
+                            for (c in -repeatCells until cols + 1) {
+                                val colMod = ((c % repeatCells) + repeatCells) % repeatCells
+                                if ((rowMod + colMod) % 2 == 1) {
+                                    val idx = (rowMod * 7 + colMod * 13) % FINANCE_WALLPAPER_EMOJIS.size
+                                    val rot = (((rowMod * 11 + colMod * 5) % 5) - 2) * 10f
+                                    Text(
+                                        text = FINANCE_WALLPAPER_EMOJIS[idx],
+                                        fontSize = emojiFontSize,
+                                        modifier = Modifier
+                                            .offset(
+                                                x = cellSpacingDp * c + staggerDp + cellSpacingDp * 0.14f,
+                                                y = cellSpacingDp * r + cellSpacingDp * 0.14f
+                                            )
+                                            .rotate(rot)
+                                            .alpha((effectiveAlpha * 1.15f).coerceIn(0.04f, 0.34f))
+                                    )
+                                }
                             }
                         }
                     }
@@ -4567,6 +4667,198 @@ fun AppDecoratedBackground(
         }
 
         content()
+    }
+}
+
+/**
+ * Full-card animated theme-adaptive liquid tank background overlay for Budget, Hero, and Card/Account Limit cards.
+ * Fills smoothly from left to right proportionally to spend utilization with dual overlapping
+ * sinusoidal water waves and a luminous meniscus shoreline—adapting automatically to the active
+ * Material 3 app theme (Light, Dark/AMOLED, and chosen accent color).
+ */
+@Composable
+fun LiquidTankCardOverlay(
+    fillFraction: Float,
+    modifier: Modifier = Modifier,
+    isOverLimit: Boolean = false,
+    isNearAlert: Boolean = false,
+    onPrimaryContainerSurface: Boolean = false
+) {
+    val colorScheme = MaterialTheme.colorScheme
+    val isDark = colorScheme.surface.luminance() < 0.25f
+    val isRobolectric = remember {
+        Build.FINGERPRINT.equals("robolectric", ignoreCase = true)
+    }
+
+    val clampedFill = fillFraction.coerceIn(0f, 1f)
+    val targetLevel = remember(clampedFill, isOverLimit) {
+        when {
+            isOverLimit -> 0.97f
+            clampedFill <= 0.005f -> 0.06f
+            else -> (0.08f + clampedFill * 0.87f).coerceIn(0.08f, 0.95f)
+        }
+    }
+    val animatedLevel by animateFloatAsState(
+        targetValue = targetLevel,
+        animationSpec = spring(dampingRatio = 0.74f, stiffness = Spring.StiffnessLow),
+        label = "liquid_tank_level"
+    )
+
+    val wavePhaseFront: Float
+    val wavePhaseBack: Float
+    if (isRobolectric) {
+        wavePhaseFront = 0f
+        wavePhaseBack = 1.9f
+    } else {
+        val infiniteTransition = rememberInfiniteTransition(label = "liquid_tank_waves")
+        val front by infiniteTransition.animateFloat(
+            initialValue = 0f,
+            targetValue = (2.0 * PI).toFloat(),
+            animationSpec = infiniteRepeatable(
+                animation = tween(durationMillis = 3000, easing = LinearEasing),
+                repeatMode = RepeatMode.Restart
+            ),
+            label = "liquid_wave_front"
+        )
+        val back by infiniteTransition.animateFloat(
+            initialValue = 0f,
+            targetValue = (2.0 * PI).toFloat(),
+            animationSpec = infiniteRepeatable(
+                animation = tween(durationMillis = 4600, easing = LinearEasing),
+                repeatMode = RepeatMode.Restart
+            ),
+            label = "liquid_wave_back"
+        )
+        wavePhaseFront = front
+        wavePhaseBack = back
+    }
+
+    val primaryHue = when {
+        isOverLimit -> colorScheme.error
+        isNearAlert -> colorScheme.tertiary
+        else -> colorScheme.primary
+    }
+    val secondaryHue = when {
+        isOverLimit -> colorScheme.errorContainer
+        isNearAlert -> colorScheme.primary
+        else -> colorScheme.secondary
+    }
+    val crestHue = when {
+        isOverLimit -> colorScheme.error
+        isNearAlert -> colorScheme.tertiary
+        onPrimaryContainerSurface -> colorScheme.onPrimaryContainer
+        else -> colorScheme.primary
+    }
+
+    val backLiquidLeft = secondaryHue.copy(
+        alpha = when {
+            onPrimaryContainerSurface -> if (isDark) 0.22f else 0.16f
+            else -> if (isDark) 0.24f else 0.18f
+        }
+    )
+    val backLiquidRight = primaryHue.copy(
+        alpha = when {
+            onPrimaryContainerSurface -> if (isDark) 0.30f else 0.22f
+            else -> if (isDark) 0.28f else 0.22f
+        }
+    )
+    val frontLiquidLeft = primaryHue.copy(
+        alpha = when {
+            onPrimaryContainerSurface -> if (isDark) 0.38f else 0.28f
+            else -> if (isDark) 0.42f else 0.34f
+        }
+    )
+    val frontLiquidMid = primaryHue.copy(
+        alpha = when {
+            onPrimaryContainerSurface -> if (isDark) 0.30f else 0.22f
+            else -> if (isDark) 0.34f else 0.28f
+        }
+    )
+    val frontLiquidRight = secondaryHue.copy(
+        alpha = when {
+            onPrimaryContainerSurface -> if (isDark) 0.24f else 0.18f
+            else -> if (isDark) 0.26f else 0.20f
+        }
+    )
+    val meniscusHighlight = crestHue.copy(
+        alpha = when {
+            onPrimaryContainerSurface -> if (isDark) 0.56f else 0.48f
+            else -> if (isDark) 0.72f else 0.66f
+        }
+    )
+
+    Canvas(
+        modifier = modifier.clipToBounds()
+    ) {
+        val w = size.width
+        val h = size.height
+        if (w <= 1f || h <= 1f) return@Canvas
+
+        val fillX = w * animatedLevel
+        val backAmplitude = minOf(12.dp.toPx(), w * 0.055f).coerceAtLeast(3.dp.toPx())
+        val frontAmplitude = minOf(9.dp.toPx(), w * 0.042f).coerceAtLeast(2.5.dp.toPx())
+        val steps = 36
+        val dy = h / steps.toFloat()
+
+        // 1. Back flowing wave filling from left to right (counter-phased vertical shoreline)
+        val backPath = Path().apply {
+            val startX = (fillX + backAmplitude * 0.38f) +
+                sin(-wavePhaseBack.toDouble()).toFloat() * backAmplitude
+            moveTo(0f, 0f)
+            lineTo(startX, 0f)
+            for (i in 1..steps) {
+                val y = i * dy
+                val norm = i.toFloat() / steps.toFloat()
+                val x = (fillX + backAmplitude * 0.38f) +
+                    sin((norm * 2.2 * PI) - wavePhaseBack).toFloat() * backAmplitude
+                lineTo(x, y)
+            }
+            lineTo(0f, h)
+            close()
+        }
+        drawPath(
+            path = backPath,
+            brush = Brush.horizontalGradient(
+                colors = listOf(backLiquidLeft, backLiquidRight),
+                startX = 0f,
+                endX = (fillX + backAmplitude * 1.5f).coerceAtLeast(1f)
+            )
+        )
+
+        // 2. Front flowing theme-tinted liquid body + luminous vertical meniscus crest
+        val crestPath = Path()
+        val frontPath = Path().apply {
+            val x0 = fillX + sin(wavePhaseFront.toDouble()).toFloat() * frontAmplitude
+            moveTo(0f, 0f)
+            lineTo(x0, 0f)
+            crestPath.moveTo(x0, 0f)
+            for (i in 1..steps) {
+                val y = i * dy
+                val norm = i.toFloat() / steps.toFloat()
+                val x = fillX +
+                    sin((norm * 2.0 * PI) + wavePhaseFront).toFloat() * frontAmplitude +
+                    sin((norm * 4.0 * PI) - wavePhaseFront * 1.35).toFloat() * (frontAmplitude * 0.24f)
+                lineTo(x, y)
+                crestPath.lineTo(x, y)
+            }
+            lineTo(0f, h)
+            close()
+        }
+        drawPath(
+            path = frontPath,
+            brush = Brush.horizontalGradient(
+                colors = listOf(frontLiquidLeft, frontLiquidMid, frontLiquidRight),
+                startX = 0f,
+                endX = (fillX + frontAmplitude * 1.4f).coerceAtLeast(1f)
+            )
+        )
+
+        // 3. Meniscus highlight shimmer along the leading right wave crest
+        drawPath(
+            path = crestPath,
+            color = meniscusHighlight,
+            style = Stroke(width = 2.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round)
+        )
     }
 }
 
@@ -5267,95 +5559,131 @@ fun TransactionCategoriesSubTabContent(
             incomeCategories.firstOrNull { it.category.equals(selectedCategory, ignoreCase = true) }
         } else null
 
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 4.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Column(
-                modifier = Modifier.weight(1f),
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                Text(
-                    text = when {
-                        selectedIncomeCat != null -> selectedIncomeCat.category
-                        selectedExpenseCat != null -> selectedExpenseCat.category
-                        hasSelectedCat -> selectedCategory
-                        else -> "Spends"
-                    },
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
+        val summaryActiveCap = if (selectedIncomeCat == null) {
+            selectedExpenseCat?.budgetLimit ?: monthlyBudget
+        } else {
+            0.0
+        }
+        val summaryDisplayedSpend = when {
+            selectedIncomeCat != null -> selectedIncomeCat.spent
+            selectedExpenseCat != null -> selectedExpenseCat.spent
+            hasSelectedCat -> 0.0
+            else -> totalSpent
+        }
+        Surface(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(20.dp),
+            color = MaterialTheme.colorScheme.surfaceContainerLow,
+            border = if (summaryActiveCap > 0.0) {
+                BorderStroke(
+                    width = 1.dp,
+                    color = if (summaryDisplayedSpend > summaryActiveCap) {
+                        MaterialTheme.colorScheme.error.copy(alpha = 0.32f)
+                    } else {
+                        MaterialTheme.colorScheme.primary.copy(alpha = 0.24f)
+                    }
                 )
-                Spacer(modifier = Modifier.height(2.dp))
-                val displayedTotal = when {
-                    selectedIncomeCat != null -> selectedIncomeCat.spent
-                    selectedExpenseCat != null -> selectedExpenseCat.spent
-                    hasSelectedCat -> 0.0
-                    else -> totalSpent
-                }
-                Text(
-                    text = formatCurrency(displayedTotal, currencySymbol),
-                    style = MaterialTheme.typography.titleMedium.copy(fontFamily = ReceiptMonoFontFamily),
-                    fontWeight = FontWeight.Bold,
-                    color = if (selectedIncomeCat != null) BudgetSafeGreen else MaterialTheme.colorScheme.onSurface
-                )
+            } else {
+                null
             }
+        ) {
+            Box(modifier = Modifier.fillMaxWidth()) {
+                if (summaryActiveCap > 0.0) {
+                    val summaryFillRatio = (summaryDisplayedSpend / summaryActiveCap).toFloat().coerceIn(0f, 1f)
+                    LiquidTankCardOverlay(
+                        fillFraction = summaryFillRatio,
+                        isOverLimit = summaryDisplayedSpend > summaryActiveCap,
+                        isNearAlert = summaryFillRatio >= 0.8f,
+                        modifier = Modifier
+                            .matchParentSize()
+                            .testTag("tx_categories_summary_liquid_tank")
+                    )
+                }
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(
+                        modifier = Modifier.weight(1f),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Text(
+                            text = when {
+                                selectedIncomeCat != null -> selectedIncomeCat.category
+                                selectedExpenseCat != null -> selectedExpenseCat.category
+                                hasSelectedCat -> selectedCategory
+                                else -> "Spends"
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Text(
+                            text = formatCurrency(summaryDisplayedSpend, currencySymbol),
+                            style = MaterialTheme.typography.titleMedium.copy(fontFamily = ReceiptMonoFontFamily),
+                            fontWeight = FontWeight.Bold,
+                            color = if (selectedIncomeCat != null) BudgetSafeGreen else MaterialTheme.colorScheme.onSurface
+                        )
+                    }
 
-            Box(
-                modifier = Modifier
-                    .width(1.dp)
-                    .height(34.dp)
-                    .background(MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f))
-            )
+                    Box(
+                        modifier = Modifier
+                            .width(1.dp)
+                            .height(34.dp)
+                            .background(MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f))
+                    )
 
-            Column(
-                modifier = Modifier
-                    .weight(1f)
-                    .clip(RoundedCornerShape(12.dp))
-                    .clickable {
-                        performHaptic()
-                        when {
-                            selectedExpenseCat != null -> onSetCategoryBudgetClick(
-                                selectedExpenseCat.category,
-                                selectedExpenseCat.budgetLimit
+                    Column(
+                        modifier = Modifier
+                            .weight(1f)
+                            .clip(RoundedCornerShape(12.dp))
+                            .clickable {
+                                performHaptic()
+                                when {
+                                    selectedExpenseCat != null -> onSetCategoryBudgetClick(
+                                        selectedExpenseCat.category,
+                                        selectedExpenseCat.budgetLimit
+                                    )
+                                    selectedIncomeCat == null && !hasSelectedCat -> onEditMonthlyBudgetClick()
+                                }
+                            }
+                            .padding(vertical = 4.dp)
+                            .testTag("tx_categories_monthly_budget_button"),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        if (selectedIncomeCat != null) {
+                            Text(
+                                text = "Entries",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
-                            selectedIncomeCat == null && !hasSelectedCat -> onEditMonthlyBudgetClick()
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Text(
+                                text = "${selectedIncomeCat.spendCount}",
+                                style = MaterialTheme.typography.titleMedium.copy(fontFamily = ReceiptMonoFontFamily),
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                        } else {
+                            val activeCap = selectedExpenseCat?.budgetLimit ?: monthlyBudget
+                            Text(
+                                text = "Budget",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Text(
+                                text = if (activeCap > 0.0) formatCurrency(activeCap, currencySymbol) else "Set budget >",
+                                style = MaterialTheme.typography.titleMedium.copy(fontFamily = ReceiptMonoFontFamily),
+                                fontWeight = FontWeight.Bold,
+                                color = if (activeCap > 0.0) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.primary
+                            )
                         }
                     }
-                    .padding(vertical = 4.dp)
-                    .testTag("tx_categories_monthly_budget_button"),
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                if (selectedIncomeCat != null) {
-                    Text(
-                        text = "Entries",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Spacer(modifier = Modifier.height(2.dp))
-                    Text(
-                        text = "${selectedIncomeCat.spendCount}",
-                        style = MaterialTheme.typography.titleMedium.copy(fontFamily = ReceiptMonoFontFamily),
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
-                } else {
-                    val activeCap = selectedExpenseCat?.budgetLimit ?: monthlyBudget
-                    Text(
-                        text = "Budget",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Spacer(modifier = Modifier.height(2.dp))
-                    Text(
-                        text = if (activeCap > 0.0) formatCurrency(activeCap, currencySymbol) else "Set budget >",
-                        style = MaterialTheme.typography.titleMedium.copy(fontFamily = ReceiptMonoFontFamily),
-                        fontWeight = FontWeight.Bold,
-                        color = if (activeCap > 0.0) MaterialTheme.colorScheme.onSurface else BudgetSafeGreen
-                    )
                 }
             }
         }
@@ -5404,6 +5732,8 @@ fun TransactionCategoriesSubTabContent(
             val customEmoji = customEmojis[item.category.trim().lowercase()]
             val isOverLimit = item.budgetLimit > 0.0 && item.spent > item.budgetLimit
             val safeCatId = item.category.lowercase().replace(Regex("[^a-z0-9]+"), "_")
+            val hasBudgetLimit = item.budgetLimit > 0.0
+            val catFillRatio = if (hasBudgetLimit) (item.spent / item.budgetLimit).toFloat().coerceIn(0f, 1f) else 0f
             Surface(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -5417,87 +5747,100 @@ fun TransactionCategoriesSubTabContent(
                 color = MaterialTheme.colorScheme.surfaceContainerLow,
                 border = BorderStroke(
                     width = 1.dp,
-                    color = if (selectedCategory.equals(item.category, ignoreCase = true)) {
-                        catColor
-                    } else {
-                        MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.38f)
+                    color = when {
+                        selectedCategory.equals(item.category, ignoreCase = true) -> catColor
+                        hasBudgetLimit && isOverLimit -> MaterialTheme.colorScheme.error.copy(alpha = 0.34f)
+                        hasBudgetLimit -> MaterialTheme.colorScheme.primary.copy(alpha = 0.28f)
+                        else -> MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.38f)
                     }
                 )
             ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 14.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    SquircleIconBadge(
-                        icon = categoryIcon(item.category),
-                        tint = catColor,
-                        containerColor = catColor.copy(alpha = 0.16f),
-                        size = 44.dp,
-                        iconSize = 22.dp,
-                        emoji = customEmoji
-                    )
-                    Spacer(modifier = Modifier.width(14.dp))
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = item.category,
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onSurface
-                        )
-                        Spacer(modifier = Modifier.height(2.dp))
-                        Text(
-                            text = "${item.spendCount} ${if (item.spendCount == 1) "Spend" else "Spends"}",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                Box(modifier = Modifier.fillMaxWidth()) {
+                    if (hasBudgetLimit) {
+                        LiquidTankCardOverlay(
+                            fillFraction = catFillRatio,
+                            isOverLimit = isOverLimit,
+                            isNearAlert = catFillRatio >= 0.8f,
+                            modifier = Modifier
+                                .matchParentSize()
+                                .testTag("tx_category_liquid_tank_$safeCatId")
                         )
                     }
-                    Column(horizontalAlignment = Alignment.End) {
-                        Text(
-                            text = formatCurrency(item.spent, currencySymbol),
-                            style = MaterialTheme.typography.titleMedium.copy(fontFamily = ReceiptMonoFontFamily),
-                            fontWeight = FontWeight.Bold,
-                            color = if (isOverLimit) BudgetDangerCoral else MaterialTheme.colorScheme.onSurface,
-                            maxLines = 1
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 14.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        SquircleIconBadge(
+                            icon = categoryIcon(item.category),
+                            tint = catColor,
+                            containerColor = catColor.copy(alpha = 0.16f),
+                            size = 44.dp,
+                            iconSize = 22.dp,
+                            emoji = customEmoji
                         )
-                        Spacer(modifier = Modifier.height(2.dp))
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier
-                                .minimumInteractiveComponentSize()
-                                .clip(RoundedCornerShape(10.dp))
-                                .clickable {
-                                    performHaptic()
-                                    onSetCategoryBudgetClick(item.category, item.budgetLimit)
-                                }
-                                .padding(horizontal = 8.dp, vertical = 6.dp)
-                                .testTag("tx_category_set_budget_$safeCatId")
-                        ) {
+                        Spacer(modifier = Modifier.width(14.dp))
+                        Column(modifier = Modifier.weight(1f)) {
                             Text(
-                                text = if (item.budgetLimit > 0.0) {
-                                    "of ${formatCurrency(item.budgetLimit, currencySymbol)}"
-                                } else {
-                                    "Set budget"
-                                },
-                                style = MaterialTheme.typography.labelMedium,
-                                fontWeight = FontWeight.SemiBold,
-                                color = if (item.budgetLimit > 0.0) {
-                                    MaterialTheme.colorScheme.onSurfaceVariant
-                                } else {
-                                    BudgetSafeGreen
-                                }
+                                text = item.category,
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onSurface
                             )
-                            Icon(
-                                imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
-                                contentDescription = null,
-                                tint = if (item.budgetLimit > 0.0) {
-                                    MaterialTheme.colorScheme.onSurfaceVariant
-                                } else {
-                                    BudgetSafeGreen
-                                },
-                                modifier = Modifier.size(18.dp)
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Text(
+                                text = "${item.spendCount} ${if (item.spendCount == 1) "Spend" else "Spends"}",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
+                        }
+                        Column(horizontalAlignment = Alignment.End) {
+                            Text(
+                                text = formatCurrency(item.spent, currencySymbol),
+                                style = MaterialTheme.typography.titleMedium.copy(fontFamily = ReceiptMonoFontFamily),
+                                fontWeight = FontWeight.Bold,
+                                color = if (isOverLimit) BudgetDangerCoral else MaterialTheme.colorScheme.onSurface,
+                                maxLines = 1
+                            )
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier
+                                    .minimumInteractiveComponentSize()
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .clickable {
+                                        performHaptic()
+                                        onSetCategoryBudgetClick(item.category, item.budgetLimit)
+                                    }
+                                    .padding(horizontal = 8.dp, vertical = 6.dp)
+                                    .testTag("tx_category_set_budget_$safeCatId")
+                            ) {
+                                Text(
+                                    text = if (hasBudgetLimit) {
+                                        "of ${formatCurrency(item.budgetLimit, currencySymbol)}"
+                                    } else {
+                                        "Set budget"
+                                    },
+                                    style = MaterialTheme.typography.labelMedium,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = if (hasBudgetLimit) {
+                                        MaterialTheme.colorScheme.onSurfaceVariant
+                                    } else {
+                                        MaterialTheme.colorScheme.primary
+                                    }
+                                )
+                                Icon(
+                                    imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                                    contentDescription = null,
+                                    tint = if (hasBudgetLimit) {
+                                        MaterialTheme.colorScheme.onSurfaceVariant
+                                    } else {
+                                        MaterialTheme.colorScheme.primary
+                                    },
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
                         }
                     }
                 }

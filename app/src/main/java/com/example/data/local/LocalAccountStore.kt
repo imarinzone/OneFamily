@@ -1086,6 +1086,7 @@ object LocalAccountDataStore {
     private val budgetsFlow = MutableStateFlow<List<CategoryBudget>>(emptyList())
     private val accountsFlow = MutableStateFlow<List<FinancialAccount>>(emptyList())
     private val smsRawMapFlow = MutableStateFlow<Map<String, SmsRawRecord>>(emptyMap())
+    val smsRawMessages: StateFlow<Map<String, SmsRawRecord>> = smsRawMapFlow.asStateFlow()
 
     private val storeLock = Any()
     private val accountTimestampMap = mutableMapOf<String, Long>()
@@ -1311,17 +1312,16 @@ object LocalAccountDataStore {
         val explicitSig = tx.smsSignature.trim()
         val docSmsSig = if (tx.id.startsWith("sms_")) tx.id.removePrefix("sms_").trim() else ""
         val lookupSig = explicitSig.ifBlank { docSmsSig }
-        if (lookupSig.isNotBlank()) {
-            val cached = smsRawMapFlow.value[explicitSig]
-                ?: smsRawMapFlow.value[lookupSig]
-                ?: smsRawMapFlow.value[lookupSig.removePrefix("sms_")]
-            if (cached != null &&
-                cached.body.isNotBlank() &&
-                !cached.sender.equals("Cash", ignoreCase = true) &&
-                !com.example.data.sms.SmsInboxReader.isSyntheticAutoParsedText(cached.body)
-            ) {
-                return cached
-            }
+        val cached = smsRawMapFlow.value[explicitSig]
+            ?: (if (lookupSig.isNotBlank()) smsRawMapFlow.value[lookupSig] else null)
+            ?: (if (lookupSig.isNotBlank()) smsRawMapFlow.value[lookupSig.removePrefix("sms_")] else null)
+            ?: (if (tx.id.isNotBlank()) smsRawMapFlow.value[tx.id] else null)
+        if (cached != null &&
+            cached.body.isNotBlank() &&
+            !cached.sender.equals("Cash", ignoreCase = true) &&
+            !com.example.data.sms.SmsInboxReader.isSyntheticAutoParsedText(cached.body)
+        ) {
+            return cached
         }
         // Fallback ONLY if an actual `[SENDER] <rawSmsBody>` message was stored in notes
         val notes = tx.notes
@@ -1520,7 +1520,7 @@ object LocalAccountDataStore {
                         accountName = def.accountName,
                         paymentMode = def.paymentMode,
                         tags = listOf("mock-sample", def.accountName.lowercase().replace(" ", "-")),
-                        notes = if (hasSmsBacking) "[${def.sender}] ${def.smsBody}" else "",
+                        notes = "",
                         visibility = if (def.isShared) "SHARED" else "PERSONAL",
                         smsSignature = sig,
                         referenceNumber = def.ref,
@@ -2169,7 +2169,7 @@ object LocalAccountDataStore {
                 accountName = candidate.suggestedAccountName.ifBlank { parsed.bankName }.take(100),
                 paymentMode = paymentMode,
                 tags = tags,
-                notes = "[${parsed.sender}] ${parsed.smsBody}".take(500),
+                notes = "",
                 visibility = if (effectiveShared) "SHARED" else "PERSONAL",
                 smsSignature = candidate.id.take(200),
                 referenceNumber = parsed.reference.orEmpty().take(100),

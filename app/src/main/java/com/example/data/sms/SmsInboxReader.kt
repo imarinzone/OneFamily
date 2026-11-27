@@ -636,6 +636,34 @@ class SmsInboxReader(private val context: Context) {
         }
 
         /**
+         * Strips both synthetic `"Auto-parsed from ..."` placeholders and legacy embedded raw SMS
+         * strings (`"[SENDER] <smsBody>"`) from the editable `notes` field, since linked SMS
+         * messages are already shown in the dedicated Linked SMS section of transaction details.
+         */
+        fun stripEmbeddedSmsFromNotes(notes: String): String {
+            val cleaned = stripSyntheticAutoParsedNote(notes).trim()
+            if (cleaned.isEmpty()) return ""
+            val hasLinkedSuffix = cleaned.contains("[Linked Duplicate:")
+            val linkedSuffix = if (hasLinkedSuffix) {
+                "[Linked Duplicate:" + cleaned.substringAfter("[Linked Duplicate:")
+            } else {
+                ""
+            }
+            val basePart = cleaned
+                .substringBefore("\n[Linked Duplicate:")
+                .substringBefore("[Linked Duplicate:")
+                .trim()
+            val isEmbeddedSms = basePart.startsWith("[") &&
+                basePart.contains("] ") &&
+                extractRawSmsBodyFromNotes(basePart).isNotBlank()
+            return if (isEmbeddedSms) {
+                linkedSuffix.trim()
+            } else {
+                cleaned
+            }
+        }
+
+        /**
          * Extracts the original raw SMS body from a transaction `notes` field ONLY when it carries
          * an explicit `[SENDER] <rawSmsBody>` prefix from a real SMS message (excluding Cash or
          * legacy `"Auto-parsed from <merchant>"` placeholders), stripping any appended

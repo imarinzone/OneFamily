@@ -97,7 +97,6 @@ import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -156,6 +155,7 @@ import com.example.ui.components.CustomDateRangePickerModal
 import com.example.ui.components.ExpenseTransactionItemCard
 import com.example.ui.components.ExpressiveCutoutAppearanceHeroCard
 import com.example.ui.components.FinanceWallpaperPreviewBanner
+import com.example.ui.components.LiquidTankCardOverlay
 import com.example.ui.components.M3CheckmarkSwitch
 import com.example.ui.components.MasterFeatureToggleBanner
 import com.example.ui.components.MerchantSubTabItem
@@ -1167,185 +1167,322 @@ fun HomeTabScreen(
                     } else {
                         var renderedLimitRows = 0
 
-                        // A. Overall Monthly Budget Limit
+                        // A. Overall Monthly Budget Limit (Flowing Theme-Adaptive Liquid Card)
                         if (uiState.activeMonthlyBudget > 0.0) {
                             renderedLimitRows++
                             val ratio = (uiState.totalMonthlySpent / uiState.activeMonthlyBudget).toFloat().coerceIn(0f, 1f)
                             val pct = ((uiState.totalMonthlySpent / uiState.activeMonthlyBudget) * 100.0).roundToInt()
-                            val barColor = when {
-                                uiState.totalMonthlySpent > uiState.activeMonthlyBudget -> BudgetDangerCoral
-                                pct >= 80 -> BudgetWarnAmber
-                                else -> BudgetSafeGreen
+                            val isOver = uiState.totalMonthlySpent > uiState.activeMonthlyBudget
+                            val isNear = !isOver && pct >= 80
+                            val remaining = uiState.activeMonthlyBudget - uiState.totalMonthlySpent
+                            val badgeColor = when {
+                                isOver -> MaterialTheme.colorScheme.error
+                                isNear -> MaterialTheme.colorScheme.tertiary
+                                else -> MaterialTheme.colorScheme.primary
                             }
-                            Column(
+                            Surface(
+                                shape = RoundedCornerShape(18.dp),
+                                color = MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.72f),
+                                border = androidx.compose.foundation.BorderStroke(
+                                    width = 1.dp,
+                                    color = badgeColor.copy(alpha = 0.28f)
+                                ),
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .clip(RoundedCornerShape(14.dp))
+                                    .clip(RoundedCornerShape(18.dp))
                                     .clickable {
                                         performHaptic()
                                         onEditMonthlyBudget()
                                     }
-                                    .padding(vertical = 6.dp)
-                                    .testTag("home_limit_item_overall_budget"),
-                                verticalArrangement = Arrangement.spacedBy(6.dp)
+                                    .testTag("home_limit_item_overall_budget")
                             ) {
-                                @OptIn(ExperimentalLayoutApi::class)
-                                FlowRow(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalArrangement = Arrangement.spacedBy(2.dp)
-                                ) {
-                                    Text(
-                                        text = "Monthly Budget",
-                                        style = MaterialTheme.typography.titleSmall,
-                                        fontWeight = FontWeight.SemiBold,
-                                        maxLines = 1
+                                Box(modifier = Modifier.fillMaxWidth()) {
+                                    LiquidTankCardOverlay(
+                                        fillFraction = ratio,
+                                        isOverLimit = isOver,
+                                        isNearAlert = isNear,
+                                        modifier = Modifier
+                                            .matchParentSize()
+                                            .testTag("home_limit_liquid_tank_overall_budget")
                                     )
-                                    Text(
-                                        text = "${formatCurrency(uiState.totalMonthlySpent, currency)} / ${formatCurrency(uiState.activeMonthlyBudget, currency)}",
-                                        style = MaterialTheme.typography.labelMedium.copy(fontFamily = ReceiptMonoFontFamily),
-                                        fontWeight = FontWeight.Bold,
-                                        color = barColor,
-                                        maxLines = 1
-                                    )
+                                    Column(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(horizontal = 14.dp, vertical = 12.dp),
+                                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                                    ) {
+                                        @OptIn(ExperimentalLayoutApi::class)
+                                        FlowRow(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalArrangement = Arrangement.spacedBy(4.dp)
+                                        ) {
+                                            Text(
+                                                text = "Monthly Budget",
+                                                style = MaterialTheme.typography.titleSmall,
+                                                fontWeight = FontWeight.Bold,
+                                                color = MaterialTheme.colorScheme.onSurface,
+                                                maxLines = 1
+                                            )
+                                            Surface(
+                                                shape = RoundedCornerShape(50),
+                                                color = MaterialTheme.colorScheme.surface.copy(alpha = 0.72f)
+                                            ) {
+                                                Text(
+                                                    text = "$pct%",
+                                                    style = MaterialTheme.typography.labelSmall.copy(fontFamily = ReceiptMonoFontFamily),
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = badgeColor,
+                                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
+                                                )
+                                            }
+                                        }
+                                        @OptIn(ExperimentalLayoutApi::class)
+                                        FlowRow(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalArrangement = Arrangement.spacedBy(2.dp)
+                                        ) {
+                                            Text(
+                                                text = "${formatCurrency(uiState.totalMonthlySpent, currency)} / ${formatCurrency(uiState.activeMonthlyBudget, currency)}",
+                                                style = MaterialTheme.typography.labelMedium.copy(fontFamily = ReceiptMonoFontFamily),
+                                                fontWeight = FontWeight.Bold,
+                                                color = MaterialTheme.colorScheme.onSurface,
+                                                maxLines = 1
+                                            )
+                                            Text(
+                                                text = if (remaining >= 0.0) {
+                                                    "${formatCurrency(remaining, currency)} left"
+                                                } else {
+                                                    "Over by ${formatCurrency(-remaining, currency)}"
+                                                },
+                                                style = MaterialTheme.typography.labelSmall.copy(fontFamily = ReceiptMonoFontFamily),
+                                                fontWeight = FontWeight.SemiBold,
+                                                color = if (remaining >= 0.0) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.error,
+                                                maxLines = 1
+                                            )
+                                        }
+                                    }
                                 }
-                                LinearProgressIndicator(
-                                    progress = { ratio },
-                                    color = barColor,
-                                    trackColor = MaterialTheme.colorScheme.surfaceContainerHighest,
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .height(5.dp)
-                                        .clip(RoundedCornerShape(50))
-                                )
                             }
                         }
 
-                        // B. Account & Credit Card Spend Limits
+                        // B. Account & Credit Card Spend Limits (Flowing Theme-Adaptive Liquid Cards)
                         activeAccountLimits.forEach { summary ->
                             if (renderedLimitRows > 0) {
-                                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f))
+                                Spacer(modifier = Modifier.height(6.dp))
                             }
                             renderedLimitRows++
                             val acc = summary.account
                             val safeAccId = acc.id.ifBlank { acc.name }.lowercase().replace(Regex("[^a-z0-9]+"), "_")
                             val ratio = (summary.spent / summary.limit.coerceAtLeast(1.0)).toFloat().coerceIn(0f, 1f)
-                            val barColor = when {
-                                summary.isOverLimit -> BudgetDangerCoral
-                                summary.isNearAlert -> BudgetWarnAmber
-                                else -> BudgetSafeGreen
+                            val pct = ((summary.spent / summary.limit.coerceAtLeast(1.0)) * 100.0).roundToInt()
+                            val badgeColor = when {
+                                summary.isOverLimit -> MaterialTheme.colorScheme.error
+                                summary.isNearAlert -> MaterialTheme.colorScheme.tertiary
+                                else -> MaterialTheme.colorScheme.primary
                             }
-                            Column(
+                            val remaining = summary.limit - summary.spent
+                            Surface(
+                                shape = RoundedCornerShape(18.dp),
+                                color = MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.72f),
+                                border = androidx.compose.foundation.BorderStroke(
+                                    width = 1.dp,
+                                    color = badgeColor.copy(alpha = 0.28f)
+                                ),
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .clip(RoundedCornerShape(14.dp))
+                                    .clip(RoundedCornerShape(18.dp))
                                     .clickable {
                                         performHaptic()
                                         onAccountClick(acc.id)
                                     }
-                                    .padding(vertical = 6.dp)
-                                    .testTag("home_limit_item_account_$safeAccId"),
-                                verticalArrangement = Arrangement.spacedBy(6.dp)
+                                    .testTag("home_limit_item_account_$safeAccId")
                             ) {
-                                @OptIn(ExperimentalLayoutApi::class)
-                                FlowRow(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalArrangement = Arrangement.spacedBy(2.dp)
-                                ) {
-                                    Text(
-                                        text = acc.name,
-                                        style = MaterialTheme.typography.titleSmall,
-                                        fontWeight = FontWeight.SemiBold,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
+                                Box(modifier = Modifier.fillMaxWidth()) {
+                                    LiquidTankCardOverlay(
+                                        fillFraction = ratio,
+                                        isOverLimit = summary.isOverLimit,
+                                        isNearAlert = summary.isNearAlert,
+                                        modifier = Modifier
+                                            .matchParentSize()
+                                            .testTag("home_limit_liquid_tank_$safeAccId")
                                     )
-                                    Text(
-                                        text = "${formatCurrency(summary.spent, currency)} / ${formatCurrency(summary.limit, currency)}",
-                                        style = MaterialTheme.typography.labelMedium.copy(fontFamily = ReceiptMonoFontFamily),
-                                        fontWeight = FontWeight.Bold,
-                                        color = barColor,
-                                        maxLines = 1
-                                    )
+                                    Column(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(horizontal = 14.dp, vertical = 12.dp),
+                                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                                    ) {
+                                        @OptIn(ExperimentalLayoutApi::class)
+                                        FlowRow(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalArrangement = Arrangement.spacedBy(4.dp)
+                                        ) {
+                                            Text(
+                                                text = acc.name,
+                                                style = MaterialTheme.typography.titleSmall,
+                                                fontWeight = FontWeight.Bold,
+                                                color = MaterialTheme.colorScheme.onSurface,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                            Surface(
+                                                shape = RoundedCornerShape(50),
+                                                color = MaterialTheme.colorScheme.surface.copy(alpha = 0.72f)
+                                            ) {
+                                                Text(
+                                                    text = "$pct%",
+                                                    style = MaterialTheme.typography.labelSmall.copy(fontFamily = ReceiptMonoFontFamily),
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = badgeColor,
+                                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
+                                                )
+                                            }
+                                        }
+                                        @OptIn(ExperimentalLayoutApi::class)
+                                        FlowRow(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalArrangement = Arrangement.spacedBy(2.dp)
+                                        ) {
+                                            Text(
+                                                text = "${formatCurrency(summary.spent, currency)} / ${formatCurrency(summary.limit, currency)}",
+                                                style = MaterialTheme.typography.labelMedium.copy(fontFamily = ReceiptMonoFontFamily),
+                                                fontWeight = FontWeight.Bold,
+                                                color = MaterialTheme.colorScheme.onSurface,
+                                                maxLines = 1
+                                            )
+                                            Text(
+                                                text = if (remaining >= 0.0) {
+                                                    "${formatCurrency(remaining, currency)} left"
+                                                } else {
+                                                    "Over by ${formatCurrency(-remaining, currency)}"
+                                                },
+                                                style = MaterialTheme.typography.labelSmall.copy(fontFamily = ReceiptMonoFontFamily),
+                                                fontWeight = FontWeight.SemiBold,
+                                                color = if (remaining >= 0.0) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.error,
+                                                maxLines = 1
+                                            )
+                                        }
+                                    }
                                 }
-                                LinearProgressIndicator(
-                                    progress = { ratio },
-                                    color = barColor,
-                                    trackColor = MaterialTheme.colorScheme.surfaceContainerHighest,
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .height(5.dp)
-                                        .clip(RoundedCornerShape(50))
-                                )
                             }
                         }
 
-                        // C. Category Budget Limits
+                        // C. Category Budget Limits (Flowing Theme-Adaptive Liquid Cards)
                         activeCategoryLimits.forEach { catItem ->
                             if (renderedLimitRows > 0) {
-                                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f))
+                                Spacer(modifier = Modifier.height(6.dp))
                             }
                             renderedLimitRows++
                             val safeCatId = catItem.category.lowercase().replace(Regex("[^a-z0-9]+"), "_")
                             val ratio = (catItem.spent / catItem.limit.coerceAtLeast(1.0)).toFloat().coerceIn(0f, 1f)
                             val pct = ((catItem.spent / catItem.limit.coerceAtLeast(1.0)) * 100.0).roundToInt()
-                            val barColor = when {
-                                catItem.spent > catItem.limit -> BudgetDangerCoral
-                                pct >= catItem.alertThresholdPercent -> BudgetWarnAmber
-                                else -> BudgetSafeGreen
+                            val isOver = catItem.spent > catItem.limit
+                            val isNear = !isOver && pct >= catItem.alertThresholdPercent
+                            val remaining = catItem.limit - catItem.spent
+                            val badgeColor = when {
+                                isOver -> MaterialTheme.colorScheme.error
+                                isNear -> MaterialTheme.colorScheme.tertiary
+                                else -> MaterialTheme.colorScheme.primary
                             }
                             val catColor = categoryAccentColor(catItem.category)
-                            Column(
+                            Surface(
+                                shape = RoundedCornerShape(18.dp),
+                                color = MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.72f),
+                                border = androidx.compose.foundation.BorderStroke(
+                                    width = 1.dp,
+                                    color = badgeColor.copy(alpha = 0.28f)
+                                ),
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .clip(RoundedCornerShape(14.dp))
+                                    .clip(RoundedCornerShape(18.dp))
                                     .clickable {
                                         performHaptic()
                                         editingBudgetForCategory = catItem.category to catItem.limit
                                     }
-                                    .padding(vertical = 6.dp)
-                                    .testTag("home_limit_item_category_$safeCatId"),
-                                verticalArrangement = Arrangement.spacedBy(6.dp)
+                                    .testTag("home_limit_item_category_$safeCatId")
                             ) {
-                                @OptIn(ExperimentalLayoutApi::class)
-                                FlowRow(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalArrangement = Arrangement.spacedBy(2.dp)
-                                ) {
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                        CategoryBadgeGlyph(
-                                            category = catItem.category,
-                                            tint = catColor,
-                                            iconSize = 16.dp,
-                                            customEmoji = customEmojis[catItem.category.trim().lowercase()]
-                                        )
-                                        Spacer(modifier = Modifier.width(8.dp))
-                                        Text(
-                                            text = catItem.category,
-                                            style = MaterialTheme.typography.titleSmall,
-                                            fontWeight = FontWeight.SemiBold,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis
-                                        )
-                                    }
-                                    Text(
-                                        text = "${formatCurrency(catItem.spent, currency)} / ${formatCurrency(catItem.limit, currency)}",
-                                        style = MaterialTheme.typography.labelMedium.copy(fontFamily = ReceiptMonoFontFamily),
-                                        fontWeight = FontWeight.Bold,
-                                        color = barColor,
-                                        maxLines = 1
+                                Box(modifier = Modifier.fillMaxWidth()) {
+                                    LiquidTankCardOverlay(
+                                        fillFraction = ratio,
+                                        isOverLimit = isOver,
+                                        isNearAlert = isNear,
+                                        modifier = Modifier
+                                            .matchParentSize()
+                                            .testTag("home_limit_liquid_tank_category_$safeCatId")
                                     )
+                                    Column(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(horizontal = 14.dp, vertical = 12.dp),
+                                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                                    ) {
+                                        @OptIn(ExperimentalLayoutApi::class)
+                                        FlowRow(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalArrangement = Arrangement.spacedBy(4.dp)
+                                        ) {
+                                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                                CategoryBadgeGlyph(
+                                                    category = catItem.category,
+                                                    tint = catColor,
+                                                    iconSize = 16.dp,
+                                                    customEmoji = customEmojis[catItem.category.trim().lowercase()]
+                                                )
+                                                Spacer(modifier = Modifier.width(8.dp))
+                                                Text(
+                                                    text = catItem.category,
+                                                    style = MaterialTheme.typography.titleSmall,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = MaterialTheme.colorScheme.onSurface,
+                                                    maxLines = 1,
+                                                    overflow = TextOverflow.Ellipsis
+                                                )
+                                            }
+                                            Surface(
+                                                shape = RoundedCornerShape(50),
+                                                color = MaterialTheme.colorScheme.surface.copy(alpha = 0.72f)
+                                            ) {
+                                                Text(
+                                                    text = "$pct%",
+                                                    style = MaterialTheme.typography.labelSmall.copy(fontFamily = ReceiptMonoFontFamily),
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = badgeColor,
+                                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
+                                                )
+                                            }
+                                        }
+                                        @OptIn(ExperimentalLayoutApi::class)
+                                        FlowRow(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalArrangement = Arrangement.spacedBy(2.dp)
+                                        ) {
+                                            Text(
+                                                text = "${formatCurrency(catItem.spent, currency)} / ${formatCurrency(catItem.limit, currency)}",
+                                                style = MaterialTheme.typography.labelMedium.copy(fontFamily = ReceiptMonoFontFamily),
+                                                fontWeight = FontWeight.Bold,
+                                                color = MaterialTheme.colorScheme.onSurface,
+                                                maxLines = 1
+                                            )
+                                            Text(
+                                                text = if (remaining >= 0.0) {
+                                                    "${formatCurrency(remaining, currency)} left"
+                                                } else {
+                                                    "Over by ${formatCurrency(-remaining, currency)}"
+                                                },
+                                                style = MaterialTheme.typography.labelSmall.copy(fontFamily = ReceiptMonoFontFamily),
+                                                fontWeight = FontWeight.SemiBold,
+                                                color = if (remaining >= 0.0) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.error,
+                                                maxLines = 1
+                                            )
+                                        }
+                                    }
                                 }
-                                LinearProgressIndicator(
-                                    progress = { ratio },
-                                    color = barColor,
-                                    trackColor = MaterialTheme.colorScheme.surfaceContainerHighest,
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .height(5.dp)
-                                        .clip(RoundedCornerShape(50))
-                                )
                             }
                         }
                     }
@@ -2422,7 +2559,8 @@ fun HouseholdTabScreen(
     onJoinByCode: (String) -> Unit,
     onInviteByEmail: (String) -> Unit,
     onAcceptEmailInvite: (Household) -> Unit,
-    initialCategory: SettingsCategory? = null
+    initialCategory: SettingsCategory? = null,
+    onOpenSpendReport: (com.example.data.sms.SpendSummaryPeriod) -> Unit = {}
 ) {
     val clipboardManager = LocalClipboardManager.current
     val performHaptic = rememberAppHapticPerformer()
@@ -2589,7 +2727,8 @@ fun HouseholdTabScreen(
 
             SettingsCategory.NOTIFICATIONS -> NotificationsSettingsPage(
                 fcmPushSettings = fcmPushSettings,
-                onBackClick = { selectedCategory = null }
+                onBackClick = { selectedCategory = null },
+                onOpenSpendReport = onOpenSpendReport
             )
 
             SettingsCategory.SMS_SYNC -> SmsSyncSettingsPage(

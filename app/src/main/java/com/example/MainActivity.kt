@@ -153,8 +153,16 @@ data class PendingEditTransactionDeepLink(
     val nonce: Long = System.nanoTime()
 )
 
+data class PendingSpendReportDeepLink(
+    val period: com.example.data.sms.SpendSummaryPeriod,
+    val startMillis: Long? = null,
+    val endMillis: Long? = null,
+    val nonce: Long = System.nanoTime()
+)
+
 class MainActivity : ComponentActivity() {
     private val pendingNotificationDeepLink = MutableStateFlow<PendingEditTransactionDeepLink?>(null)
+    private val pendingSpendReportDeepLink = MutableStateFlow<PendingSpendReportDeepLink?>(null)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -166,6 +174,7 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         setContent {
             val deepLink by pendingNotificationDeepLink.collectAsStateWithLifecycle()
+            val spendReportDeepLink by pendingSpendReportDeepLink.collectAsStateWithLifecycle()
             val themeMode by LocalAccountSessionManager.themeMode.collectAsStateWithLifecycle()
             OneFamilyTheme(themeMode = themeMode) {
                 Surface(
@@ -175,7 +184,9 @@ class MainActivity : ComponentActivity() {
                     AppDecoratedBackground(modifier = Modifier.fillMaxSize()) {
                         AppNavigation(
                             deepLink = deepLink,
-                            onConsumeDeepLink = { pendingNotificationDeepLink.value = null }
+                            onConsumeDeepLink = { pendingNotificationDeepLink.value = null },
+                            spendReportDeepLink = spendReportDeepLink,
+                            onConsumeSpendReportDeepLink = { pendingSpendReportDeepLink.value = null }
                         )
                     }
                 }
@@ -203,6 +214,29 @@ class MainActivity : ComponentActivity() {
                 householdId = intent.getStringExtra(TransactionNotificationHelper.EXTRA_EDIT_HOUSEHOLD_ID).orEmpty(),
                 visibility = intent.getStringExtra(TransactionNotificationHelper.EXTRA_EDIT_VISIBILITY).orEmpty()
             )
+            return
+        }
+
+        val reportPeriodRaw = intent.getStringExtra(TransactionNotificationHelper.EXTRA_REPORT_PERIOD)?.trim().orEmpty()
+            .ifBlank {
+                intent.data?.takeIf {
+                    it.scheme.equals("onefamily", ignoreCase = true) &&
+                        it.host.equals("spend-report", ignoreCase = true)
+                }?.lastPathSegment?.trim().orEmpty()
+            }
+        if (reportPeriodRaw.isNotBlank()) {
+            val period = com.example.data.sms.SpendSummaryPeriod.entries.firstOrNull {
+                it.name.equals(reportPeriodRaw, ignoreCase = true)
+            }
+            if (period != null) {
+                val startExtra = intent.getLongExtra(TransactionNotificationHelper.EXTRA_REPORT_START_MILLIS, -1L)
+                val endExtra = intent.getLongExtra(TransactionNotificationHelper.EXTRA_REPORT_END_MILLIS, -1L)
+                pendingSpendReportDeepLink.value = PendingSpendReportDeepLink(
+                    period = period,
+                    startMillis = startExtra.takeIf { it > 0L },
+                    endMillis = endExtra.takeIf { it > 0L }
+                )
+            }
         }
     }
 }
@@ -219,7 +253,9 @@ internal fun FirebaseAuth.authStateFlow(): Flow<FirebaseUser?> = callbackFlow {
 fun AppNavigation(
     auth: FirebaseAuth = Firebase.auth,
     deepLink: PendingEditTransactionDeepLink? = null,
-    onConsumeDeepLink: () -> Unit = {}
+    onConsumeDeepLink: () -> Unit = {},
+    spendReportDeepLink: PendingSpendReportDeepLink? = null,
+    onConsumeSpendReportDeepLink: () -> Unit = {}
 ) {
     val context = LocalContext.current
     LaunchedEffect(Unit) {
@@ -257,6 +293,8 @@ fun AppNavigation(
                 currentUserEmail = activeEmail,
                 deepLink = deepLink,
                 onConsumeDeepLink = onConsumeDeepLink,
+                spendReportDeepLink = spendReportDeepLink,
+                onConsumeSpendReportDeepLink = onConsumeSpendReportDeepLink,
                 onSignOut = {
                     LocalAccountSessionManager.signOut(context)
                     runCatching { auth.signOut() }
@@ -294,6 +332,8 @@ fun OneFamilyMainShell(
     currentUserEmail: String,
     deepLink: PendingEditTransactionDeepLink? = null,
     onConsumeDeepLink: () -> Unit = {},
+    spendReportDeepLink: PendingSpendReportDeepLink? = null,
+    onConsumeSpendReportDeepLink: () -> Unit = {},
     onSignOut: () -> Unit = {}
 ) {
     val dimens = LocalAppDimens.current
@@ -413,6 +453,32 @@ fun OneFamilyMainShell(
                 onConsumeDeepLink()
             }
         }
+    }
+
+    LaunchedEffect(spendReportDeepLink) {
+        val report = spendReportDeepLink ?: return@LaunchedEffect
+        showAddTransactionDialog = false
+        quickCategoryTransaction = null
+        linkingDuplicateTransaction = null
+        editingTransaction = null
+        selectedAccountDetailId = null
+        showAllTransactionsPage = false
+        if (LocalAccountSessionManager.hasCompletedInitialSmsSync(context, currentUserId)) {
+            showSmsSyncScreen = false
+        }
+        viewModel.applySpendReportFilter(
+            period = report.period,
+            startMillis = report.startMillis,
+            endMillis = report.endMillis
+        )
+        pagerState.animateScrollToPage(
+            page = OneFamilyNavTab.TRANSACTIONS.ordinal,
+            animationSpec = spring(
+                dampingRatio = Spring.DampingRatioNoBouncy,
+                stiffness = Spring.StiffnessMediumLow
+            )
+        )
+        onConsumeSpendReportDeepLink()
     }
 
     LaunchedEffect(
@@ -964,6 +1030,10 @@ fun OneFamilyMainShell(
                                         },
                                         onAcceptEmailInvite = { household ->
                                             viewModel.acceptEmailInvitation(household)
+                                        },
+                                        onOpenSpendReport = { period ->
+                                            viewModel.applySpendReportFilter(period)
+                                            navigateToTab(OneFamilyNavTab.TRANSACTIONS)
                                         }
                                     )
                                 }

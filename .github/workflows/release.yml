@@ -326,6 +326,8 @@ jobs:
 
       - name: Build Signed Release APK
         shell: bash
+        env:
+          HIDE_MOCK_USER_LOGIN: 'true'
         run: |
           if [[ -f "./gradlew" && -f "gradle/wrapper/gradle-wrapper.jar" ]]; then
             chmod +x ./gradlew

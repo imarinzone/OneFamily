@@ -49,7 +49,6 @@ import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.SegmentedButton
@@ -89,6 +88,7 @@ import com.example.ui.components.BillingCycleCalendarDialog
 import com.example.ui.components.BillingCycleCalendarGrid
 import com.example.ui.components.CircularTonalIconButton
 import com.example.ui.components.ExpenseTransactionItemCard
+import com.example.ui.components.LiquidTankCardOverlay
 import com.example.ui.components.PerforatedSectionHeader
 import com.example.ui.components.TransactionSortSelectorButton
 import com.example.ui.components.formatCompactCurrency
@@ -607,6 +607,16 @@ fun AccountDetailScreen(
 
         // 3. Interactive Account Graph Card (6-Period Trend Strip + Daily Activity Bars + Limit Tracker)
         item {
+            val effectiveCardLimitSpent = if (isCreditCard && periodMode == AccountDetailPeriodMode.MONTHLY) {
+                currentCycleSpent
+            } else {
+                periodSpent
+            }
+            val effectiveCardLimitPct = if (summary.limit > 0.0) {
+                ((effectiveCardLimitSpent / summary.limit) * 100.0).toInt()
+            } else {
+                0
+            }
             Card(
                 shape = RoundedCornerShape(24.dp),
                 colors = CardDefaults.cardColors(
@@ -618,12 +628,23 @@ fun AccountDetailScreen(
                     .padding(horizontal = dimens.horizontalPadding)
                     .testTag("account_detail_graph_card")
             ) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
+                Box(modifier = Modifier.fillMaxWidth()) {
+                    if (summary.limit > 0.0) {
+                        LiquidTankCardOverlay(
+                            fillFraction = (effectiveCardLimitSpent / summary.limit).toFloat().coerceIn(0f, 1f),
+                            isOverLimit = effectiveCardLimitSpent >= summary.limit,
+                            isNearAlert = effectiveCardLimitPct >= summary.alertThresholdPercent,
+                            modifier = Modifier
+                                .matchParentSize()
+                                .testTag("account_detail_liquid_tank")
+                        )
+                    }
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
@@ -837,15 +858,6 @@ fun AccountDetailScreen(
                             pct >= summary.alertThresholdPercent -> BudgetWarnAmber
                             else -> BudgetSafeGreen
                         }
-                        LinearProgressIndicator(
-                            progress = { (effectiveLimitSpent / summary.limit).toFloat().coerceIn(0f, 1f) },
-                            color = barColor,
-                            trackColor = MaterialTheme.colorScheme.surfaceContainerHighest,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(8.dp)
-                                .clip(RoundedCornerShape(50))
-                        )
                         val diff = summary.limit - effectiveLimitSpent
                         val limitScopeSuffix = if (isCreditCard) {
                             val cycleRange = if (periodMode == AccountDetailPeriodMode.BILLING_CYCLE) {
@@ -886,6 +898,7 @@ fun AccountDetailScreen(
                             )
                         }
                     }
+                }
                 }
             }
         }

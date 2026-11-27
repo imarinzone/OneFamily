@@ -34,6 +34,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.filled.Logout
+import androidx.compose.material.icons.automirrored.filled.ReceiptLong
 import androidx.compose.material.icons.filled.Apps
 import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.BugReport
@@ -1391,7 +1392,8 @@ internal fun FamilyHouseholdSettingsPage(
 @Composable
 internal fun NotificationsSettingsPage(
     fcmPushSettings: FcmPushSettings,
-    onBackClick: () -> Unit
+    onBackClick: () -> Unit,
+    onOpenSpendReport: (com.example.data.sms.SpendSummaryPeriod) -> Unit = {}
 ) {
     val dimens = LocalAppDimens.current
     val context = LocalContext.current
@@ -1766,6 +1768,59 @@ internal fun NotificationsSettingsPage(
                                             )
                                         }
                                     }
+                                }
+                            }
+
+                            val reportPeriod = when (subCategory) {
+                                NotificationSubCategory.DAILY_SUMMARY -> com.example.data.sms.SpendSummaryPeriod.DAILY
+                                NotificationSubCategory.WEEKLY_SUMMARY -> com.example.data.sms.SpendSummaryPeriod.WEEKLY
+                                else -> com.example.data.sms.SpendSummaryPeriod.MONTHLY
+                            }
+                            val reportButtonLabel = when (subCategory) {
+                                NotificationSubCategory.DAILY_SUMMARY -> "View Daily Report"
+                                NotificationSubCategory.WEEKLY_SUMMARY -> "View Weekly Report"
+                                else -> "View Monthly Report"
+                            }
+                            Surface(
+                                onClick = {
+                                    performHaptic()
+                                    onOpenSpendReport(reportPeriod)
+                                },
+                                shape = RoundedCornerShape(14.dp),
+                                color = MaterialTheme.colorScheme.secondaryContainer,
+                                contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .heightIn(min = 48.dp)
+                                    .testTag("notif_view_report_$subTag")
+                            ) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 14.dp, vertical = 10.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.AutoMirrored.Filled.ReceiptLong,
+                                            contentDescription = reportButtonLabel,
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                        Text(
+                                            text = reportButtonLabel,
+                                            style = MaterialTheme.typography.labelLarge,
+                                            fontWeight = FontWeight.SemiBold
+                                        )
+                                    }
+                                    Icon(
+                                        imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(18.dp)
+                                    )
                                 }
                             }
 

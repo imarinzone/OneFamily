@@ -4,6 +4,7 @@ import android.app.Activity
 import android.content.Context
 import android.content.ContextWrapper
 import android.util.Log
+import com.example.BuildConfig
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
@@ -547,63 +548,65 @@ fun AuthScreen(
                         }
                     }
 
-                    // 1-Tap Mock User Receipt Ticket Stub (test / pass)
-                    Surface(
-                        shape = RoundedCornerShape(18.dp),
-                        color = MaterialTheme.colorScheme.secondaryContainer,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(18.dp))
-                            .clickable {
-                                performHaptic()
-                                errorMessage = null
-                                usernameInput = LocalAccountSessionManager.DEFAULT_TEST_USERNAME
-                                passwordInput = LocalAccountSessionManager.DEFAULT_TEST_PASSWORD
-                                isCreateAccountMode = false
-                                val res = LocalAccountSessionManager.signInWithUsernamePassword(
-                                    context = context,
-                                    rawUsername = LocalAccountSessionManager.DEFAULT_TEST_USERNAME,
-                                    rawPassword = LocalAccountSessionManager.DEFAULT_TEST_PASSWORD
-                                )
-                                res.onSuccess {
-                                    runCatching { Firebase.auth.signOut() }
-                                    onAuthSuccess()
-                                }.onFailure { errorMessage = it.localizedMessage }
-                            }
-                            .testTag("quick_test_login_button")
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween
+                    // 1-Tap Mock User Receipt Ticket Stub (visible only in AI Studio / local dev builds, hidden in GitHub Actions release APKs)
+                    if (BuildConfig.SHOW_MOCK_USER_LOGIN) {
+                        Surface(
+                            shape = RoundedCornerShape(18.dp),
+                            color = MaterialTheme.colorScheme.secondaryContainer,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(18.dp))
+                                .clickable {
+                                    performHaptic()
+                                    errorMessage = null
+                                    usernameInput = LocalAccountSessionManager.DEFAULT_TEST_USERNAME
+                                    passwordInput = LocalAccountSessionManager.DEFAULT_TEST_PASSWORD
+                                    isCreateAccountMode = false
+                                    val res = LocalAccountSessionManager.signInWithUsernamePassword(
+                                        context = context,
+                                        rawUsername = LocalAccountSessionManager.DEFAULT_TEST_USERNAME,
+                                        rawPassword = LocalAccountSessionManager.DEFAULT_TEST_PASSWORD
+                                    )
+                                    res.onSuccess {
+                                        runCatching { Firebase.auth.signOut() }
+                                        onAuthSuccess()
+                                    }.onFailure { errorMessage = it.localizedMessage }
+                                }
+                                .testTag("quick_test_login_button")
                         ) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                SquircleIconBadge(
-                                    icon = Icons.Default.Star,
-                                    tint = MaterialTheme.colorScheme.onSecondary,
-                                    containerColor = MaterialTheme.colorScheme.secondary,
-                                    size = 34.dp,
-                                    iconSize = 18.dp
-                                )
-                                Spacer(modifier = Modifier.width(10.dp))
-                                Text(
-                                    text = "Login as Mock User",
-                                    style = MaterialTheme.typography.titleSmall,
-                                    fontWeight = FontWeight.Bold,
-                                    color = MaterialTheme.colorScheme.onSecondaryContainer
-                                )
-                            }
-                            Surface(
-                                shape = RoundedCornerShape(50),
-                                color = MaterialTheme.colorScheme.surface.copy(alpha = 0.55f)
+                            Row(
+                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
                             ) {
-                                Text(
-                                    text = "test/pass",
-                                    style = MaterialTheme.typography.labelSmall.copy(fontFamily = ReceiptMonoFontFamily),
-                                    fontWeight = FontWeight.Bold,
-                                    color = MaterialTheme.colorScheme.onSecondaryContainer,
-                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
-                                )
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    SquircleIconBadge(
+                                        icon = Icons.Default.Star,
+                                        tint = MaterialTheme.colorScheme.onSecondary,
+                                        containerColor = MaterialTheme.colorScheme.secondary,
+                                        size = 34.dp,
+                                        iconSize = 18.dp
+                                    )
+                                    Spacer(modifier = Modifier.width(10.dp))
+                                    Text(
+                                        text = "Login as Mock User",
+                                        style = MaterialTheme.typography.titleSmall,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.onSecondaryContainer
+                                    )
+                                }
+                                Surface(
+                                    shape = RoundedCornerShape(50),
+                                    color = MaterialTheme.colorScheme.surface.copy(alpha = 0.55f)
+                                ) {
+                                    Text(
+                                        text = "test/pass",
+                                        style = MaterialTheme.typography.labelSmall.copy(fontFamily = ReceiptMonoFontFamily),
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.onSecondaryContainer,
+                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                                    )
+                                }
                             }
                         }
                     }
@@ -617,7 +620,7 @@ fun AuthScreen(
                             }
                         },
                         label = { Text("Username") },
-                        placeholder = { Text("test") },
+                        placeholder = { Text(if (BuildConfig.SHOW_MOCK_USER_LOGIN) "test" else "Enter username") },
                         isError = usernameError != null,
                         supportingText = if (usernameError != null) {
                             { Text(usernameError) }
